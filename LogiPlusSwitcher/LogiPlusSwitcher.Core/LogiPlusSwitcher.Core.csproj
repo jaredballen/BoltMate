@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>LogiPlusSwitcher.Core</RootNamespace>
+    <AssemblyName>LogiPlusSwitcher.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HidApi.Net" Version="1.2.0" />
+  </ItemGroup>
+
+</Project>

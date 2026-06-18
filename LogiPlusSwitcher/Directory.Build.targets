@@ -1,0 +1,28 @@
+<Project>
+
+  <!--
+    Stage libhidapi.dylib next to every project's output assemblies so .NET's
+    default DllImport search (AssemblyDirectory) finds it. Homebrew installs to
+    /opt/homebrew/lib on Apple Silicon, /usr/local/lib on Intel. Run
+    `brew install hidapi` before first build.
+
+    Targets that need libhidapi at runtime get it staged automatically; tests
+    and the CLI both pick it up since this target runs for every project.
+  -->
+  <Target Name="StageLibHidApiMac"
+          AfterTargets="Build"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">
+    <PropertyGroup>
+      <BrewArmHidApi>/opt/homebrew/lib/libhidapi.dylib</BrewArmHidApi>
+      <BrewIntelHidApi>/usr/local/lib/libhidapi.dylib</BrewIntelHidApi>
+      <ResolvedHidApiSource Condition="Exists('$(BrewArmHidApi)')">$(BrewArmHidApi)</ResolvedHidApiSource>
+      <ResolvedHidApiSource Condition="'$(ResolvedHidApiSource)' == '' AND Exists('$(BrewIntelHidApi)')">$(BrewIntelHidApi)</ResolvedHidApiSource>
+    </PropertyGroup>
+    <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." Condition="'$(ResolvedHidApiSource)' == ''" />
+    <Copy SourceFiles="$(ResolvedHidApiSource)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="'$(ResolvedHidApiSource)' != ''" />
+  </Target>
+
+</Project>
