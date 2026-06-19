@@ -10,16 +10,18 @@ using Microsoft.Extensions.Logging;
 namespace LogiPlusSwitcher.App;
 
 /// <summary>
-/// Swaps the menubar / system-tray icon between a black silhouette
-/// (light OS theme) and a white silhouette (dark OS theme) so the icon
-/// remains visible across themes.
+/// Keeps the tray icon visible on both light and dark menubars.
 /// </summary>
 /// <remarks>
-/// macOS handles this natively via NSImage template mode, but Avalonia 12
-/// doesn't expose that flag. Doing the swap ourselves works on Mac AND
-/// Windows: macOS's <see cref="IPlatformSettings.ColorValuesChanged"/> fires
-/// when the user toggles Appearance, and Windows fires the same event when
-/// the system theme changes too.
+/// On macOS, Avalonia exposes <c>MacOSProperties.IsTemplateIcon</c> (set in
+/// App.axaml) which maps to <c>NSImage.isTemplate = YES</c>; AppKit handles
+/// the inversion natively, including selection vibrancy when the menu is
+/// open. This watcher is a no-op there.
+///
+/// On Windows there's no OS-level template concept — tray icons are static
+/// bitmaps. The watcher subscribes to <see cref="IPlatformSettings.ColorValuesChanged"/>
+/// and swaps a black silhouette (light taskbar) for a white one (dark
+/// taskbar). Same approach Microsoft's own monochrome tray apps take.
 /// </remarks>
 public sealed class TrayIconThemeWatcher : IDisposable
 {
@@ -34,6 +36,8 @@ public sealed class TrayIconThemeWatcher : IDisposable
     {
         _trayIcon = trayIcon;
         _logger = logger;
+
+        if (OperatingSystem.IsMacOS()) return; // AppKit handles it via template image
 
         UpdateIcon();
 
@@ -55,12 +59,10 @@ public sealed class TrayIconThemeWatcher : IDisposable
         try
         {
             var theme = Application.Current?.PlatformSettings?.GetColorValues().ThemeVariant;
-            // Dark theme → white icon (light pixels visible on dark menubar)
-            // Light theme → black icon
             var uri = theme == PlatformThemeVariant.Dark ? DarkIconUri : LightIconUri;
             using var stream = AssetLoader.Open(uri);
             _trayIcon.Icon = new WindowIcon(stream);
-            _logger.LogInformation("Tray icon refreshed for {Theme} theme", theme);
+            _logger.LogInformation("Tray icon refreshed for {Theme} theme (Windows manual swap)", theme);
         }
         catch (Exception ex)
         {

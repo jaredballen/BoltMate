@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Avalonia.Controls"
              x:Class="LogiPlusSwitcher.App.App"
              RequestedThemeVariant="Default">
 
@@ -16,6 +17,7 @@
     <TrayIcon.Icons>
         <TrayIcons>
             <TrayIcon ToolTipText="LogiPlusSwitcher"
+                      ctrl:MacOSProperties.IsTemplateIcon="True"
                       Icon="avares://LogiPlusSwitcher.App/Assets/tray-icon-light.png">
                 <TrayIcon.Menu>
                     <NativeMenu />
