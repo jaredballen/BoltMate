@@ -44,7 +44,6 @@ internal static class Commands
         foreach (var info in infos)
         {
             Console.WriteLine($"Receiver #{index++}: {info.ManufacturerString} {info.ProductString}");
-            Console.WriteLine($"  serial:  {info.Serial}");
             Console.WriteLine($"  release: 0x{info.ReleaseNumber:X4}");
             Console.WriteLine($"  path:    {info.Path}");
 
@@ -68,6 +67,21 @@ internal static class Commands
                 }
             }
             catch (OperationCanceledException) { }
+
+            // Pull extended receiver metadata (fw version, BLE address, serial).
+            try
+            {
+                var details = await receiver.GetReceiverDetailsAsync(ct: ct);
+                Console.WriteLine($"  serial:  {details.Serial ?? "(unreadable)"}");
+                Console.WriteLine($"  fw:      {details.FirmwareVersionString}");
+                if (details.BluetoothAddressString is { } ble)
+                    Console.WriteLine($"  ble:     {ble}");
+                Console.WriteLine($"  slots:   {details.MaxDevices}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"  receiver details unavailable: {ex.Message}");
+            }
 
             foreach (var device in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
             {

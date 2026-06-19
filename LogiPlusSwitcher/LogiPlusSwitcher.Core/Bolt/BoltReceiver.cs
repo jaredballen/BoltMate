@@ -229,6 +229,131 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Reads receiver-level metadata: firmware version, max devices, serial,
+    /// and BLE address. Issues HID++ 1.0 register reads to <c>BOLT_UNIQUE_ID</c>
+    /// (0xFB) and <c>RECEIVER_INFO</c> (0xB5) sub-registers.
+    /// </summary>
+    /// <remarks>
+    /// All fields are best-effort — any individual read that times out or
+    /// errors leaves its field at the default value. The whole call never throws
+    /// for HID++ failures; only the HID transport throwing surfaces.
+    /// </remarks>
+    public async Task<ReceiverDetails> GetReceiverDetailsAsync(TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        var window = timeout ?? TimeSpan.FromMilliseconds(750);
+
+        string? serial = null;
+        var fwMajor = (byte)0;
+        var fwMinor = (byte)0;
+        var fwBuild = (ushort)0;
+        var maxDevices = (byte)0;
+        byte[]? ble = null;
+
+        var uniqueId = await Hidpp10ReadAsync(HidPp10.BuildReadBoltUniqueIdFrame(),
+            expectedRegister: HidPp10.RegisterBoltUniqueId, window, ct).ConfigureAwait(false);
+        if (uniqueId is { } u)
+        {
+            // BOLT_UNIQUE_ID reply: first 6 bytes are the serial as printable ASCII
+            // (e.g. "CEB26A"). Fall back to hex if any byte is non-printable.
+            var span = u.Parameters.Span;
+            var serialBytes = span[..Math.Min(6, span.Length)];
+            var allPrintable = true;
+            foreach (var b in serialBytes)
+            {
+                if (b is < 0x20 or > 0x7E) { allPrintable = false; break; }
+            }
+            serial = allPrintable
+                ? System.Text.Encoding.ASCII.GetString(serialBytes).TrimEnd('\0', ' ')
+                : Convert.ToHexString(serialBytes);
+        }
+
+        var info = await Hidpp10ReadAsync(
+            HidPp10.BuildReadReceiverInfoFrame(HidPp10.InfoSubRegisterReceiverInformation),
+            expectedRegister: HidPp10.RegisterReceiverInfo, window, ct).ConfigureAwait(false);
+        if (info is { } i)
+        {
+            // RECEIVER_INFO 0x03 reply layout (per Solaar receiver.py + base.py extract logic):
+            //   [0] sub-register echo (0x03)
+            //   [1..6] receiver BLE address (6 bytes, MSB first)
+            //   [7..9] firmware version "vX.YY.BZZZZ" raw bytes? — Solaar parses as
+            //          bytes[3..5] big-endian fw_build, etc.
+            // We capture what we can; fields stay default on parse failure.
+            var p = i.Parameters.Span;
+            if (p.Length >= 7)
+                ble = p.Slice(1, 6).ToArray();
+            // Solaar's _extract_firmware_version reads sub-register 0x02; sub-register 0x03 carries the BLE address.
+            // For firmware version specifically Solaar uses InfoSubRegister 0x02. We'll do a second read.
+        }
+
+        // Solaar also queries InfoSubRegister 0x02 for firmware version.
+        var fwReply = await Hidpp10ReadAsync(
+            HidPp10.BuildReadReceiverInfoFrame(subRegister: 0x02),
+            expectedRegister: HidPp10.RegisterReceiverInfo, window, ct).ConfigureAwait(false);
+        if (fwReply is { } fw)
+        {
+            // Sub-register 0x02 reply: [0]=0x02, [1]=entityIdx, [2]=major(BCD), [3]=minor(BCD), [4..5]=build BE
+            var p = fw.Parameters.Span;
+            if (p.Length >= 6)
+            {
+                fwMajor = p[2];
+                fwMinor = p[3];
+                fwBuild = (ushort)((p[4] << 8) | p[5]);
+            }
+        }
+
+        // Bolt receivers always have 6 device slots. Solaar reads max_devices from product_info, but we hardcode here.
+        maxDevices = HidPpConstants.DeviceIndexLastSlot;
+
+        return new ReceiverDetails(serial, fwMajor, fwMinor, fwBuild, maxDevices, ble);
+    }
+
+    /// <summary>
+    /// Sends a HID++ 1.0 register request and awaits the matching reply on the
+    /// inbound stream. Matches by device_index 0xFF + (echo of sub_id, register)
+    /// or by error reply (sub_id 0x8F with original register).
+    /// </summary>
+    private async Task<HidPpFrame?> Hidpp10ReadAsync(HidPpFrame request, byte expectedRegister, TimeSpan window, CancellationToken ct)
+    {
+        var ack = _connection.InboundFrames
+            .Where(f => f.DeviceIndex == HidPpConstants.DeviceIndexReceiver)
+            .Where(f =>
+            {
+                // Echo / success: same sub_id + register byte (in our model: FeatureIndex == subId, FunctionAndSwId == register).
+                if (f.FeatureIndex == request.FeatureIndex && f.FunctionAndSwId == expectedRegister)
+                    return true;
+                // HID++ 1.0 error: sub_id 0x8F, then original sub_id (Parameters[0]), original register (Parameters[1])
+                if (f.FeatureIndex == 0x8F && f.FunctionAndSwId == request.FeatureIndex)
+                {
+                    if (f.Parameters.Span.Length > 0 && f.Parameters.Span[0] == expectedRegister)
+                        return true;
+                }
+                return false;
+            })
+            .FirstAsync()
+            .ToTask(ct);
+
+        _client.SendOneWay(request);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(window);
+        try
+        {
+            var reply = await ack.WaitAsync(cts.Token).ConfigureAwait(false);
+            if (reply.FeatureIndex == 0x8F)
+            {
+                _logger.LogDebug("HID++ 1.0 read of register 0x{Reg:X2} returned error", expectedRegister);
+                return null;
+            }
+            return reply;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogDebug("HID++ 1.0 read of register 0x{Reg:X2} timed out", expectedRegister);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Unpairs a device from the receiver, removing the slot's stored pairing.
     /// Reaches a Bolt receiver's flash via <c>SET_LONG_REGISTER 0x82 BOLT_PAIRING(0xC1)
     /// subaction 0x03</c>. Awaits the receiver's echo (success) or an error

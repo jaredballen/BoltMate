@@ -112,4 +112,14 @@ public static class HidPp10
             deviceIndex: HidPpConstants.DeviceIndexReceiver,
             subId: SubIdGetLongRegister,
             parameters: [RegisterReceiverInfo, subRegister, extraByte, 0x00]);
+
+    /// <summary>
+    /// Builds the read request for BOLT_UNIQUE_ID (the receiver's own serial /
+    /// identifier). Long-register read on 0xFB.
+    /// </summary>
+    public static HidPpFrame BuildReadBoltUniqueIdFrame() =>
+        HidPpFrame.Hidpp10Short(
+            deviceIndex: HidPpConstants.DeviceIndexReceiver,
+            subId: SubIdGetLongRegister,
+            parameters: [RegisterBoltUniqueId, 0x00, 0x00, 0x00]);
 }
