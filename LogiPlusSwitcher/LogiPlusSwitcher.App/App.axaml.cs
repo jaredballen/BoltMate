@@ -125,9 +125,23 @@ public partial class App : Application
         _settingsWindow.Show();
     }
 
+    private Dialogs.AboutDialog? _aboutDialog;
     private void ShowAbout()
     {
-        // TODO: real about dialog.
+        if (_aboutDialog is not null && _aboutDialog.IsVisible)
+        {
+            _aboutDialog.Activate();
+            return;
+        }
+        MacActivationPolicy.ShowDockIcon();
+        _aboutDialog = new Dialogs.AboutDialog();
+        _aboutDialog.Closed += (_, _) =>
+        {
+            _aboutDialog = null;
+            // Only hide the dock icon if no other window kept it visible.
+            if (_settingsWindow is null) MacActivationPolicy.HideDockIcon();
+        };
+        _aboutDialog.Show();
     }
 
     private bool _multiReceiverPromptShown;

@@ -48,6 +48,10 @@
                                                             IsVisible="{Binding ShowSetPrimary}"
                                                             Click="OnSetPrimary"
                                                             Tag="{Binding Serial}" />
+                                                    <Button Content="Clear all pairings"
+                                                            Foreground="#E57373"
+                                                            Click="OnClearAllPairings"
+                                                            Tag="{Binding Serial}" />
                                                 </StackPanel>
                                             </Grid>
                                             <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">

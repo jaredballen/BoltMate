@@ -334,6 +334,33 @@ public partial class SettingsWindow : Window
         Populate();
     }
 
+    private async void OnClearAllPairings(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string serial || _manager is null) return;
+        var receiver = _manager.Receivers.Items.FirstOrDefault(r => r.Info.Serial == serial);
+        if (receiver is null) return;
+
+        var ok = await Dialogs.ConfirmDialog.AskAsync(
+            this,
+            title: "Clear all pairings",
+            header: $"Clear ALL pairings on receiver {serial}?",
+            body: "Every paired device on this receiver will be unpaired. You'll need to re-pair " +
+                  "each one via Logi Options+ or Pair-New-Device. This is not reversible.",
+            confirmLabel: "Clear all");
+        if (!ok) return;
+
+        var status = this.FindControl<TextBlock>("StatusLine");
+        try
+        {
+            var cleared = await receiver.ClearAllPairingsAsync();
+            if (status is not null) status.Text = $"Cleared {cleared} slot(s) on {serial}.";
+        }
+        catch (Exception ex)
+        {
+            if (status is not null) status.Text = $"Clear-all failed: {ex.Message}";
+        }
+    }
+
     private async void OnIdentifySlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
