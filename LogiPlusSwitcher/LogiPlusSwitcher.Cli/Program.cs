@@ -1,74 +1,110 @@
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Core.HidPp.Features;
+using LogiPlusSwitcher.Core.Switcher;
 
-LogiPlusSwitcher.Core.Hid.HidApiBridge.EnsureNativeLibraryResolver();
-LogiPlusSwitcher.Core.Hid.HidApiBridge.SetMacOsNonExclusive();
+HidApiBridge.EnsureNativeLibraryResolver();
+HidApiBridge.SetMacOsNonExclusive();
 
 Console.WriteLine($"libhidapi version: {HidApi.Hid.VersionString()}");
-
-Console.WriteLine();
-Console.WriteLine("All Logitech HID interfaces (raw enumeration):");
-var allLogitech = HidApi.Hid.Enumerate(BoltConstants.LogitechVendorId, 0).ToList();
-foreach (var info in allLogitech)
-{
-    Console.WriteLine($"  PID 0x{info.ProductId:X4}  Usage 0x{info.UsagePage:X4}/0x{info.Usage:X4}  IF#{info.InterfaceNumber}  {info.ProductString}");
-    Console.WriteLine($"    Path: {info.Path}");
-}
-Console.WriteLine($"  ({allLogitech.Count} interface(s) found)");
 Console.WriteLine();
 
 var transport = new HidApiReceiverTransport();
-var receivers = transport.Enumerate();
+var infos = transport.Enumerate();
 
-if (receivers.Count == 0)
+if (infos.Count == 0)
 {
-    Console.WriteLine("No Logitech Bolt receivers matched the management-interface filter.");
-    if (allLogitech.Any(i => i.ProductId == BoltConstants.BoltReceiverProductId))
-    {
-        Console.WriteLine("Note: a Bolt receiver (PID 0xC548) IS attached but its HID++ management interface");
-        Console.WriteLine("did not enumerate under UsagePage 0xFF00 / Usage 0x0001. Filter may need adjustment.");
-    }
-    else
-    {
-        Console.WriteLine("No device with PID 0xC548 attached. Plug in a Bolt receiver and rerun.");
-        Console.WriteLine("On macOS, also confirm Input Monitoring permission for this terminal.");
-    }
+    Console.WriteLine("No Logitech Bolt receivers found.");
+    Console.WriteLine("Plug in a Bolt receiver (VID 0x046D PID 0xC548).");
+    Console.WriteLine("On macOS confirm Input Monitoring permission for this terminal.");
     return 1;
 }
 
-Console.WriteLine($"Found {receivers.Count} Bolt receiver(s):");
-foreach (var r in receivers)
-{
-    Console.WriteLine($"  - {r.ManufacturerString} {r.ProductString}");
-    Console.WriteLine($"    Serial: {r.Serial}  Release: 0x{r.ReleaseNumber:X4}");
-    Console.WriteLine($"    Path:   {r.Path}");
-}
-
+Console.WriteLine($"Found {infos.Count} Bolt receiver(s):");
+foreach (var info in infos)
+    Console.WriteLine($"  {info.ManufacturerString} {info.ProductString} serial={info.Serial}");
 Console.WriteLine();
-Console.WriteLine("Opening first receiver and listening for raw HID++ traffic (Ctrl+C to stop)...");
 
-var info0 = receivers[0];
-using var connection = transport.Open(info0);
+var connection = transport.Open(infos[0]);
+using var receiver = new BoltReceiver(infos[0], connection);
+using var switcher = new SwitcherService(receiver);
 
-connection.FrameReceived += (_, frame) =>
-{
+receiver.RawFrameReceived += (_, frame) =>
     Console.WriteLine($"  IN  {frame}");
-};
-connection.ReadError += (_, ex) =>
+
+receiver.DeviceLinkEstablished += (_, device) =>
 {
-    Console.Error.WriteLine($"  ERR read pump failed: {ex.Message}");
+    Console.WriteLine($"  ++  slot {device.DeviceIndex} link UP wpid=0x{device.Wpid:X4}");
+    _ = Task.Run(() => DiscoverAndDivert(receiver, device.DeviceIndex));
 };
 
-connection.Start();
+receiver.DeviceLinkLost += (_, device) =>
+    Console.WriteLine($"  --  slot {device.DeviceIndex} link LOST");
 
+receiver.HostSwitchPressed += (_, ev) =>
+    Console.WriteLine($"  >>  Easy-Switch slot {ev.DeviceIndex} -> host {ev.TargetHost} (cid 0x{ev.PrimaryCid:X4})");
+
+receiver.FlowHostSwitchDetected += (_, snoop) =>
+    Console.WriteLine($"  >>  Flow snoop: slot {snoop.DeviceIndex} -> host {snoop.TargetHost} (sw_id 0x{snoop.SwId:X1})");
+
+switcher.FanOutIssued += (_, ev) =>
+    Console.WriteLine($"  ->  fan-out CHANGE_HOST host={ev.TargetHost} to {ev.Target}  (source={ev.Source})");
+
+receiver.Start();
+
+Console.WriteLine("Listening. Press Ctrl+C to stop.");
 var quit = new ManualResetEventSlim(false);
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
     quit.Set();
 };
-
 quit.Wait();
-connection.Stop();
+
+Console.WriteLine();
+Console.WriteLine("Restoring CID divert state...");
+foreach (var device in receiver.Devices)
+{
+    try
+    {
+        await receiver.RestoreHostSwitchCidsAsync(device.DeviceIndex);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"  restore failed for slot {device.DeviceIndex}: {ex.Message}");
+    }
+}
+
 Console.WriteLine("Stopped.");
 return 0;
+
+static async Task DiscoverAndDivert(BoltReceiver receiver, byte deviceIndex)
+{
+    try
+    {
+        await receiver.DiscoverFeaturesAsync(deviceIndex);
+        var device = receiver.Devices.FirstOrDefault(d => d.DeviceIndex == deviceIndex);
+        if (device is null)
+            return;
+
+        Console.WriteLine($"      feats slot {deviceIndex}: 1B04={device.ReprogControlsIndex?.ToString("X2") ?? "-"} 1814={device.ChangeHostIndex?.ToString("X2") ?? "-"} 1815={device.HostsInfoIndex?.ToString("X2") ?? "-"}");
+
+        if (device.ReprogControlsIndex is not null)
+        {
+            var diverted = await receiver.DivertHostSwitchCidsAsync(deviceIndex);
+            if (diverted.Count > 0)
+                Console.WriteLine($"      diverted slot {deviceIndex}: {string.Join(", ", diverted.Select(c => $"0x{c:X4}"))}");
+        }
+
+        if (device.HostsInfoIndex is { } hostsIndex)
+        {
+            var info = await receiver.HostsInfo.GetHostsInfoAsync(deviceIndex, hostsIndex);
+            device.LastKnownCurrentHost = info.CurrentHost;
+            Console.WriteLine($"      hosts slot {deviceIndex}: current={info.CurrentHost}/{info.NumberOfHosts}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"      discover slot {deviceIndex} failed: {ex.Message}");
+    }
+}
