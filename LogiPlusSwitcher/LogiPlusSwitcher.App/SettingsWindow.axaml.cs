@@ -219,7 +219,11 @@ public partial class SettingsWindow : Window
                 {
                     Line = $"slot {d.DeviceIndex}  {d.DisplayName}  ({(d.LinkUp ? "online" : "offline")})"
                          + (d.LastKnownBattery is { } b && b.Percent.HasValue ? $"  · {b.Percent}%" : "")
-                         + (d.Serial is not null ? $"  · {d.Serial}" : "")
+                         + (d.Serial is not null ? $"  · {d.Serial}" : ""),
+                    Receiver = receiver,
+                    DeviceIndex = d.DeviceIndex,
+                    DisplayName = d.DisplayName,
+                    LinkUp = d.LinkUp,
                 })
                 .ToList();
 
@@ -330,6 +334,74 @@ public partial class SettingsWindow : Window
         Populate();
     }
 
+    private async void OnIdentifySlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
+        var status = this.FindControl<TextBlock>("StatusLine");
+        if (status is not null) status.Text = $"Identifying {slot.DisplayName}: press any key on it within 5s…";
+        try
+        {
+            var cid = await slot.Receiver.IdentifyAsync(slot.DeviceIndex, TimeSpan.FromSeconds(5));
+            if (status is not null)
+                status.Text = cid.HasValue
+                    ? $"Identified {slot.DisplayName} — CID 0x{cid.Value:X4} detected."
+                    : $"No tap detected for {slot.DisplayName} within 5s.";
+        }
+        catch (Exception ex)
+        {
+            if (status is not null) status.Text = $"Identify failed: {ex.Message}";
+        }
+    }
+
+    private async void OnRenameSlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
+        var newName = await Dialogs.TextPromptDialog.AskAsync(
+            this,
+            title: "Rename device",
+            prompt: $"New name for {slot.DisplayName} (slot {slot.DeviceIndex})",
+            hint: "Stored in the receiver's BOLT_DEVICE_NAME register. Logi Options+ will see the new name.",
+            initial: slot.DisplayName);
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        var status = this.FindControl<TextBlock>("StatusLine");
+        try
+        {
+            var ok = await slot.Receiver.RenameDeviceAsync(slot.DeviceIndex, newName.Trim());
+            if (status is not null)
+                status.Text = ok ? $"Renamed slot {slot.DeviceIndex} → {newName}" : "Rename failed (firmware rejected).";
+        }
+        catch (Exception ex)
+        {
+            if (status is not null) status.Text = $"Rename failed: {ex.Message}";
+        }
+    }
+
+    private async void OnUnpairSlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
+        var ok = await Dialogs.ConfirmDialog.AskAsync(
+            this,
+            title: "Unpair device",
+            header: $"Unpair {slot.DisplayName}?",
+            body: $"Slot {slot.DeviceIndex} on receiver {slot.Receiver.Info.Serial} will be cleared. " +
+                  "You'll need to re-pair the device via Logi Options+ or Pair-New-Device.",
+            confirmLabel: "Unpair");
+        if (!ok) return;
+
+        var status = this.FindControl<TextBlock>("StatusLine");
+        try
+        {
+            var success = await slot.Receiver.UnpairAsync(slot.DeviceIndex);
+            if (status is not null)
+                status.Text = success ? $"Unpaired slot {slot.DeviceIndex}." : "Unpair failed (firmware rejected).";
+        }
+        catch (Exception ex)
+        {
+            if (status is not null) status.Text = $"Unpair failed: {ex.Message}";
+        }
+    }
+
     public sealed class ReceiverRow
     {
         public string Serial { get; set; } = "";
@@ -344,6 +416,12 @@ public partial class SettingsWindow : Window
     public sealed class SlotRow
     {
         public string Line { get; set; } = "";
+        public BoltReceiver? Receiver { get; set; }
+        public byte DeviceIndex { get; set; }
+        public string DisplayName { get; set; } = "";
+        public bool LinkUp { get; set; }
+        public bool CanIdentify => LinkUp;
+        public bool CanRename => LinkUp;
     }
 
     public sealed class TopologyRow

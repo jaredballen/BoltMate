@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LogiPlusSwitcher.App.Dialogs.TextPromptDialog"
+        Width="420" Height="180"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Title="LogiPlusSwitcher">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="PromptText" FontWeight="Bold" Margin="0,0,0,8" />
+        <TextBlock Grid.Row="1" x:Name="HintText" Foreground="#999" Margin="0,0,0,8" TextWrapping="Wrap" />
+        <TextBox Grid.Row="2" x:Name="InputBox" VerticalContentAlignment="Top" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Cancel" Click="OnCancel" />
+            <Button Content="OK" Click="OnOk" IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</Window>

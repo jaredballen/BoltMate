@@ -53,7 +53,25 @@
                                             <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="app:SettingsWindow+SlotRow">
-                                                        <TextBlock Text="{Binding Line}" FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
+                                                        <Grid ColumnDefinitions="*,Auto" Margin="0,1">
+                                                            <TextBlock Grid.Column="0" Text="{Binding Line}"
+                                                                       VerticalAlignment="Center"
+                                                                       FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                                                                <Button Content="Identify"
+                                                                        IsEnabled="{Binding CanIdentify}"
+                                                                        Click="OnIdentifySlot"
+                                                                        Tag="{Binding}" />
+                                                                <Button Content="Rename…"
+                                                                        IsEnabled="{Binding CanRename}"
+                                                                        Click="OnRenameSlot"
+                                                                        Tag="{Binding}" />
+                                                                <Button Content="Unpair"
+                                                                        Foreground="#E57373"
+                                                                        Click="OnUnpairSlot"
+                                                                        Tag="{Binding}" />
+                                                            </StackPanel>
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
