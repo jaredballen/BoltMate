@@ -761,6 +761,74 @@ internal static class Commands
     }
 
     /// <summary>
+    /// Definitive test: does libhidapi-with-correct-init actually deliver
+    /// shared access on this system? Performs the prescribed init sequence
+    /// (Hid.Init() FIRST, then hid_darwin_set_open_exclusive(0)) and then
+    /// attempts to open the receiver TWICE in the same process. If shared
+    /// access is real, both opens succeed and report distinct handles. If
+    /// libhidapi is silently still seizing, the second open fails.
+    /// </summary>
+    public static async Task<int> RunDiagLibhidapiSharedAsync(IReceiverTransport transport, CancellationToken ct)
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+        {
+            Console.WriteLine("diag-libhidapi-shared is macOS-only.");
+            return 2;
+        }
+
+        // (transport already had EnsureNativeLibraryResolver + SetMacOsNonExclusive
+        // called during construction in Program.cs, which now uses the prescribed
+        // init-first ordering.)
+
+        var infos = HidApi.Hid.Enumerate(0x046D, 0xC548).ToList();
+        var managementInfo = infos.FirstOrDefault(i => i.UsagePage == 0xFF00 && i.Usage == 0x0001);
+        if (managementInfo is null)
+        {
+            Console.WriteLine("Could not find Bolt receiver management interface via libhidapi.");
+            return 1;
+        }
+
+        Console.WriteLine($"Found management interface at path: {managementInfo.Path}");
+        Console.WriteLine();
+
+        Console.WriteLine("OPEN #1 (via libhidapi with prescribed init ordering)...");
+        HidApi.Device? device1 = null;
+        try
+        {
+            device1 = new HidApi.Device(managementInfo.Path);
+            Console.WriteLine("  Open #1 SUCCEEDED");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Open #1 FAILED: {ex.Message}");
+            return 3;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("OPEN #2 (same process, while #1 is still held)...");
+        HidApi.Device? device2 = null;
+        try
+        {
+            device2 = new HidApi.Device(managementInfo.Path);
+            Console.WriteLine("  Open #2 SUCCEEDED — shared access IS working at libhidapi layer.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Open #2 FAILED: {ex.Message}");
+            Console.WriteLine("  → libhidapi is NOT delivering shared access despite the prescribed init order.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Holding both handles open. Press wheel-mode + thumb buttons on the mouse.");
+        Console.WriteLine("Press ENTER when done.");
+        await Task.Run(() => Console.ReadLine(), ct);
+
+        device1?.Dispose();
+        device2?.Dispose();
+        return 0;
+    }
+
+    /// <summary>
     /// Opens the Bolt receiver's management interface directly via IOKit
     /// (bypassing libhidapi) with kIOHIDOptionsTypeNone, holds open until
     /// ENTER. Used to test whether libhidapi's hid_darwin_set_open_exclusive(0)

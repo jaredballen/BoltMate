@@ -102,6 +102,17 @@ public static class HidApiBridge
     /// (Logi Options+) can keep the device open simultaneously. Idempotent;
     /// safe to call on any platform.
     /// </summary>
+    /// <remarks>
+    /// CRITICAL ORDERING: libhidapi's <c>hid_init()</c> RESETS the open-exclusive
+    /// flag back to 1 (exclusive, "backward compatibility") on first init —
+    /// see <c>mac/hid.c</c> in libusb/hidapi. <c>hid_open_path</c> calls
+    /// <c>hid_init</c> implicitly, so calling <c>hid_darwin_set_open_exclusive(0)</c>
+    /// BEFORE any device has opened means our flag is clobbered the moment
+    /// the first device opens. We must force-init libhidapi FIRST (via
+    /// <c>HidApi.Hid.Init()</c>), THEN flip the exclusive flag. Subsequent
+    /// init calls are no-ops because <c>hid_mgr</c> is non-null, so the
+    /// flag sticks.
+    /// </remarks>
     /// <returns>True if the call succeeded on macOS, false otherwise.</returns>
     public static bool SetMacOsNonExclusive()
     {
@@ -112,6 +123,11 @@ public static class HidApiBridge
 
         try
         {
+            // 1. Force libhidapi to run its first hid_init NOW — this resets
+            //    device_open_options to 1 (exclusive) as a backward-compat default.
+            HidApi.Hid.Init();
+            // 2. Override to 0 (shared / non-exclusive). This persists for all
+            //    subsequent hid_open_path calls because hid_init is now a no-op.
             hid_darwin_set_open_exclusive(0);
             return true;
         }

@@ -82,6 +82,8 @@ return args[0].ToLowerInvariant() switch
 
     "diag-iokit-open" => await Commands.RunDiagIOKitOpenAsync(cts.Token),
 
+    "diag-libhidapi-shared" => await Commands.RunDiagLibhidapiSharedAsync(transport, cts.Token),
+
     "tail" => await Commands.RunTailAsync(
         lastN: args.Skip(1).FirstOrDefault(a => a.StartsWith("-n", StringComparison.Ordinal)) is { } n
                 && int.TryParse(n.AsSpan(2), out var nv) ? nv : 50,
