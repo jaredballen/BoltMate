@@ -12,39 +12,27 @@
         CI we'll pull this from a NuGet (hidapi-VC) or vcpkg in a follow-up.
   -->
 
-  <Target Name="StageLibHidApiMacOnBuild"
-          AfterTargets="Build"
-          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'">
-    <CallTarget Targets="_StageLibHidApiMacCore">
-      <Output PropertyName="_DropDir" TaskParameter="TargetOutputs" />
-    </CallTarget>
-    <PropertyGroup>
-      <_StageLibHidApiDestination>$(OutputPath)</_StageLibHidApiDestination>
-    </PropertyGroup>
-    <Copy SourceFiles="$(ResolvedHidApiMacSource)"
-          DestinationFolder="$(_StageLibHidApiDestination)"
-          SkipUnchangedFiles="true"
-          Condition="'$(ResolvedHidApiMacSource)' != ''" />
-  </Target>
-
-  <Target Name="StageLibHidApiMacOnPublish"
-          AfterTargets="Publish"
-          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'">
-    <CallTarget Targets="_StageLibHidApiMacCore" />
-    <Copy SourceFiles="$(ResolvedHidApiMacSource)"
-          DestinationFolder="$(PublishDir)"
-          SkipUnchangedFiles="true"
-          Condition="'$(ResolvedHidApiMacSource)' != ''" />
-  </Target>
-
-  <Target Name="_StageLibHidApiMacCore">
-    <PropertyGroup>
-      <BrewArmHidApi>/opt/homebrew/lib/libhidapi.dylib</BrewArmHidApi>
-      <BrewIntelHidApi>/usr/local/lib/libhidapi.dylib</BrewIntelHidApi>
-      <ResolvedHidApiMacSource Condition="Exists('$(BrewArmHidApi)')">$(BrewArmHidApi)</ResolvedHidApiMacSource>
-      <ResolvedHidApiMacSource Condition="'$(ResolvedHidApiMacSource)' == '' AND Exists('$(BrewIntelHidApi)')">$(BrewIntelHidApi)</ResolvedHidApiMacSource>
-    </PropertyGroup>
-    <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." Condition="'$(ResolvedHidApiMacSource)' == ''" />
+  <!-- macOS: resolved at project-evaluation time (parity with the Windows
+       block below). The earlier AfterTargets="Build" approach broke whenever
+       MSBuild reused properties across re-entrant target invocations. -->
+  <PropertyGroup Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'">
+    <_BrewArmHidApi>/opt/homebrew/lib/libhidapi.dylib</_BrewArmHidApi>
+    <_BrewIntelHidApi>/usr/local/lib/libhidapi.dylib</_BrewIntelHidApi>
+    <ResolvedHidApiMacSource Condition="Exists('$(_BrewArmHidApi)')">$(_BrewArmHidApi)</ResolvedHidApiMacSource>
+    <ResolvedHidApiMacSource Condition="'$(ResolvedHidApiMacSource)' == '' AND Exists('$(_BrewIntelHidApi)')">$(_BrewIntelHidApi)</ResolvedHidApiMacSource>
+  </PropertyGroup>
+  <ItemGroup Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true' AND '$(ResolvedHidApiMacSource)' != ''">
+    <Content Include="$(ResolvedHidApiMacSource)">
+      <Link>libhidapi.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+  <Target Name="_WarnIfMissingMacHidApi"
+          BeforeTargets="Build"
+          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true' AND '$(ResolvedHidApiMacSource)' == ''">
+    <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." />
   </Target>
 
   <!--
