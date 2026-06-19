@@ -457,6 +457,69 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// "Tap to identify": for <paramref name="window"/> (default 5 seconds),
+    /// diverts every divertable reprogrammable control on the slot and surfaces
+    /// the first observed press as a confirmation. The CID divert state is
+    /// restored to its prior values when the window closes (or on
+    /// cancellation), so the device behaves normally afterwards.
+    /// </summary>
+    /// <returns>
+    /// The CID of the first pressed control (e.g. 0x00D2 for Easy-Switch 2),
+    /// or null on timeout.
+    /// </returns>
+    public async Task<ushort?> IdentifyAsync(byte deviceIndex, TimeSpan? window = null, CancellationToken ct = default)
+    {
+        var w = window ?? TimeSpan.FromSeconds(5);
+        var device = TryGetDevice(deviceIndex);
+        if (device is null || !device.LinkUp || device.ReprogControlsIndex is not { } reprogIndex)
+            return null;
+
+        var controls = await ReprogControls.ListControlsAsync(deviceIndex, reprogIndex, ct).ConfigureAwait(false);
+        var divertable = controls.Where(c => c.IsDivertable).ToArray();
+        if (divertable.Length == 0)
+            return null;
+
+        var originalDivert = device.DivertedHostSwitchCids.ToHashSet();
+
+        // Divert every divertable control for the duration.
+        foreach (var c in divertable)
+        {
+            try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Diverted, ct); }
+            catch { /* best effort */ }
+        }
+
+        try
+        {
+            var press = await _hostSwitchPressed
+                .Where(p => p.DeviceIndex == deviceIndex && p.PrimaryCid is not null)
+                .FirstAsync()
+                .ToTask(ct)
+                .WaitAsync(w, ct)
+                .ConfigureAwait(false);
+
+            return press.PrimaryCid;
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            // Restore CIDs that weren't originally diverted to Normal; leave originals diverted.
+            foreach (var c in divertable)
+            {
+                if (originalDivert.Contains(c.ControlId)) continue;
+                try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Normal, CancellationToken.None); }
+                catch { /* best effort */ }
+            }
+        }
+    }
+
+    /// <summary>
     /// Unpairs every populated slot on the receiver. Returns the number of
     /// slots successfully unpaired. Sequential, not parallel — receiver
     /// firmware often serialises pairing-register writes anyway.
