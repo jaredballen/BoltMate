@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 128 112">
+  <g style="display:inline">
+    <path d="M416.496-879.002q-33.5 0-56.5 23l-200 200v-104h-80v240h240v-80h-104l200-200 75.766 75.765 27.281-38.984v-39.328c0-2.394.114-4.799.344-7.203l-46.39-46.25q-23-23-56.5-23m223.5 439v80h104l-200 200-86.89-86.89-34.063 48.655v30.47l63.953 63.765q23 23 56.5 23t56.5-23l200-200v104h80v-240z" style="display:inline;fill:#0ad1e8;fill-opacity:1" transform="translate(5.12 112.932)scale(.125)"/>
+    <path d="M319.985-120.008v-40l80-80h-240q-33 0-56.5-23.5t-23.5-56.5v-440q0-33 23.5-56.5t56.5-23.5h640q33 0 56.5 23.5t23.5 56.5v440q0 33-23.5 56.5t-56.5 23.5h-240l80 80v40zm-160-320h640v-320h-640zm0 0v-320z" style="display:inline;fill:#179ad0;fill-opacity:1;stroke-width:.992;stroke-dasharray:none" transform="translate(-.999 115.5)scale(.063)"/>
+    <g style="display:inline;fill:#0371b1;fill-opacity:1">
+      <path d="M3595.862-1615.71v-300h-250l350-500v300h250z" style="fill:#0371b1;fill-opacity:1;stroke-width:2.5" transform="matrix(.06 0 0 .06 -155.321 174.1)"/>
+    </g>
+    <g style="display:inline;fill:#fff;fill-opacity:1;stroke:#fff;stroke-width:.992;stroke-dasharray:none;stroke-opacity:1">
+      <path d="M320-120v-80h80v-80H160q-33 0-56.5-23.5T80-360v-400q0-33 23.5-56.5T160-840h640q33 0 56.5 23.5T880-760v400q0 33-23.5 56.5T800-280H560v80h80v80zM160-360h640v-400H160Zm0 0v-400z" style="display:inline;fill:#179ad0;fill-opacity:1" transform="translate(69 60.114)scale(.063)"/>
+    </g>
+  </g>
+</svg>

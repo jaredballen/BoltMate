@@ -83,6 +83,10 @@ public partial class App : Application
                 OnAboutClicked = ShowAbout,
             };
             _disposables.Add(_trayController);
+
+            // Theme-aware tray icon — black on light menubars, white on dark.
+            _disposables.Add(new TrayIconThemeWatcher(trays[0],
+                _loggerFactory.CreateLogger<TrayIconThemeWatcher>()));
         }
         else
         {

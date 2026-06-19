@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
@@ -31,12 +31,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Bitmap resources loaded at runtime via avares:// -->
     <AvaloniaResource Include="Assets/tray-icon.png" />
     <AvaloniaResource Include="Assets/tray-icon@2x.png" />
-    <AvaloniaResource Include="Assets/app-icon-512.png" />
+    <AvaloniaResource Include="Assets/tray-icon-light.png" />
+    <AvaloniaResource Include="Assets/tray-icon-light@2x.png" />
+    <AvaloniaResource Include="Assets/tray-icon-dark.png" />
+    <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
+    <AvaloniaResource Include="Assets/app-icon-1024.png" />
+
+    <!-- Source-of-truth SVG + the .icns macOS bundles need at install time -->
     <Content Include="Assets/LogiPlusSwitcher.icns">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <None Include="Assets/app-icon.svg" />
   </ItemGroup>
 </Project>
