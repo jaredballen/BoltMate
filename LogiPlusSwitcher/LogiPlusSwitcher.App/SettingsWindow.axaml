@@ -2,44 +2,98 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="using:LogiPlusSwitcher.App"
         x:Class="LogiPlusSwitcher.App.SettingsWindow"
-        Width="640" Height="480"
-        MinWidth="480" MinHeight="320"
+        Width="720" Height="560"
+        MinWidth="520" MinHeight="400"
         Title="LogiPlusSwitcher Settings"
         WindowStartupLocation="CenterScreen">
 
-    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
-        <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
-            <TextBlock Text="Receivers and devices" FontSize="16" FontWeight="Bold" />
-            <TextBlock x:Name="StatusLine" Foreground="#888" />
-        </StackPanel>
+    <TabControl Margin="12">
+        <!-- Receivers tab -->
+        <TabItem Header="Receivers">
+            <Grid Margin="8" RowDefinitions="Auto,*,Auto">
+                <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,8">
+                    <TextBlock Text="Receivers and devices" FontSize="16" FontWeight="Bold" />
+                    <TextBlock x:Name="StatusLine" Foreground="#888" />
+                </StackPanel>
 
-        <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
-            <ScrollViewer>
-                <ItemsControl x:Name="ReceiverList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="app:SettingsWindow+ReceiverRow">
-                            <Border Padding="12" Margin="0,0,0,1" Background="#16FFFFFF">
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="{Binding Header}" FontWeight="Bold" />
-                                    <TextBlock Text="{Binding SubLine}" FontSize="12" Foreground="#999" />
-                                    <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate DataType="app:SettingsWindow+SlotRow">
-                                                <TextBlock Text="{Binding Line}" FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-        </Border>
+                <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
+                    <ScrollViewer>
+                        <ItemsControl x:Name="ReceiverList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="app:SettingsWindow+ReceiverRow">
+                                    <Border Padding="12" Margin="0,0,0,1" Background="#16FFFFFF">
+                                        <StackPanel Spacing="6">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel Grid.Column="0" Spacing="2">
+                                                    <TextBlock Text="{Binding Header}" FontWeight="Bold" />
+                                                    <TextBlock Text="{Binding SubLine}" FontSize="12" Foreground="#999" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <Border Background="{Binding StatusBrush}" CornerRadius="3" Padding="6,2">
+                                                        <TextBlock Text="{Binding StatusLabel}" FontSize="11" Foreground="#FFF" />
+                                                    </Border>
+                                                    <Button Content="Set as primary"
+                                                            IsVisible="{Binding ShowSetPrimary}"
+                                                            Click="OnSetPrimary"
+                                                            Tag="{Binding Serial}" />
+                                                </StackPanel>
+                                            </Grid>
+                                            <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="app:SettingsWindow+SlotRow">
+                                                        <TextBlock Text="{Binding Line}" FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
-            <Button Content="Refresh" Click="OnRefresh" />
-            <Button Content="Close" Click="OnClose" />
-        </StackPanel>
-    </Grid>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+                    <Button Content="Refresh" Click="OnRefresh" />
+                    <Button Content="Close" Click="OnClose" />
+                </StackPanel>
+            </Grid>
+        </TabItem>
+
+        <!-- Topology tab -->
+        <TabItem Header="Topology">
+            <Grid Margin="8" RowDefinitions="Auto,*">
+                <TextBlock Grid.Row="0" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="#CCC">
+                    Each row is a paired device. Each column is a host (receiver) that some device has a slot mapped to.
+                    The cell shows the device's slot number that points to that host. Empty = device isn't paired to that host.
+                </TextBlock>
+                <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
+                    <ScrollViewer>
+                        <ItemsControl x:Name="TopologyList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="app:SettingsWindow+TopologyRow">
+                                    <Border Padding="8" Margin="0,0,0,1" Background="#10FFFFFF">
+                                        <TextBlock Text="{Binding Line}" FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </TabItem>
+
+        <!-- License tab -->
+        <TabItem Header="License">
+            <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,*">
+                <TextBlock Grid.Row="0" Text="License" FontSize="16" FontWeight="Bold" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="1" x:Name="LicenseStatusLine" Margin="0,0,0,12" Foreground="#CCC" />
+                <TextBlock Grid.Row="2" Text="License key" Margin="0,0,0,4" />
+                <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+                    <TextBox x:Name="LicenseKeyBox" Width="320" Watermark="Paste your key here" />
+                    <Button Content="Apply" Click="OnApplyLicense" />
+                </StackPanel>
+            </Grid>
+        </TabItem>
+    </TabControl>
 </Window>

@@ -96,7 +96,7 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        if (_manager is null) return;
+        if (_manager is null || _policy is null) return;
 
         if (_settingsWindow is not null && _settingsWindow.IsVisible)
         {
@@ -108,7 +108,7 @@ public partial class App : Application
         // who Cmd-Tab can find us. Restore accessory mode on close.
         MacActivationPolicy.ShowDockIcon();
 
-        _settingsWindow = new SettingsWindow(_manager);
+        _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings);
         _settingsWindow.Closed += (_, _) =>
         {
             _settingsWindow = null;
