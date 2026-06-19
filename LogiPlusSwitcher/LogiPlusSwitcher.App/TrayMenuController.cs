@@ -199,10 +199,12 @@ public sealed class TrayMenuController : IDisposable
             _license = license;
             _logger = logger;
 
-            var label = string.IsNullOrEmpty(receiver.Info.Serial)
-                ? receiver.Info.ProductString
-                : $"{receiver.Info.ProductString} — {receiver.Info.Serial}";
-            _headerItem = new NativeMenuItem(label) { IsEnabled = false };
+            _headerItem = new NativeMenuItem(FormatReceiverHeader(receiver)) { IsEnabled = false };
+            // Re-label when the receiver's participation changes (e.g. user
+            // picks a different primary in Free mode).
+            _subDisposables.Add(receiver.ParticipationChanges.Subscribe(_ =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    _headerItem.Header = FormatReceiverHeader(_receiver))));
 
             _clearAllItem = new NativeMenuItem("Clear all pairings… (Pro)");
             _clearAllItem.Click += async (_, _) =>
@@ -341,6 +343,16 @@ public sealed class TrayMenuController : IDisposable
                 ? $" · {b.Percent}%"
                 : "";
             return $"Slot {device.DeviceIndex}: {device.DisplayName} ({status}{battery})";
+        }
+
+        private static string FormatReceiverHeader(BoltReceiver receiver)
+        {
+            var baseLabel = string.IsNullOrEmpty(receiver.Info.Serial)
+                ? receiver.Info.ProductString
+                : $"{receiver.Info.ProductString} — {receiver.Info.Serial}";
+            return receiver.IsParticipating
+                ? baseLabel
+                : $"{baseLabel}  (standby — Pro)";
         }
 
         private void InsertSlotItemInOrder(NativeMenuItem item)

@@ -70,6 +70,29 @@ Two architectural rules apply across the codebase:
 
 1. **No CLR events on the public Core API.** State is observable via `IObservable<T>` (point events) or DynamicData's `IObservableCache<TObject, TKey>` (collections). Subjects stay private; only `.AsObservable()` is exposed. `CompositeDisposable` everywhere instead of per-field `Dispose` calls. See [feedback-dotnet-reactive-style](.claude/...) memory.
 2. **Tier gating lives at the App layer only.** Core exposes every capability unconditionally; the App's `ILicenseService` decides whether to expose Pro features in the UI. Two stub impls today: `DevAlwaysProLicenseService` (everything unlocked) and `FreeOnlyLicenseService` (testing upsell paths). See [feedback-tier-gating](.claude/...) memory.
+3. **Multi-receiver is the only Pro feature with Core ties** — the policy decision is at the App layer (`ReceiverPolicyService`), but Core has a mechanical `BoltReceiver.IsParticipating` toggle the App drives. Core never reads license state directly; it just respects the flag in `SwitcherService`.
+
+## Topology-aware fan-out
+
+`SwitcherService` is **manager-scoped** (one per `ReceiverManager`, not per receiver). Routes switch events across all attached participating receivers by matching BLE addresses through each device's `HostBindings`:
+
+1. Origin device pressed Easy-Switch to its host slot N → `targetBle = device.HostBindings[N].BluetoothAddressKey`
+2. For each device on every participating receiver, look up the slot whose binding points to `targetBle` → `CHANGE_HOST(matching_slot)`
+3. Skip the originator, non-participating receivers, devices without `CanReceiveHostSwitch`, offline devices, and siblings without a matching binding (logged + UI-surfaceable)
+
+Falls back to legacy "same host index for every sibling" routing when the origin's `HostBindings` aren't populated yet (cold-start before `DeviceEnricher` has read them).
+
+`HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. Persistence to disk for offline-device bindings tracked as a follow-up.
+
+## App layer composition (LogiPlusSwitcher.App)
+
+- `App.axaml.cs` — bootstrap: settings load, license service, transport, manager, policy, switcher, enricher, tray controller. Sequence matters: policy must wire to manager before any receivers attach.
+- `ReceiverPolicyService` — reconciles `ILicenseService` + `AppSettings.PrimaryReceiverSerial` + `manager.Receivers` → sets `IsParticipating` per attached receiver. Fires `MultiReceiverPromptRequired` when Free + 2+ receivers + no primary chosen.
+- `DeviceEnricher` — background metadata reads on link-up: feature discovery + name/serial/battery/host bindings.
+- `TrayMenuController` — builds dynamic NativeMenu from manager cache; per-receiver sub-sections with per-slot submenus; "(standby — Pro)" suffix on non-participating receivers.
+- `SettingsWindow` — three tabs: Receivers (with participation pills + "Set as primary"), Topology (cross-receiver matrix), License (key entry).
+- `MultiReceiverPrompt` — first-run-style picker when Free + multiple receivers + no primary.
+- `MacActivationPolicy` — NSApp activation policy P/Invoke to show/hide the Dock icon when settings or prompts open.
 
 ## Build / run
 
