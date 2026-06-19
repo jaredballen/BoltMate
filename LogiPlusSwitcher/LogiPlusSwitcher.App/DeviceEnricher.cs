@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reactive.Disposables;
 using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
@@ -113,13 +114,21 @@ public sealed class DeviceEnricher : IDisposable
                 }
             }
 
-            // Current host (feature 0x1815).
+            // Current host + per-slot BLE bindings (feature 0x1815).
             if (device.HostsInfoIndex is { } hostsIdx)
             {
                 try
                 {
                     var hosts = await receiver.HostsInfo.GetHostsInfoAsync(deviceIndex, hostsIdx);
                     device.LastKnownCurrentHost = hosts.CurrentHost;
+
+                    // Read each host's binding so SwitcherService can route by BLE.
+                    var bindings = await receiver.HostsInfo.GetAllHostsAsync(deviceIndex, hostsIdx);
+                    var dict = new Dictionary<byte, LogiPlusSwitcher.Core.Bolt.HostBinding>();
+                    foreach (var b in bindings)
+                        dict[b.HostIndex] = b;
+                    device.HostBindings = dict;
+
                     receiver.RefreshSlot(deviceIndex);
                 }
                 catch (HidPpException) { /* skip */ }

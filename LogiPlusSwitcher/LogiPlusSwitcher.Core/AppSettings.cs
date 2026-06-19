@@ -22,6 +22,13 @@ public sealed class AppSettings
     /// <summary>License key for Pro features (null = free tier).</summary>
     public string? LicenseKey { get; set; }
 
+    /// <summary>
+    /// Serial of the receiver designated as "primary" on the Free tier. When
+    /// the user has multiple receivers attached and is not Pro, only this
+    /// one participates in switch fan-out. Null = no primary chosen yet.
+    /// </summary>
+    public string? PrimaryReceiverSerial { get; set; }
+
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 

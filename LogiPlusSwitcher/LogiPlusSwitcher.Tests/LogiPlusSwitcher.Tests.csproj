@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LogiPlusSwitcher.Core\LogiPlusSwitcher.Core.csproj" />
+    <ProjectReference Include="..\LogiPlusSwitcher.App\LogiPlusSwitcher.App.csproj" />
   </ItemGroup>
 
 </Project>

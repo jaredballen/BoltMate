@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LogiPlusSwitcher.App.MultiReceiverPrompt"
+        Width="520" Height="360"
+        Title="Multiple Bolt receivers detected"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False">
+
+    <Grid Margin="20" RowDefinitions="Auto,Auto,*,Auto">
+        <TextBlock Grid.Row="0"
+                   Text="Multiple Bolt receivers detected"
+                   FontSize="18" FontWeight="Bold" Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="1" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="#CCC">
+            The Free tier supports one Bolt receiver. Pick the one you want
+            LogiPlusSwitcher to manage. Others will still show in Settings
+            but their devices won't be auto-switched.
+            Upgrade to Pro to use all your receivers together.
+        </TextBlock>
+
+        <Border Grid.Row="2" BorderBrush="#444" BorderThickness="1" CornerRadius="6" Padding="8">
+            <ListBox x:Name="ReceiverList" />
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Set as primary" Click="OnSetPrimary" />
+            <Button Content="Cancel" Click="OnClose" />
+        </StackPanel>
+    </Grid>
+</Window>

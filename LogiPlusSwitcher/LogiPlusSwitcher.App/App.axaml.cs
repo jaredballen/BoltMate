@@ -7,6 +7,8 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
 using LogiPlusSwitcher.App.Licensing;
+using Avalonia.Threading;
+using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.Switcher;
@@ -21,6 +23,8 @@ public partial class App : Application
     private ReceiverManager? _manager;
     private SwitcherService? _switcher;
     private TrayMenuController? _trayController;
+    private ReceiverPolicyService? _policy;
+    private AppSettings _settings = new();
     private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
 
@@ -41,6 +45,7 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("LogiPlusSwitcher.App starting (Avalonia 12)");
 
+        _settings = AppSettings.Load();
         HidApiBridge.EnsureNativeLibraryResolver();
         HidApiBridge.SetMacOsNonExclusive();
 
@@ -49,6 +54,14 @@ public partial class App : Application
 
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
+
+        // Tier policy: drives BoltReceiver.IsParticipating based on
+        // license + primary-receiver setting + attached set.
+        _policy = new ReceiverPolicyService(_manager, _license, _settings,
+            _loggerFactory.CreateLogger<ReceiverPolicyService>());
+        _disposables.Add(_policy);
+        _disposables.Add(_policy.MultiReceiverPromptRequired
+            .Subscribe(_ => Dispatcher.UIThread.Post(ShowMultiReceiverPrompt)));
 
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Topology-aware: routes by matching BLE address
@@ -107,5 +120,19 @@ public partial class App : Application
     private void ShowAbout()
     {
         // TODO: real about dialog.
+    }
+
+    private bool _multiReceiverPromptShown;
+    private void ShowMultiReceiverPrompt()
+    {
+        if (_multiReceiverPromptShown) return;
+        if (_manager is null) return;
+
+        _multiReceiverPromptShown = true;
+        var prompt = new MultiReceiverPrompt(_manager, _policy!);
+        prompt.Closed += (_, _) => _multiReceiverPromptShown = false;
+        MacActivationPolicy.ShowDockIcon();
+        prompt.Closed += (_, _) => MacActivationPolicy.HideDockIcon();
+        prompt.Show();
     }
 }
