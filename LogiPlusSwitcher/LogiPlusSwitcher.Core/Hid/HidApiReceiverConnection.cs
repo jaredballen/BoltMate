@@ -42,26 +42,18 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
         var bytes = frame.ToBytes();
         lock (_gate)
         {
-            // Workaround: on Windows the standard hid_write path fails with
-            // ERROR_INVALID_FUNCTION for long (0x11) HID++ reports against the
-            // Bolt receiver's management interface. SendFeatureReport works
-            // because it routes through HidD_SetFeature rather than the
-            // interrupt OUT pipe. Short reports keep using the normal Write.
-            if (frame.IsLong && OperatingSystem.IsWindows())
-            {
-                try
-                {
-                    _device.SendFeatureReport(bytes);
-                    return;
-                }
-                catch (HidApi.HidException)
-                {
-                    // Fall through to the standard write as a last resort.
-                }
-            }
-
             _device.Write(bytes);
         }
+
+        // Known issue (#31): on Win 11 arm64 with x64 emulation, long (0x11)
+        // HID++ writes to the Bolt management interface fail with WriteFile
+        // ERROR_INVALID_FUNCTION (0x1). Short writes succeed. Attempted
+        // workarounds that did NOT fix it:
+        //   - SendFeatureReport (HidD_SetFeature) — same error path
+        //   - Pad to 64 bytes — untested but unlikely (hidapi pads internally)
+        // Next debug step: capture a Logi+ write of the same shape via
+        // Wireshark XHC20 and diff; consider a direct WriteFile via P/Invoke
+        // or HidD_SetOutputReport instead of going through hidapi's hid_write.
     }
 
     public void Start()
