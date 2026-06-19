@@ -468,25 +468,6 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private async void OnIdentifySlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
-        var status = this.FindControl<TextBlock>("StatusLine");
-        if (status is not null) status.Text = $"Identifying {slot.DisplayName}: press any key on it within 5s…";
-        try
-        {
-            var cid = await slot.Receiver.IdentifyAsync(slot.DeviceIndex, TimeSpan.FromSeconds(5));
-            if (status is not null)
-                status.Text = cid.HasValue
-                    ? $"Identified {slot.DisplayName} — CID 0x{cid.Value:X4} detected."
-                    : $"No tap detected for {slot.DisplayName} within 5s.";
-        }
-        catch (Exception ex)
-        {
-            if (status is not null) status.Text = $"Identify failed: {ex.Message}";
-        }
-    }
-
     private async void OnRenameSlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
@@ -554,7 +535,6 @@ public partial class SettingsWindow : Window
         public byte DeviceIndex { get; set; }
         public string DisplayName { get; set; } = "";
         public bool LinkUp { get; set; }
-        public bool CanIdentify => LinkUp;
         public bool CanRename => LinkUp;
     }
 
