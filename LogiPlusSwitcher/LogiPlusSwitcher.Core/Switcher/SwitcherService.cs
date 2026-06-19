@@ -3,6 +3,8 @@ using System.Reactive.Subjects;
 using System.Reactive.Linq;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.HidPp.Notifications;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LogiPlusSwitcher.Core.Switcher;
 
@@ -24,15 +26,17 @@ namespace LogiPlusSwitcher.Core.Switcher;
 public sealed class SwitcherService : IDisposable
 {
     private readonly BoltReceiver _receiver;
+    private readonly ILogger<SwitcherService> _logger;
     private readonly Subject<FanOutEvent> _fanOuts = new();
     private readonly CompositeDisposable _disposables = new();
 
     /// <summary>Stream of fan-out writes issued. One per sibling device per trigger.</summary>
     public IObservable<FanOutEvent> FanOuts => _fanOuts.AsObservable();
 
-    public SwitcherService(BoltReceiver receiver)
+    public SwitcherService(BoltReceiver receiver, ILogger<SwitcherService>? logger = null)
     {
         _receiver = receiver;
+        _logger = logger ?? NullLogger<SwitcherService>.Instance;
 
         _disposables.Add(_receiver.HostSwitchPresses.Subscribe(OnHostSwitchPressed));
         _disposables.Add(_receiver.FlowHostSwitches.Subscribe(OnFlowHostSwitchDetected));
@@ -55,6 +59,9 @@ public sealed class SwitcherService : IDisposable
 
     private void FanOut(byte originatingSlot, byte targetHost, FanOutSource source)
     {
+        _logger.LogInformation("Fan-out triggered by slot {OriginatingSlot} -> host {TargetHost} (source={Source})",
+            originatingSlot, targetHost, source);
+
         foreach (var device in _receiver.Devices.Items)
         {
             if (device.DeviceIndex == originatingSlot)
@@ -65,7 +72,10 @@ public sealed class SwitcherService : IDisposable
                 continue;
 
             if (_receiver.TrySwitchHost(device.DeviceIndex, targetHost))
+            {
+                _logger.LogInformation("Fan-out wrote CHANGE_HOST({TargetHost}) to slot {Slot}", targetHost, device.DeviceIndex);
                 _fanOuts.OnNext(new FanOutEvent(device, targetHost, source, originatingSlot));
+            }
         }
     }
 }

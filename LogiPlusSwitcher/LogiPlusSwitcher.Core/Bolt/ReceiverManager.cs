@@ -3,6 +3,8 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using DynamicData;
 using LogiPlusSwitcher.Core.Hid;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LogiPlusSwitcher.Core.Bolt;
 
@@ -22,6 +24,7 @@ public sealed class ReceiverManager : IDisposable
 {
     private readonly IReceiverTransport _transport;
     private readonly Func<BoltReceiverInfo, IReceiverConnection, BoltReceiver> _factory;
+    private readonly ILogger<ReceiverManager> _logger;
     private readonly SourceCache<BoltReceiver, string> _receiversCache;
     private readonly Subject<Exception> _attachFailures = new();
     private readonly CompositeDisposable _disposables = new();
@@ -41,10 +44,13 @@ public sealed class ReceiverManager : IDisposable
         IReceiverTransport transport,
         TimeSpan? pollInterval = null,
         Func<BoltReceiverInfo, IReceiverConnection, BoltReceiver>? receiverFactory = null,
-        bool autoStart = true)
+        bool autoStart = true,
+        ILoggerFactory? loggerFactory = null)
     {
         _transport = transport;
-        _factory = receiverFactory ?? ((info, conn) => new BoltReceiver(info, conn));
+        var lf = loggerFactory ?? NullLoggerFactory.Instance;
+        _logger = lf.CreateLogger<ReceiverManager>();
+        _factory = receiverFactory ?? ((info, conn) => new BoltReceiver(info, conn, logger: lf.CreateLogger<BoltReceiver>()));
         PollInterval = pollInterval ?? TimeSpan.FromSeconds(2);
         _receiversCache = new SourceCache<BoltReceiver, string>(r => r.Info.Path);
         Receivers = _receiversCache.AsObservableCache();
@@ -108,8 +114,9 @@ public sealed class ReceiverManager : IDisposable
         var removed = _receiversCache.Items.Where(r => !currentPaths.Contains(r.Info.Path)).ToArray();
         foreach (var receiver in removed)
         {
+            _logger.LogInformation("Receiver detached: serial {Serial}", receiver.Info.Serial);
             _receiversCache.Remove(receiver);
-            try { receiver.Dispose(); } catch { /* swallow */ }
+            try { receiver.Dispose(); } catch (Exception ex) { _logger.LogWarning(ex, "Receiver dispose failed"); }
         }
 
         // Add new receivers.
@@ -124,9 +131,11 @@ public sealed class ReceiverManager : IDisposable
                 var receiver = _factory(info, connection);
                 _receiversCache.AddOrUpdate(receiver);
                 receiver.Start();
+                _logger.LogInformation("Receiver attached: {Product} (serial {Serial})", info.ProductString, info.Serial);
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Attach failed for {Path}", info.Path);
                 _attachFailures.OnNext(ex);
             }
         }

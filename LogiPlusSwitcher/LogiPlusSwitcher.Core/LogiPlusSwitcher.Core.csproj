@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="DynamicData" Version="9.4.31" />
     <PackageReference Include="HidApi.Net" Version="1.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="System.Reactive" Version="6.1.0" />
   </ItemGroup>
 

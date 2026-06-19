@@ -3,6 +3,8 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using HidApi;
 using LogiPlusSwitcher.Core.HidPp;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LogiPlusSwitcher.Core.Hid;
 
@@ -14,6 +16,7 @@ namespace LogiPlusSwitcher.Core.Hid;
 internal sealed class HidApiReceiverConnection : IReceiverConnection
 {
     private readonly Device _device;
+    private readonly ILogger<HidApiReceiverConnection> _logger;
     private readonly object _gate = new();
     private readonly Subject<HidPpFrame> _frames = new();
     private readonly Subject<Exception> _readErrors = new();
@@ -24,9 +27,10 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
     public IObservable<HidPpFrame> InboundFrames => _frames.AsObservable();
     public IObservable<Exception> ReadErrors => _readErrors.AsObservable();
 
-    public HidApiReceiverConnection(Device device)
+    public HidApiReceiverConnection(Device device, ILogger<HidApiReceiverConnection>? logger = null)
     {
         _device = device;
+        _logger = logger ?? NullLogger<HidApiReceiverConnection>.Instance;
         _disposables.Add(_frames);
         _disposables.Add(_readErrors);
         _disposables.Add(Disposable.Create(StopAndWait));
@@ -97,6 +101,7 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
             }
             catch (Exception ex) when (!token.IsCancellationRequested)
             {
+                _logger.LogError(ex, "Read pump failed");
                 _readErrors.OnNext(ex);
                 return;
             }

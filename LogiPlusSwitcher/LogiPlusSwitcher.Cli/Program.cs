@@ -1,10 +1,17 @@
 using LogiPlusSwitcher.Cli;
 using LogiPlusSwitcher.Core.Hid;
+using Microsoft.Extensions.Logging;
+
+var verbose = args.Contains("--verbose") || args.Contains("-v");
+args = args.Where(a => a is not ("--verbose" or "-v")).ToArray();
+
+using var loggerFactory = LoggerSetup.Create(verbose ? LogLevel.Debug : LogLevel.Information);
 
 HidApiBridge.EnsureNativeLibraryResolver();
 HidApiBridge.SetMacOsNonExclusive();
 
-var transport = new HidApiReceiverTransport();
+var transport = new HidApiReceiverTransport(loggerFactory);
+Commands.LoggerFactory = loggerFactory;
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {

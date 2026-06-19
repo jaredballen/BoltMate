@@ -6,6 +6,8 @@ using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.HidPp.Features;
 using LogiPlusSwitcher.Core.HidPp.Notifications;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LogiPlusSwitcher.Core.Bolt;
 
@@ -18,6 +20,7 @@ public sealed class BoltReceiver : IDisposable
 {
     private readonly IReceiverConnection _connection;
     private readonly HidPpClient _client;
+    private readonly ILogger<BoltReceiver> _logger;
     private readonly SourceCache<PairedDevice, byte> _devicesCache;
     private readonly Subject<DivertedButtonsNotification> _hostSwitchPressed = new();
     private readonly Subject<ChangeHostWriteSnoop> _flowHostSwitchDetected = new();
@@ -64,11 +67,12 @@ public sealed class BoltReceiver : IDisposable
     /// <summary>Stream of slots that just lost their wireless link.</summary>
     public IObservable<PairedDevice> LinkLost => _linkLost.AsObservable();
 
-    public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, HidPpClient? client = null)
+    public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, HidPpClient? client = null, ILogger<BoltReceiver>? logger = null)
     {
         Info = info;
         _connection = connection;
         _client = client ?? new HidPpClient(connection);
+        _logger = logger ?? NullLogger<BoltReceiver>.Instance;
         _devicesCache = new SourceCache<PairedDevice, byte>(d => d.DeviceIndex);
 
         Devices = _devicesCache.AsObservableCache();
@@ -100,6 +104,7 @@ public sealed class BoltReceiver : IDisposable
             return;
         _started = true;
 
+        _logger.LogInformation("Starting receiver {Serial} ({Product})", Info.Serial, Info.ProductString);
         _connection.Start();
         _client.SendOneWay(HidPp10.BuildEnableNotificationsFrame());
         _client.SendOneWay(HidPp10.BuildEnumerateDevicesFrame());
@@ -250,12 +255,21 @@ public sealed class BoltReceiver : IDisposable
             RefreshSlot(pairing.DeviceIndex);
 
             if (pairing.LinkEstablished && !previousLinkUp)
+            {
+                _logger.LogInformation("Slot {Slot} link UP wpid=0x{Wpid:X4}", device.DeviceIndex, device.Wpid);
                 _linkEstablished.OnNext(device);
+            }
             else if (!pairing.LinkEstablished && previousLinkUp)
+            {
+                _logger.LogInformation("Slot {Slot} link LOST", device.DeviceIndex);
                 _linkLost.OnNext(device);
-            // First-seen notification with LinkEstablished: emit as a link-up.
+            }
             else if (pairing.LinkEstablished)
+            {
+                // First-seen notification with LinkEstablished: emit as a link-up.
+                _logger.LogInformation("Slot {Slot} link UP (first seen) wpid=0x{Wpid:X4}", device.DeviceIndex, device.Wpid);
                 _linkEstablished.OnNext(device);
+            }
             return;
         }
 

@@ -2,11 +2,17 @@ using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.Switcher;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LogiPlusSwitcher.Cli;
 
 internal static class Commands
 {
+    /// <summary>Logger factory injected by the Program bootstrap.</summary>
+    public static ILoggerFactory LoggerFactory { get; set; } = NullLoggerFactory.Instance;
+
+
     public static void PrintUsage()
     {
         Console.WriteLine("logiplus — companion switcher for Logitech Bolt receivers");
@@ -41,7 +47,7 @@ internal static class Commands
             Console.WriteLine($"  path:    {info.Path}");
 
             using var connection = transport.Open(info);
-            using var receiver = new BoltReceiver(info, connection);
+            using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
 
             // Settle a brief window for paired-device 0x41 notifications.
             using var enumWait = new ManualResetEventSlim(false);
@@ -91,7 +97,7 @@ internal static class Commands
     {
         var perReceiver = new Dictionary<string, ReceiverSubscriptions>();
 
-        using var manager = new ReceiverManager(transport, pollInterval: TimeSpan.FromSeconds(2));
+        using var manager = new ReceiverManager(transport, pollInterval: TimeSpan.FromSeconds(2), loggerFactory: LoggerFactory);
         using var attachFailSub = manager.AttachFailures.Subscribe(ex =>
             Console.Error.WriteLine($"  !! attach failed: {ex.Message}"));
 
@@ -167,7 +173,7 @@ internal static class Commands
         subs.Add(receiver.FlowHostSwitches.Subscribe(snoop =>
             Console.WriteLine($"  >>  [{receiver.Info.Serial}] Flow snoop: slot {snoop.DeviceIndex} -> host {snoop.TargetHost} (sw_id 0x{snoop.SwId:X1})")));
 
-        var switcher = new SwitcherService(receiver);
+        var switcher = new SwitcherService(receiver, LoggerFactory.CreateLogger<SwitcherService>());
         subs.Add(switcher);
         subs.Add(switcher.FanOuts.Subscribe(ev =>
             Console.WriteLine($"  ->  [{receiver.Info.Serial}] fan-out host={ev.TargetHost} slot={ev.Target.DeviceIndex} src={ev.Source}")));
