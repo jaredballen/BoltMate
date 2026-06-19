@@ -2,42 +2,48 @@
 
 A **companion** to Logi Options+ — not a replacement, not a competitor.
 
-When you switch your keyboard, mouse, headset, or other Bolt-paired Logitech
-device to another host (via the Easy-Switch button, the device's channel
-button, or Mouse Flow), LogiPlusSwitcher detects the event and fans the host
-change out to every other device paired to the same Bolt receiver. The whole
-peripheral set follows you between computers together.
+When you switch your keyboard, mouse, headset, or other Bolt-paired Logitech device to another host (via the Easy-Switch button, the device's channel button, or Mouse Flow), LogiPlusSwitcher detects the event and fans the host change out to every other device paired to the same Bolt receiver. The whole peripheral set follows you between computers together.
 
-**Why this exists.** Logi Flow only triggers a multi-device follow when the
-mouse cursor crosses a screen edge. If you tap Easy-Switch on the keyboard,
-the mouse doesn't follow. Flow's edge-detect is also flaky in practice. This
-app closes that gap.
+**Why this exists.** Logi Flow only triggers a multi-device follow when the mouse cursor crosses a screen edge. If you tap Easy-Switch on the keyboard, the mouse doesn't follow. Flow's edge-detect is also flaky in practice. This app closes that gap.
 
-**Status: alpha.** Headless service is feature-complete; hardware verification
-is in progress. A tray UI (Avalonia 11) lands in phase 2.
+**Status: alpha.** Headless service is feature-complete and hardware-verified on macOS for the core flow + management features (receiver info, device identification, unpair, clear, backup, tap-to-identify, battery). A tray UI (Avalonia 12) ships in scaffold form and will mature in phase 2.
 
-## What it detects
+## What it can do
 
-| Trigger | How |
+### Free tier (read + runtime fan-out)
+
+- **Hot-plug multi-receiver detection** — attach/detach handled automatically.
+- **Live device enumeration** — model name, serial, BLE address, firmware version, battery level, paired host.
+- **Unified fan-out switching** — any Easy-Switch press, mouse Flow event, or in-app hotkey makes every other paired device follow to the same host.
+- **Tap-to-identify** — flash a slot's controls for 5 seconds to confirm which physical device is which.
+- **Backup pairings to JSON** — capture your receiver tables for support flows or future restore.
+- **Diagnostic bundle** — `logiplus diagnose` zips pairings + recent logs + system info for support.
+
+### Pro tier (write-to-receiver-flash)
+
+- **Unpair** a single slot.
+- **Clear all** pairings on a receiver.
+- **Pair new devices** (state machine implemented, passkey UI in phase 2).
+- **Rename** a paired device (implementation lands once we wire HID++ 2.0 feature 0x0005 setName — current path is firmware-blocked).
+- **Move pairings between receivers** (consolidate two receivers into one without re-pairing every device manually).
+
+Tier enforcement happens at the App layer; Core has no `if (paid)` branches — see the [tier-gating design memo](docs/tier-gating.md) when it exists.
+
+## Trigger sources (all unified into one fan-out)
+
+| Source | Detection mechanism |
 |---|---|
-| Easy-Switch button on a keyboard | HID++ feature `0x1B04` — diverts CIDs `0x00D1/D2/D3` and listens for `divertedButtonsEvent` (target host arrives in payload before the device disconnects) |
-| Easy-Switch / channel button on a mouse or headset | Same mechanism |
-| Mouse Flow (cursor crosses screen edge) | Snoops Logi Options+'s own `0x1814 SetCurrentHost` writes on the receiver's management interface |
+| Easy-Switch button on keyboard | HID++ feature `0x1B04` — divert CIDs `0x00D1/D2/D3`, listen for `divertedButtonsEvent` (target host arrives before disconnect) |
+| Easy-Switch on mouse / headset / other Logi+ device | Same mechanism |
+| Mouse Flow (cursor crosses screen edge) | Snoop Logi+'s own `0x1814 SetCurrentHost` writes on the management interface |
 | In-app hotkey | `logiplus switch <host>` |
-
-In every case the response is the same: write `CHANGE_HOST` (feature `0x1814`)
-to every other paired device on the receiver.
 
 ## Requirements
 
 - **.NET 9 SDK** to build.
-- **libhidapi** (0.15+) at runtime. On macOS: `brew install hidapi`. On
-  Windows: `vcpkg install hidapi` or place `hidapi.dll` somewhere the build
-  target can find it. Bundled into self-contained publish output.
-- **macOS Input Monitoring permission** for the terminal (or app) that runs
-  the binary. System Settings → Privacy & Security → Input Monitoring.
-- **Logi Options+ may keep running** — coexistence is mandatory. The macOS HID
-  open is non-exclusive via `hid_darwin_set_open_exclusive(0)`.
+- **libhidapi** 0.15+. macOS: `brew install hidapi`. Windows: `vcpkg install hidapi`, or extract `hidapi.dll` from the [libusb/hidapi release](https://github.com/libusb/hidapi/releases) and either drop it into `C:\dev\hidapi-win\x64\` or point `HidApiWindowsPath` at it in `Directory.Build.props`. Bundled into self-contained publish output.
+- **macOS Input Monitoring permission** for the terminal (or app) that runs the binary. System Settings → Privacy & Security → Input Monitoring.
+- **Logi Options+ may keep running** — coexistence is mandatory. macOS HID open is non-exclusive via `hid_darwin_set_open_exclusive(0)`.
 
 ## Build
 
@@ -57,17 +63,21 @@ dotnet run --project LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj -- <comman
 Commands:
 
 ```
-logiplus list                            # list receivers + paired devices
-logiplus monitor                         # listen + fan out (default service mode)
-logiplus monitor --diag                  # monitor + dump every HID++ frame
+logiplus list                            # receivers + paired devices + live identity
+logiplus monitor [--diag] [--verbose]    # listen + fan out (hot-plug aware)
 logiplus switch <host>                   # switch ALL paired devices to host 0..2
-logiplus device <slot> switch <host>     # switch a single slot 1..6 to host 0..2
-logiplus diag                            # alias for `monitor --diag`
+logiplus device <slot> switch <host>     # switch one slot
+logiplus device <slot> unpair            # destructive — removes the pairing
+logiplus device <slot> rename <name>     # currently firmware-blocked; see issue #32
+logiplus receiver clear [--yes]          # destructive — unpair every device on receiver 0
+logiplus backup [path]                   # write all pairings as JSON
+logiplus diagnose [path]                 # zip pairings + logs + system info for support
+logiplus diag                            # monitor + raw frame dump
+logiplus service install|uninstall|status # launchd / Task Scheduler autostart
 logiplus help
 ```
 
-`monitor` survives unplug/replug and handles multiple receivers in parallel
-(if you have a Bolt receiver per host).
+The `monitor` command survives unplug/replug and handles multiple receivers in parallel.
 
 ## Distribute (self-contained sideload)
 
@@ -80,52 +90,39 @@ dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
 dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
   -c Release -r osx-x64 --self-contained -p:PublishSingleFile=true
 
-# Windows x64
+# Windows x64 (also runs under arm64 emulation on Win-on-ARM)
 dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
   -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 ```
 
-Output: `LogiPlusSwitcher.Cli/bin/Release/net9.0/<rid>/publish/` contains a
-single `logiplus` binary (.NET runtime bundled) plus `libhidapi.dylib` /
-`hidapi.dll` next to it. The Mac binary needs notarisation for Gatekeeper-
-friendly distribution; the Windows binary needs an Authenticode signature
-for SmartScreen-friendly distribution.
+Output: `LogiPlusSwitcher.Cli/bin/Release/net9.0/<rid>/publish/` contains a single `logiplus` binary (.NET runtime bundled) plus `libhidapi.dylib` / `hidapi.dll`.
+
+CI for self-hosted Mac + Windows runners is in `.github/workflows/ci.yml`; releases via tag push trigger `release.yml`.
 
 ## Solution layout
 
 ```
 LogiPlusSwitcher/
-├── LogiPlusSwitcher.Core/        # HID transport, HID++ protocol, device model
-│   ├── Hid/                       # transport abstraction + libhidapi impl
-│   ├── HidPp/                     # frames, client, features, notifications
-│   ├── Bolt/                      # receiver model, paired device, manager
-│   └── Switcher/                  # orchestrator
+├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface
+│   ├── Hid/                       # transport (libhidapi) + connection
+│   ├── HidPp/                     # frame primitives, request/reply client
+│   │   ├── Features/              # one service per HID++ 2.0 feature ID
+│   │   └── Notifications/         # parsers for 0x41, divertedButtonsEvent, Flow snoop
+│   ├── Bolt/                      # BoltReceiver, ReceiverManager, PairedDevice, PairingBackup
+│   └── Switcher/                  # SwitcherService (fan-out orchestrator)
 ├── LogiPlusSwitcher.Cli/         # headless service / diagnostic CLI
-├── LogiPlusSwitcher.Tests/       # xUnit tests against fake transport
-├── Directory.Build.targets       # stages libhidapi into bin/ and publish/
-└── nuget.config                  # restore from nuget.org only
+├── LogiPlusSwitcher.App/         # Avalonia 12 tray scaffold (phase 2)
+└── LogiPlusSwitcher.Tests/       # xUnit + fakes
 ```
 
 ## Protocol references
 
-This project's HID++ reverse-engineering leans heavily on the open-source
-prior art listed below. Logitech's `cpg-docs` is mostly empty as of 2026, so
-Solaar remains the de-facto spec.
+Logitech's `cpg-docs` is mostly empty as of 2026, so the open-source community is the de-facto spec.
 
-- [Solaar](https://github.com/pwr-Solaar/Solaar) — Linux receiver manager.
-  Canonical reference for HID++ 1.0 sub-IDs (`notifications.py`,
-  `common.py`), 2.0 feature definitions (`hidpp20.py`,
-  `hidpp20_constants.py`), and Bolt-specific pairing registers
-  (`receiver.py:484-531`). `special_keys.py:232-234` defines the Easy-Switch
-  CIDs we divert.
-- [CleverSwitch](https://github.com/MikalaiBarysevich/CleverSwitch) — Python
-  clone of Mouse Flow for Bolt/Unifying. Closest prior art to this project.
-- [fwupd logitech-hidpp](https://github.com/fwupd/fwupd/tree/main/plugins/logitech-hidpp)
-  — authoritative Bolt USB framing.
-- [marcelhoffs/input-switcher](https://github.com/marcelhoffs/input-switcher)
-  — known-good CHANGE_HOST byte sequences per device model.
-- [HID++ 2.0 draft spec](https://lekensteyn.nl/files/logitech/logitech_hidpp_2.0_specification_draft_2012-06-04.pdf)
-  — frame format and `0x1B00/0x1B04 ControlIDBroadcastEvent` layout.
+- [Solaar](https://github.com/pwr-Solaar/Solaar) — canonical Linux receiver manager. The HID++ 1.0 sub-IDs, 2.0 feature definitions, and Bolt-specific registers all come from here.
+- [CleverSwitch](https://github.com/MikalaiBarysevich/CleverSwitch) — Python clone of Mouse Flow for Bolt/Unifying. Closest prior art.
+- [fwupd logitech-hidpp](https://github.com/fwupd/fwupd/tree/main/plugins/logitech-hidpp) — authoritative Bolt USB framing.
+- [marcelhoffs/input-switcher](https://github.com/marcelhoffs/input-switcher) — known-good CHANGE_HOST byte sequences per device.
 
 ## License
 
