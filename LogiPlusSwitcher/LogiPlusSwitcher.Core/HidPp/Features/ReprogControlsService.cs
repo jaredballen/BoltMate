@@ -72,6 +72,32 @@ public sealed class ReprogControlsService
     }
 
     /// <summary>
+    /// Reads the current divert / remap state for a single CID. Used to verify
+    /// SetCidReporting actually took effect (or to read defaults before mutating).
+    /// </summary>
+    /// <returns>Tuple of (echoed cid, bfield, remap cid).</returns>
+    public async Task<CidReportingState> GetCidReportingAsync(byte deviceIndex, byte featureIndex, ushort controlId, CancellationToken ct = default)
+    {
+        Span<byte> request = stackalloc byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(request, controlId);
+
+        var reply = await _client.RequestAsync(
+            deviceIndex: deviceIndex,
+            featureIndex: featureIndex,
+            function: 0x2,
+            parameters: request.ToArray(),
+            useLongReport: true,
+            cancellationToken: ct).ConfigureAwait(false);
+
+        var p = reply.Parameters.Span;
+        return new CidReportingState(
+            ControlId: p.Length >= 2 ? BinaryPrimitives.ReadUInt16BigEndian(p.Slice(0, 2)) : (ushort)0,
+            Bfield: p.Length > 2 ? p[2] : (byte)0,
+            RemapControlId: p.Length >= 5 ? BinaryPrimitives.ReadUInt16BigEndian(p.Slice(3, 2)) : (ushort)0,
+            RawBytes: p.ToArray());
+    }
+
+    /// <summary>
     /// Sets the divert / persistent-divert flags for a single CID. When divert
     /// is set, button presses fire <c>divertedButtonsEvent</c> instead of
     /// triggering the device's internal action — this is the mechanism by
@@ -101,12 +127,23 @@ public sealed class ReprogControlsService
     /// <summary>
     /// Common bitfield combinations for <see cref="SetCidReportingAsync"/>.
     /// </summary>
+    /// <remarks>
+    /// Empirically validated on MX Master 3S (CID 0x00C4 wheel-mode) via the
+    /// CLI <c>diag-divert</c> sweep:
+    /// <list type="bullet">
+    /// <item><description>bit 0 (0x01) = new divert value (1 = divert, 0 = normal).</description></item>
+    /// <item><description>bit 1 (0x02) = "apply" / valid bit — without it the write is a no-op.</description></item>
+    /// </list>
+    /// So <c>Diverted = 0x03</c> (value=1, apply) and <c>Normal = 0x02</c> (value=0, apply).
+    /// Solaar's reference puts divert valid/set at bits 3+4; this device uses 0+1 instead.
+    /// If a future device behaves differently we may need a per-CID/device probe.
+    /// </remarks>
     public static class DivertModes
     {
-        /// <summary>Divert valid + divert clear: device handles control normally.</summary>
-        public const byte Normal = 0x01;
+        /// <summary>Apply divert=0 → device handles control normally (clears any previous divert).</summary>
+        public const byte Normal = 0x02;
 
-        /// <summary>Divert valid + divert set: device emits divertedButtonsEvent instead of acting.</summary>
+        /// <summary>Apply divert=1 → device emits divertedButtonsEvent instead of acting.</summary>
         public const byte Diverted = 0x03;
 
         /// <summary>Persistent divert valid + set: divert survives device power cycle.</summary>
@@ -139,6 +176,20 @@ public sealed record ControlInfo(
 
     /// <summary>True if this control is one of the three Easy-Switch buttons.</summary>
     public bool IsHostSwitch => EasySwitchCids.IsHostSwitch(ControlId);
+}
+
+/// <summary>
+/// Current per-CID reporting state read via getCidReporting (fn 0x2).
+/// READ encoding differs from WRITE encoding:
+///   write bfield: bit 0 divertValid, bit 1 divertSet, bit 2 persistValid, bit 3 persistSet, bit 4 rawXYValid, bit 5 rawXYSet
+///   read  bfield: bit 0 rawXYDiverted, bit 2 persistDiverted, bit 4 diverted
+/// (Source: Solaar MappingFlag enum in hidpp20.py.)
+/// </summary>
+public sealed record CidReportingState(ushort ControlId, byte Bfield, ushort RemapControlId, byte[] RawBytes)
+{
+    public bool DivertSet => (Bfield & 0x10) != 0;
+    public bool PersistDivertSet => (Bfield & 0x04) != 0;
+    public bool RawXYSet => (Bfield & 0x01) != 0;
 }
 
 [Flags]

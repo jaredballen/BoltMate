@@ -66,6 +66,12 @@ return args[0].ToLowerInvariant() switch
                   && args[4].Equals("unpair", StringComparison.OrdinalIgnoreCase) =>
         await Commands.RunUnpairSlotAsync(transport, unpairSlot2, cts.Token, rIdx),
 
+    "diag-divert" when args.Length == 3
+                       && byte.TryParse(args[1], out var ddSlot)
+                       && ushort.TryParse(args[2].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? args[2][2..] : args[2],
+                            System.Globalization.NumberStyles.HexNumber, null, out var ddCid) =>
+        await Commands.RunDiagDivertAsync(transport, ddSlot, ddCid, cts.Token),
+
     "service" when args.Length == 2 && args[1].Equals("install", StringComparison.OrdinalIgnoreCase)
         => ServiceCommands.Install(),
     "service" when args.Length == 2 && args[1].Equals("uninstall", StringComparison.OrdinalIgnoreCase)

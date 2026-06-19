@@ -1,3 +1,4 @@
+using System.Reactive.Linq;
 using DynamicData;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
@@ -597,6 +598,133 @@ internal static class Commands
             Console.Error.WriteLine($"      discover slot {deviceIndex} failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Probes the read-modify-readback behaviour of <c>SetCidReporting</c> for
+    /// a single CID. Diagnostic — verifies whether Normal (0x01) actually
+    /// flips divertSet back to 0 on the device, or whether the bug behind
+    /// IdentifyAsync's lingering-divert leak is somewhere else.
+    /// </summary>
+    public static async Task<int> RunDiagDivertAsync(IReceiverTransport transport, byte slot, ushort cid, CancellationToken ct)
+    {
+        // We already know divert (0x03) works. This sweep finds which clear
+        // bfield (if any) restores normal operation in-session. After each
+        // candidate we tear down the session and verify the button works
+        // again — if it doesn't, something deeper is broken and we abort.
+        var candidates = new (byte Bfield, string Label)[]
+        {
+            (0x01, "0x01  (low-bit valid-only)"),
+            (0x08, "0x08  (Solaar valid-bit position)"),
+            (0x00, "0x00  (all-zero)"),
+            (0x02, "0x02  (set-bit only)"),
+            (0x10, "0x10  (set-bit Solaar position)"),
+        };
+
+        var results = new List<TrialResult>();
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            if (ct.IsCancellationRequested) break;
+            var (bfield, label) = candidates[i];
+            var r = await RunOneCandidateAsync(transport, slot, cid, bfield, label, trialNumber: i + 1, total: candidates.Length, ct);
+            results.Add(r);
+
+            if (!r.RecoveredAfterClose)
+            {
+                Console.WriteLine();
+                Console.WriteLine("================================================================");
+                Console.WriteLine($"  ABORT: session close did not restore wheel-mode button.");
+                Console.WriteLine($"  Test cannot continue — please power-cycle the mouse if needed.");
+                Console.WriteLine("================================================================");
+                break;
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("==================================== SUMMARY ====================================");
+        Console.WriteLine("Per trial: open → divert (0x03) → apply clear → test → close → re-test");
+        Console.WriteLine();
+        Console.WriteLine("┌────────────────────────────────────────┬──────────────────┬──────────────────┐");
+        Console.WriteLine("│ clear bfield                           │ live-session     │ after session    │");
+        Console.WriteLine("│                                        │ wheel-mode works │ close, recovered │");
+        Console.WriteLine("├────────────────────────────────────────┼──────────────────┼──────────────────┤");
+        foreach (var r in results)
+            Console.WriteLine($"│ {r.Label,-38} │       {(r.ActuatedInSession ? "YES" : "NO ")}        │       {(r.RecoveredAfterClose ? "YES" : "NO ")}        │");
+        Console.WriteLine("└────────────────────────────────────────┴──────────────────┴──────────────────┘");
+        Console.WriteLine();
+        Console.WriteLine("Rows with live-session=YES → that clear bfield IS the in-protocol un-divert.");
+        Console.WriteLine("All live-session=NO        → only session teardown clears; we can't safely bulk-divert.");
+        return 0;
+    }
+
+    private static async Task<TrialResult> RunOneCandidateAsync(
+        IReceiverTransport transport, byte slot, ushort cid, byte clearBfield, string label, int trialNumber, int total, CancellationToken ct)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"════════ Trial {trialNumber}/{total}: clear via {label} ════════");
+
+        bool actuatedInSession;
+
+        // --- Open session, divert, apply clear, ask user ---
+        {
+            var infos = transport.Enumerate();
+            if (infos.Count == 0) return new TrialResult(label, false, false);
+
+            var info = infos[0];
+            using var connection = transport.Open(info);
+            using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+            using var settled = new ManualResetEventSlim(false);
+            using var linkSub = receiver.LinkEstablished.Subscribe(d => { if (d.DeviceIndex == slot) settled.Set(); });
+            receiver.Start();
+            settled.Wait(TimeSpan.FromMilliseconds(1500), ct);
+
+            try { await receiver.DiscoverFeaturesAsync(slot, ct); }
+            catch (Exception ex) { Console.Error.WriteLine($"  discover failed: {ex.Message}"); return new TrialResult(label, false, false); }
+
+            var device = receiver.TryGetDevice(slot);
+            if (device?.ReprogControlsIndex is not { } reprogIndex)
+            {
+                Console.WriteLine($"  slot {slot} doesn't expose REPROG_CONTROLS_V4");
+                return new TrialResult(label, false, false);
+            }
+
+            // 1. Divert (silently — we trust this).
+            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, 0x03, ct); }
+            catch (Exception ex) { Console.Error.WriteLine($"  divert write failed: {ex.Message}"); return new TrialResult(label, false, false); }
+
+            // 2. Apply candidate clear.
+            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, clearBfield, ct); }
+            catch (Exception ex) { Console.Error.WriteLine($"  clear write failed: {ex.Message}"); return new TrialResult(label, false, false); }
+
+            // 3. Ask user to test while session is still open.
+            Console.WriteLine($"  Session open. Diverted then cleared with 0x{clearBfield:X2}.");
+            Console.WriteLine("  Press the wheel-mode button once, then press ENTER.");
+            await Task.Run(() => Console.ReadLine(), ct);
+            actuatedInSession = AskYesNo("  Did wheel mode actuate normally?");
+        }
+        // ↑ session disposed here (connection + receiver Dispose).
+
+        // --- Session is now closed. Verify the button recovers. ---
+        Console.WriteLine();
+        Console.WriteLine("  Session torn down. Press the wheel-mode button once, then press ENTER.");
+        await Task.Run(() => Console.ReadLine(), ct);
+        var recoveredAfterClose = AskYesNo("  Did wheel mode actuate normally?");
+
+        return new TrialResult(label, actuatedInSession, recoveredAfterClose);
+    }
+
+    private static bool AskYesNo(string prompt)
+    {
+        while (true)
+        {
+            Console.Write(prompt + " [y/n] ");
+            var line = (Console.ReadLine() ?? "").Trim().ToLowerInvariant();
+            if (line is "y" or "yes") return true;
+            if (line is "n" or "no") return false;
+        }
+    }
+
+    private sealed record TrialResult(string Label, bool ActuatedInSession, bool RecoveredAfterClose);
 
     /// <summary>Bag of per-receiver disposables for the monitor command.</summary>
     private sealed class ReceiverSubscriptions : IDisposable
