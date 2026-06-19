@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Self-hosted Mac + Win runners are assumed to be registered with the canonical
+# labels GitHub assigns automatically (self-hosted + macOS / Windows + X64 / ARM64).
+# A `logiplus` label can be added on the runner to scope this workflow to the
+# right machine if multiple self-hosted runners exist in the org.
+
+jobs:
+  build-mac:
+    name: Build + test (macOS)
+    runs-on: [self-hosted, macOS]
+    defaults:
+      run:
+        working-directory: LogiPlusSwitcher
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure libhidapi installed
+        run: |
+          if ! brew list hidapi >/dev/null 2>&1; then
+            brew install hidapi
+          fi
+          brew --prefix hidapi
+
+      - name: Show .NET SDK
+        run: dotnet --info
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet test -c Release --no-build --logger "trx;LogFileName=mac-tests.trx" --results-directory ../test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-mac
+          path: test-results
+          if-no-files-found: ignore
+
+  build-win:
+    name: Build + test (Windows)
+    runs-on: [self-hosted, Windows]
+    defaults:
+      run:
+        working-directory: LogiPlusSwitcher
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify hidapi.dll available
+        run: |
+          $candidates = @(
+            "C:\dev\hidapi-win\x64\hidapi.dll",
+            "C:\vcpkg\installed\x64-windows\bin\hidapi.dll",
+            "$env:HidApiWindowsPath"
+          )
+          $found = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $found) {
+            Write-Error "hidapi.dll not found in any expected location. Install via vcpkg or extract from libusb/hidapi release into C:\dev\hidapi-win\x64\."
+            exit 1
+          }
+          Write-Host "Using hidapi.dll at $found"
+          # Write Directory.Build.props so the build target stages it.
+          @"
+          <Project>
+            <PropertyGroup>
+              <HidApiWindowsPath>$found</HidApiWindowsPath>
+            </PropertyGroup>
+          </Project>
+          "@ | Set-Content -Encoding ascii Directory.Build.props
+
+      - name: Show .NET SDK
+        run: dotnet --info
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        run: dotnet test -c Release --no-build --logger "trx;LogFileName=win-tests.trx" --results-directory ..\test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-win
+          path: test-results
+          if-no-files-found: ignore

@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.1.0)"
+        required: true
+
+# Builds self-contained, single-file `logiplus` binaries on the matching
+# host platform (cross-RID publish is supported by .NET but native-lib bundling
+# is cleaner when each artifact is built where it runs). Publishes to a draft
+# GitHub Release named after the tag; the human reviews and marks Published.
+
+jobs:
+  publish-mac:
+    name: Publish macOS (${{ matrix.rid }})
+    runs-on: [self-hosted, macOS]
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [osx-arm64, osx-x64]
+    defaults:
+      run:
+        working-directory: LogiPlusSwitcher
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure libhidapi installed
+        run: brew list hidapi >/dev/null 2>&1 || brew install hidapi
+
+      - name: Publish
+        run: |
+          dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
+            -c Release -r ${{ matrix.rid }} --self-contained \
+            -p:PublishSingleFile=true \
+            -p:Version=${GITHUB_REF_NAME#v}
+
+      - name: Stage artifact
+        run: |
+          mkdir -p ../release-staging/${{ matrix.rid }}
+          cp LogiPlusSwitcher.Cli/bin/Release/net9.0/${{ matrix.rid }}/publish/logiplus ../release-staging/${{ matrix.rid }}/
+          cp LogiPlusSwitcher.Cli/bin/Release/net9.0/${{ matrix.rid }}/publish/libhidapi.dylib ../release-staging/${{ matrix.rid }}/
+          cd ../release-staging
+          tar -czf logiplus-${{ matrix.rid }}.tar.gz -C ${{ matrix.rid }} .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logiplus-${{ matrix.rid }}
+          path: release-staging/logiplus-${{ matrix.rid }}.tar.gz
+
+  publish-win:
+    name: Publish Windows (${{ matrix.rid }})
+    runs-on: [self-hosted, Windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64]
+    defaults:
+      run:
+        working-directory: LogiPlusSwitcher
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick hidapi.dll
+        run: |
+          $candidates = @(
+            "C:\dev\hidapi-win\x64\hidapi.dll",
+            "C:\vcpkg\installed\x64-windows\bin\hidapi.dll",
+            "$env:HidApiWindowsPath"
+          )
+          $found = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $found) { Write-Error "hidapi.dll not found."; exit 1 }
+          @"
+          <Project>
+            <PropertyGroup>
+              <HidApiWindowsPath>$found</HidApiWindowsPath>
+            </PropertyGroup>
+          </Project>
+          "@ | Set-Content -Encoding ascii Directory.Build.props
+
+      - name: Publish
+        run: |
+          $version = ($env:GITHUB_REF_NAME -replace '^v','')
+          dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj `
+            -c Release -r ${{ matrix.rid }} --self-contained `
+            -p:PublishSingleFile=true `
+            -p:Version=$version
+
+      - name: Stage artifact
+        run: |
+          $publish = "LogiPlusSwitcher.Cli/bin/Release/net9.0/${{ matrix.rid }}/publish"
+          $staging = "../release-staging/${{ matrix.rid }}"
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Copy-Item "$publish/logiplus.exe" $staging/
+          Copy-Item "$publish/hidapi.dll" $staging/
+          Compress-Archive -Path "$staging/*" -DestinationPath "../release-staging/logiplus-${{ matrix.rid }}.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logiplus-${{ matrix.rid }}
+          path: release-staging/logiplus-${{ matrix.rid }}.zip
+
+  draft-release:
+    name: Draft GitHub Release
+    needs: [publish-mac, publish-win]
+    runs-on: [self-hosted, macOS]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create / update draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          gh release view "$tag" >/dev/null 2>&1 \
+            && gh release upload "$tag" artifacts/**/* --clobber \
+            || gh release create "$tag" --draft --title "$tag" --notes "Pre-release draft. Edit me." artifacts/**/*
