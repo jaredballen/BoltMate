@@ -1,28 +1,83 @@
 <Project>
 
   <!--
-    Stage libhidapi.dylib next to every project's output assemblies so .NET's
-    default DllImport search (AssemblyDirectory) finds it. Homebrew installs to
-    /opt/homebrew/lib on Apple Silicon, /usr/local/lib on Intel. Run
-    `brew install hidapi` before first build.
-
-    Targets that need libhidapi at runtime get it staged automatically; tests
-    and the CLI both pick it up since this target runs for every project.
+    Stage libhidapi next to every project's output (and publish) assemblies so
+    .NET's default DllImport search (AssemblyDirectory) finds it without
+    DYLD_*_PATH hacks. Two responsibilities:
+      - macOS dev: copy /opt/homebrew/lib/libhidapi.dylib (Apple Silicon) or
+        /usr/local/lib/libhidapi.dylib (Intel) — install via `brew install hidapi`.
+      - macOS publish: same dylib bundled into the publish output so the
+        artifact is self-contained.
+      - Windows: search common install locations for hidapi.dll. For builds in
+        CI we'll pull this from a NuGet (hidapi-VC) or vcpkg in a follow-up.
   -->
-  <Target Name="StageLibHidApiMac"
+
+  <Target Name="StageLibHidApiMacOnBuild"
           AfterTargets="Build"
           Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">
+    <CallTarget Targets="_StageLibHidApiMacCore">
+      <Output PropertyName="_DropDir" TaskParameter="TargetOutputs" />
+    </CallTarget>
+    <PropertyGroup>
+      <_StageLibHidApiDestination>$(OutputPath)</_StageLibHidApiDestination>
+    </PropertyGroup>
+    <Copy SourceFiles="$(ResolvedHidApiMacSource)"
+          DestinationFolder="$(_StageLibHidApiDestination)"
+          SkipUnchangedFiles="true"
+          Condition="'$(ResolvedHidApiMacSource)' != ''" />
+  </Target>
+
+  <Target Name="StageLibHidApiMacOnPublish"
+          AfterTargets="Publish"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">
+    <CallTarget Targets="_StageLibHidApiMacCore" />
+    <Copy SourceFiles="$(ResolvedHidApiMacSource)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="'$(ResolvedHidApiMacSource)' != ''" />
+  </Target>
+
+  <Target Name="_StageLibHidApiMacCore">
     <PropertyGroup>
       <BrewArmHidApi>/opt/homebrew/lib/libhidapi.dylib</BrewArmHidApi>
       <BrewIntelHidApi>/usr/local/lib/libhidapi.dylib</BrewIntelHidApi>
-      <ResolvedHidApiSource Condition="Exists('$(BrewArmHidApi)')">$(BrewArmHidApi)</ResolvedHidApiSource>
-      <ResolvedHidApiSource Condition="'$(ResolvedHidApiSource)' == '' AND Exists('$(BrewIntelHidApi)')">$(BrewIntelHidApi)</ResolvedHidApiSource>
+      <ResolvedHidApiMacSource Condition="Exists('$(BrewArmHidApi)')">$(BrewArmHidApi)</ResolvedHidApiMacSource>
+      <ResolvedHidApiMacSource Condition="'$(ResolvedHidApiMacSource)' == '' AND Exists('$(BrewIntelHidApi)')">$(BrewIntelHidApi)</ResolvedHidApiMacSource>
     </PropertyGroup>
-    <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." Condition="'$(ResolvedHidApiSource)' == ''" />
-    <Copy SourceFiles="$(ResolvedHidApiSource)"
+    <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." Condition="'$(ResolvedHidApiMacSource)' == ''" />
+  </Target>
+
+  <Target Name="StageLibHidApiWindowsOnBuild"
+          AfterTargets="Build"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">
+    <CallTarget Targets="_StageLibHidApiWindowsCore" />
+    <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
           DestinationFolder="$(OutputPath)"
           SkipUnchangedFiles="true"
-          Condition="'$(ResolvedHidApiSource)' != ''" />
+          Condition="'$(ResolvedHidApiWindowsSource)' != ''" />
+  </Target>
+
+  <Target Name="StageLibHidApiWindowsOnPublish"
+          AfterTargets="Publish"
+          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">
+    <CallTarget Targets="_StageLibHidApiWindowsCore" />
+    <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="'$(ResolvedHidApiWindowsSource)' != ''" />
+  </Target>
+
+  <Target Name="_StageLibHidApiWindowsCore">
+    <PropertyGroup>
+      <!-- Common Windows install locations. Override $(HidApiWindowsPath) in
+           a developer-local Directory.Build.props if libhidapi lives elsewhere. -->
+      <WindowsSysHidApi>$(WINDIR)\System32\hidapi.dll</WindowsSysHidApi>
+      <VcpkgHidApi>C:\vcpkg\installed\x64-windows\bin\hidapi.dll</VcpkgHidApi>
+      <ResolvedHidApiWindowsSource Condition="'$(HidApiWindowsPath)' != '' AND Exists('$(HidApiWindowsPath)')">$(HidApiWindowsPath)</ResolvedHidApiWindowsSource>
+      <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(VcpkgHidApi)')">$(VcpkgHidApi)</ResolvedHidApiWindowsSource>
+      <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(WindowsSysHidApi)')">$(WindowsSysHidApi)</ResolvedHidApiWindowsSource>
+    </PropertyGroup>
+    <Warning Text="hidapi.dll not found. Install via vcpkg (vcpkg install hidapi) or set HidApiWindowsPath in Directory.Build.props." Condition="'$(ResolvedHidApiWindowsSource)' == ''" />
   </Target>
 
 </Project>
