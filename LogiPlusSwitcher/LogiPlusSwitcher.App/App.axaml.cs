@@ -7,6 +7,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
 using LogiPlusSwitcher.App.Licensing;
+using LogiPlusSwitcher.App.Updates;
 using Avalonia.Threading;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
@@ -24,6 +25,7 @@ public partial class App : Application
     private SwitcherService? _switcher;
     private TrayMenuController? _trayController;
     private ReceiverPolicyService? _policy;
+    private UpdateService? _updates;
     private AppSettings _settings = new();
     private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
@@ -76,6 +78,13 @@ public partial class App : Application
         _disposables.Add(new HostBindingPersistence(_manager, _settings,
             _loggerFactory.CreateLogger<HostBindingPersistence>()));
 
+        // Update check scaffold — fires once at startup when auto-check is on.
+        // Real cast endpoint lives behind UpdateService.CheckAsync (currently
+        // a no-op stub that only stamps LastUpdateCheckUtc).
+        _updates = new UpdateService(_settings, _loggerFactory.CreateLogger<UpdateService>());
+        if (_settings.AutoCheckForUpdates)
+            _ = _updates.CheckAsync();
+
         // Wire the dynamic tray menu now that the manager is up.
         var trays = TrayIcon.GetIcons(this);
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
@@ -84,6 +93,7 @@ public partial class App : Application
                 _loggerFactory.CreateLogger<TrayMenuController>(), _settings)
             {
                 OnSettingsClicked = OpenSettings,
+                OnCheckForUpdatesClicked = () => _ = CheckForUpdatesNowAsync(),
                 OnAboutClicked = ShowAbout,
             };
             _disposables.Add(_trayController);
@@ -129,6 +139,33 @@ public partial class App : Application
     }
 
     private Dialogs.AboutDialog? _aboutDialog;
+    private async System.Threading.Tasks.Task CheckForUpdatesNowAsync()
+    {
+        if (_updates is null) return;
+        try
+        {
+            var info = await _updates.CheckAsync();
+            var header = info is null ? "No updates available" : "Update available";
+            var body = info is null
+                ? $"You're up to date on {_updates.CurrentVersion}."
+                : $"Update {info.Version} is available.\n\n{info.DownloadUrl}";
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                MacActivationPolicy.ShowDockIcon();
+                var alert = new Dialogs.AlertWindow(header, body);
+                alert.Closed += (_, _) =>
+                {
+                    if (_settingsWindow is null && _aboutDialog is null) MacActivationPolicy.HideDockIcon();
+                };
+                alert.Show();
+            });
+        }
+        catch
+        {
+            // best effort — UpdateService stub never throws today
+        }
+    }
+
     private void ShowAbout()
     {
         if (_aboutDialog is not null && _aboutDialog.IsVisible)

@@ -35,6 +35,7 @@ public sealed class TrayMenuController : IDisposable
     private NativeMenuItem _switchHost3 = null!;
     private NativeMenuItem _countItem = null!;
     private NativeMenuItem _settingsItem = null!;
+    private NativeMenuItem _updatesItem = null!;
     private NativeMenuItem _aboutItem = null!;
     private NativeMenuItem _quitItem = null!;
     private NativeMenuItemSeparator _dynamicSectionEnd = null!;
@@ -99,6 +100,9 @@ public sealed class TrayMenuController : IDisposable
         _settingsItem = new NativeMenuItem("Settings…");
         _settingsItem.Click += (_, _) => OnSettingsClicked?.Invoke();
 
+        _updatesItem = new NativeMenuItem("Check for updates…");
+        _updatesItem.Click += (_, _) => OnCheckForUpdatesClicked?.Invoke();
+
         _aboutItem = new NativeMenuItem("About LogiPlusSwitcher");
         _aboutItem.Click += (_, _) => OnAboutClicked?.Invoke();
 
@@ -120,12 +124,14 @@ public sealed class TrayMenuController : IDisposable
         _menu.Items.Add(_countItem);
         _menu.Items.Add(new NativeMenuItemSeparator());
         _menu.Items.Add(_settingsItem);
+        _menu.Items.Add(_updatesItem);
         _menu.Items.Add(_aboutItem);
         _menu.Items.Add(new NativeMenuItemSeparator());
         _menu.Items.Add(_quitItem);
     }
 
     public Action? OnSettingsClicked { get; set; }
+    public Action? OnCheckForUpdatesClicked { get; set; }
     public Action? OnAboutClicked { get; set; }
 
     private void WireReceiverSubscriptions()
