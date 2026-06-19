@@ -250,6 +250,44 @@ internal static class Commands
         return 0;
     }
 
+    public static async Task<int> RunRenameSlotAsync(IReceiverTransport transport, byte slot, string newName, CancellationToken ct, int receiverIndex = 0)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0 || receiverIndex >= infos.Count)
+        {
+            Console.WriteLine("No matching Bolt receiver.");
+            return 1;
+        }
+
+        var info = infos[receiverIndex];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var sub = receiver.LinkEstablished.Subscribe(_ => settled.Set());
+        using var lostSub = receiver.LinkLost.Subscribe(_ => settled.Set());
+        receiver.Start();
+        settled.Wait(TimeSpan.FromMilliseconds(750), ct);
+
+        // Read current name first so we have something to display.
+        var oldName = await receiver.ReadSlotNameAsync(slot, ct) ?? "(unknown)";
+        Console.WriteLine($"Renaming slot {slot}: \"{oldName}\" -> \"{newName}\"");
+        try
+        {
+            var ok = await receiver.RenameDeviceAsync(slot, newName, ct: ct);
+            if (!ok) { Console.WriteLine("  timed out — name may or may not have been written."); return 2; }
+
+            var readBack = await receiver.ReadSlotNameAsync(slot, ct);
+            Console.WriteLine($"  ok — read back: \"{readBack}\"");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  rename failed: {ex.Message}");
+            return 3;
+        }
+    }
+
     public static async Task<int> RunUnpairSlotAsync(IReceiverTransport transport, byte slot, CancellationToken ct, int receiverIndex = 0)
     {
         var infos = transport.Enumerate();

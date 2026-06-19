@@ -45,6 +45,11 @@ return args[0].ToLowerInvariant() switch
                   && args[2].Equals("unpair", StringComparison.OrdinalIgnoreCase) =>
         await Commands.RunUnpairSlotAsync(transport, unpairSlot, cts.Token),
 
+    "device" when args.Length == 4
+                  && byte.TryParse(args[1], out var renSlot)
+                  && args[2].Equals("rename", StringComparison.OrdinalIgnoreCase) =>
+        await Commands.RunRenameSlotAsync(transport, renSlot, args[3], cts.Token),
+
     "device" when args.Length == 5
                   && args[1].Equals("--receiver", StringComparison.OrdinalIgnoreCase)
                   && int.TryParse(args[2], out var rIdx)

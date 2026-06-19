@@ -122,4 +122,39 @@ public static class HidPp10
             deviceIndex: HidPpConstants.DeviceIndexReceiver,
             subId: SubIdGetLongRegister,
             parameters: [RegisterBoltUniqueId, 0x00, 0x00, 0x00]);
+
+    /// <summary>
+    /// Builds a SET_LONG_REGISTER write to RECEIVER_INFO with a slot-relative
+    /// BOLT_DEVICE_NAME sub-register, carrying a new ASCII name. Truncates at
+    /// 14 chars (the BOLT_DEVICE_NAME field length).
+    /// </summary>
+    /// <remarks>
+    /// Wire layout: <c>11 FF 82 B5 (0x60+slot) 0x01 &lt;name_length&gt; &lt;name_bytes...&gt; 00...</c>.
+    /// The extraByte 0x01 mirrors the read-side convention; the byte after that
+    /// is the name length, followed by up to 14 ASCII characters.
+    /// Some firmware versions reject writes to this sub-register — the call may
+    /// return an HID++ 1.0 error.
+    /// </remarks>
+    public static HidPpFrame BuildWriteBoltDeviceNameFrame(byte slot, string name)
+    {
+        if (slot is < HidPpConstants.DeviceIndexFirstSlot or > HidPpConstants.DeviceIndexLastSlot)
+            throw new ArgumentOutOfRangeException(nameof(slot), slot, "Bolt receiver slot must be 1..6.");
+        ArgumentException.ThrowIfNullOrEmpty(name);
+
+        var nameBytes = System.Text.Encoding.ASCII.GetBytes(name);
+        if (nameBytes.Length > 14)
+            nameBytes = nameBytes[..14];
+
+        Span<byte> parameters = stackalloc byte[HidPpConstants.LongParameterLength];
+        parameters[0] = RegisterReceiverInfo;
+        parameters[1] = (byte)(InfoSubRegisterBoltDeviceNameBase + slot);
+        parameters[2] = 0x01;
+        parameters[3] = (byte)nameBytes.Length;
+        nameBytes.CopyTo(parameters[4..]);
+
+        return HidPpFrame.Hidpp10Long(
+            deviceIndex: HidPpConstants.DeviceIndexReceiver,
+            subId: SubIdSetLongRegister,
+            parameters: parameters);
+    }
 }

@@ -448,6 +448,63 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Writes a new ASCII name to <c>BOLT_DEVICE_NAME</c> for the given slot.
+    /// Up to 14 ASCII chars. Mutates the cached <see cref="PairedDevice.Name"/>
+    /// on success.
+    /// </summary>
+    /// <remarks>
+    /// <b>Known limitation</b>: the obvious SET_LONG_REGISTER path is rejected
+    /// by current Bolt firmware with <c>InvalidArgument</c>. The actual rename
+    /// path is likely HID++ 2.0 feature <c>0x0005 DEVICE_NAME</c> setName sent
+    /// to the device itself (requires link-up + feature index discovery). This
+    /// implementation keeps the API contract so consumers can call it; expect
+    /// a <see cref="HidPpException"/> until the device-side write is wired.
+    /// </remarks>
+    /// <returns>True if the receiver acknowledged the write; throws on error reply; false on timeout.</returns>
+    public async Task<bool> RenameDeviceAsync(byte deviceIndex, string newName, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        var window = timeout ?? TimeSpan.FromSeconds(2);
+        var request = HidPp10.BuildWriteBoltDeviceNameFrame(deviceIndex, newName);
+
+        // Receiver echoes SET_LONG_REGISTER on success.
+        var ack = _connection.InboundFrames
+            .Where(f => f.DeviceIndex == HidPpConstants.DeviceIndexReceiver)
+            .Where(f =>
+                (f.FeatureIndex == HidPp10.SubIdSetLongRegister && f.FunctionAndSwId == HidPp10.RegisterReceiverInfo)
+                || (f.FeatureIndex == 0x8F && f.FunctionAndSwId == HidPp10.SubIdSetLongRegister))
+            .FirstAsync()
+            .ToTask(ct);
+
+        _logger.LogInformation("Renaming slot {Slot} to {Name}", deviceIndex, newName);
+        _client.SendOneWay(request);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(window);
+        try
+        {
+            var reply = await ack.WaitAsync(cts.Token).ConfigureAwait(false);
+            if (reply.FeatureIndex == 0x8F)
+            {
+                var errorCode = reply.Parameters.Span.Length > 1
+                    ? (HidPpErrorCode)reply.Parameters.Span[1]
+                    : HidPpErrorCode.Unknown;
+                _logger.LogWarning("Rename slot {Slot} returned error {Code}", deviceIndex, errorCode);
+                throw new HidPpException(deviceIndex, HidPp10.RegisterReceiverInfo, function: 0, errorCode);
+            }
+
+            var device = EnsureSlot(deviceIndex);
+            device.Name = newName;
+            RefreshSlot(deviceIndex);
+            return true;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("Rename slot {Slot} timed out after {Ms} ms", deviceIndex, window.TotalMilliseconds);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Unpairs a device from the receiver, removing the slot's stored pairing.
     /// Reaches a Bolt receiver's flash via <c>SET_LONG_REGISTER 0x82 BOLT_PAIRING(0xC1)
     /// subaction 0x03</c>. Awaits the receiver's echo (success) or an error
