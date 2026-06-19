@@ -382,6 +382,31 @@ public partial class SettingsWindow : Window
         Populate();
     }
 
+    public Action? HostNamesChanged { get; set; }
+
+    private async void OnEditGlobalHostNames(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_settings is null) return;
+        var result = await Dialogs.HostNamesDialog.AskAsync(
+            this,
+            title: "Default host labels",
+            header: "Host labels (global default)",
+            hint: "Used everywhere unless a per-receiver override is set. " +
+                  "Empty fields fall back to 'Host N'.",
+            initial: _settings.HostNames);
+        if (result is null) return;
+        var sanitized = new[]
+        {
+            string.IsNullOrWhiteSpace(result[0]) ? "Host 1" : result[0],
+            string.IsNullOrWhiteSpace(result[1]) ? "Host 2" : result[1],
+            string.IsNullOrWhiteSpace(result[2]) ? "Host 3" : result[2],
+        };
+        _settings.HostNames = sanitized;
+        _settings.Save();
+        HostNamesChanged?.Invoke();
+        Populate();
+    }
+
     private async void OnClearAllPairings(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not string serial || _manager is null) return;

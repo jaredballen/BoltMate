@@ -81,7 +81,7 @@ public partial class App : Application
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
         {
             _trayController = new TrayMenuController(menu, _manager, _license,
-                _loggerFactory.CreateLogger<TrayMenuController>())
+                _loggerFactory.CreateLogger<TrayMenuController>(), _settings)
             {
                 OnSettingsClicked = OpenSettings,
                 OnAboutClicked = ShowAbout,
@@ -116,7 +116,10 @@ public partial class App : Application
         // who Cmd-Tab can find us. Restore accessory mode on close.
         MacActivationPolicy.ShowDockIcon();
 
-        _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings);
+        _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings)
+        {
+            HostNamesChanged = () => _trayController?.RefreshHostLabels(),
+        };
         _settingsWindow.Closed += (_, _) =>
         {
             _settingsWindow = null;

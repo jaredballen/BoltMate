@@ -8,6 +8,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using DynamicData;
 using LogiPlusSwitcher.App.Licensing;
+using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using Microsoft.Extensions.Logging;
 
@@ -24,6 +25,7 @@ public sealed class TrayMenuController : IDisposable
     private readonly NativeMenu _menu;
     private readonly ReceiverManager _manager;
     private readonly ILicenseService _license;
+    private readonly AppSettings? _settings;
     private readonly ILogger<TrayMenuController> _logger;
     private readonly CompositeDisposable _disposables = new();
     private readonly Dictionary<string, ReceiverSection> _sections = new();
@@ -41,15 +43,41 @@ public sealed class TrayMenuController : IDisposable
         NativeMenu menu,
         ReceiverManager manager,
         ILicenseService license,
-        ILogger<TrayMenuController> logger)
+        ILogger<TrayMenuController> logger,
+        AppSettings? settings = null)
     {
         _menu = menu;
         _manager = manager;
         _license = license;
         _logger = logger;
+        _settings = settings;
 
         BuildStaticItems();
         WireReceiverSubscriptions();
+    }
+
+    /// <summary>
+    /// Re-reads <see cref="AppSettings.HostNames"/> and refreshes the
+    /// "Switch all to X" labels. Call after Settings persists a label edit.
+    /// </summary>
+    public void RefreshHostLabels()
+    {
+        var (n1, n2, n3) = ResolveHostNames();
+        Dispatcher.UIThread.Post(() =>
+        {
+            _switchHost1.Header = $"Switch all to {n1}";
+            _switchHost2.Header = $"Switch all to {n2}";
+            _switchHost3.Header = $"Switch all to {n3}";
+        });
+    }
+
+    private (string, string, string) ResolveHostNames()
+    {
+        var names = _settings?.HostNames;
+        return (
+            names is not null && names.Length > 0 ? names[0] : "Host 1",
+            names is not null && names.Length > 1 ? names[1] : "Host 2",
+            names is not null && names.Length > 2 ? names[2] : "Host 3");
     }
 
     public void Dispose() => _disposables.Dispose();
@@ -58,9 +86,10 @@ public sealed class TrayMenuController : IDisposable
     {
         _menu.Items.Clear();
 
-        _switchHost1 = new NativeMenuItem("Switch all to Host 1");
-        _switchHost2 = new NativeMenuItem("Switch all to Host 2");
-        _switchHost3 = new NativeMenuItem("Switch all to Host 3");
+        var (n1, n2, n3) = ResolveHostNames();
+        _switchHost1 = new NativeMenuItem($"Switch all to {n1}");
+        _switchHost2 = new NativeMenuItem($"Switch all to {n2}");
+        _switchHost3 = new NativeMenuItem($"Switch all to {n3}");
         _switchHost1.Click += (_, _) => SwitchAllTo(0);
         _switchHost2.Click += (_, _) => SwitchAllTo(1);
         _switchHost3.Click += (_, _) => SwitchAllTo(2);

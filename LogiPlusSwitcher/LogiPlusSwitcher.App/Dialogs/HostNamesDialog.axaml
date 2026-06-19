@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LogiPlusSwitcher.App.Dialogs.HostNamesDialog"
+        Width="460" Height="280"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Title="Edit host labels">
+    <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="HeaderText" FontWeight="Bold" Margin="0,0,0,4" />
+        <TextBlock Grid.Row="1" x:Name="HintText" Foreground="#999" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+        <TextBlock Grid.Row="2" Text="Host 1" Margin="0,0,0,2" />
+        <TextBox Grid.Row="3" x:Name="Host1Box" Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="4" Text="Host 2" Margin="0,0,0,2" />
+        <TextBox Grid.Row="5" x:Name="Host2Box" Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="6" Text="Host 3" Margin="0,0,0,2" />
+        <TextBox Grid.Row="7" x:Name="Host3Box" Margin="0,0,0,8" />
+
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button Content="Cancel" Click="OnCancel" />
+            <Button Content="Save" Click="OnSave" IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</Window>
