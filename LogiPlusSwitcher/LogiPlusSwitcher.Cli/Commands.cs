@@ -42,7 +42,19 @@ internal static class Commands
         var infos = transport.Enumerate();
         if (infos.Count == 0)
         {
-            Console.WriteLine("No Bolt receivers found. Plug one in and confirm Input Monitoring permission on macOS.");
+            Console.WriteLine("No Bolt receivers found.");
+            var permission = InputMonitoringPermission.Check();
+            if (permission == InputMonitoringPermission.Status.Denied || permission == InputMonitoringPermission.Status.Unknown)
+            {
+                Console.WriteLine();
+                Console.WriteLine("⚠ macOS Input Monitoring permission is {0}.", permission);
+                Console.WriteLine("  System Settings → Privacy & Security → Input Monitoring → enable for the terminal app.");
+                Console.WriteLine("  Then rerun this command.");
+            }
+            else
+            {
+                Console.WriteLine("Plug in a Bolt receiver (VID 0x046D PID 0xC548) and retry.");
+            }
             return 1;
         }
 

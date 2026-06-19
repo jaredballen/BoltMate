@@ -42,6 +42,24 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
         var bytes = frame.ToBytes();
         lock (_gate)
         {
+            // Workaround: on Windows the standard hid_write path fails with
+            // ERROR_INVALID_FUNCTION for long (0x11) HID++ reports against the
+            // Bolt receiver's management interface. SendFeatureReport works
+            // because it routes through HidD_SetFeature rather than the
+            // interrupt OUT pipe. Short reports keep using the normal Write.
+            if (frame.IsLong && OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    _device.SendFeatureReport(bytes);
+                    return;
+                }
+                catch (HidApi.HidException)
+                {
+                    // Fall through to the standard write as a last resort.
+                }
+            }
+
             _device.Write(bytes);
         }
     }
