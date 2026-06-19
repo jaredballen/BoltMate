@@ -58,7 +58,7 @@ public static class HidPp10
 
     /// <summary>
     /// Builds the HID++ 1.0 short frame that enables receiver notifications.
-    /// Wire: <c>10 FF 80 00 00 09 00</c>.
+    /// Wire: <c>10 FF 80 00 00 09 00</c> — WIRELESS | SOFTWARE_PRESENT.
     /// </summary>
     public static HidPpFrame BuildEnableNotificationsFrame() =>
         HidPpFrame.Hidpp10Short(
@@ -112,6 +112,16 @@ public static class HidPp10
             deviceIndex: HidPpConstants.DeviceIndexReceiver,
             subId: SubIdGetLongRegister,
             parameters: [RegisterReceiverInfo, subRegister, extraByte, 0x00]);
+
+    /// <summary>
+    /// Builds a short-register GET request for an arbitrary register byte.
+    /// Wire: <c>10 FF 81 &lt;register&gt; 00 00 00</c>.
+    /// </summary>
+    public static HidPpFrame BuildReadShortRegisterFrame(byte register) =>
+        HidPpFrame.Hidpp10Short(
+            deviceIndex: HidPpConstants.DeviceIndexReceiver,
+            subId: SubIdGetRegister,
+            parameters: [register, 0x00, 0x00, 0x00]);
 
     /// <summary>
     /// Builds the read request for BOLT_UNIQUE_ID (the receiver's own serial /

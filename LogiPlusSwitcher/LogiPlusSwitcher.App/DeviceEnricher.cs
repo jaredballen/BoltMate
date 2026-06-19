@@ -38,9 +38,19 @@ public sealed class DeviceEnricher : IDisposable
 
     private void HookReceiver(BoltReceiver receiver)
     {
-        // Initial pass: enrich slots that are already populated (e.g. when a
-        // receiver attached and slot notifications fired before we wired up).
+        // Initial pass: receiver-level + per-slot register reads for any slots
+        // already populated (e.g. when the link-up notification fired before
+        // our LinkEstablished subscribe was wired up below).
         _ = EnrichAllSlotsAsync(receiver);
+
+        // Also fire the full per-slot enrichment for every slot that's
+        // ALREADY linked up at hook time. Otherwise we depend solely on
+        // future LinkEstablished events and miss the receiver's first attach.
+        foreach (var device in receiver.Devices.Items)
+        {
+            if (device.LinkUp)
+                _ = EnrichSlotAsync(receiver, device.DeviceIndex);
+        }
 
         // On every fresh link-up, run the full enrichment pass for that slot.
         _disposables.Add(receiver.LinkEstablished.Subscribe(device =>
@@ -72,6 +82,45 @@ public sealed class DeviceEnricher : IDisposable
             await receiver.DiscoverFeaturesAsync(deviceIndex);
             var device = receiver.TryGetDevice(deviceIndex);
             if (device is null) return;
+
+            // DIAGNOSTIC — log the current divert state of every CID so we can
+            // diff against pre/post-App-launch snapshots. Tracked under #47/#48.
+            _logger.LogInformation("[DIAG-SNAPSHOT] BEGIN slot {Slot}", deviceIndex);
+            try
+            {
+                var notifFlags = await receiver.ReadShortReceiverRegisterAsync(0x00);
+                _logger.LogInformation("[DIAG-SNAPSHOT] receiver notification register: bytes=[{Bytes}]",
+                    Convert.ToHexString(notifFlags));
+                if (device.ReprogControlsIndex is { } reprogIdx)
+                {
+                    _logger.LogInformation("[DIAG-SNAPSHOT] reprogIndex resolved = 0x{Idx:X2}", reprogIdx);
+                    var controls = await receiver.ReprogControls.ListControlsAsync(deviceIndex, reprogIdx);
+                    _logger.LogInformation("[DIAG-SNAPSHOT] ListControls returned {Count} CIDs", controls.Count);
+                    foreach (var c in controls)
+                    {
+                        try
+                        {
+                            var st = await receiver.ReprogControls.GetCidReportingAsync(deviceIndex, reprogIdx, c.ControlId);
+                            _logger.LogInformation(
+                                "[DIAG-SNAPSHOT] slot {Slot} cid 0x{Cid:X4} flags={Flags} bfield=0x{Bfield:X2} divert={Div} persist={Per} remap=0x{Remap:X4}",
+                                deviceIndex, c.ControlId, c.Flags, st.Bfield, st.DivertSet, st.PersistDivertSet, st.RemapControlId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("[DIAG-SNAPSHOT] slot {Slot} cid 0x{Cid:X4} read failed: {Err}", deviceIndex, c.ControlId, ex.Message);
+                        }
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("[DIAG-SNAPSHOT] slot {Slot} has no ReprogControlsIndex — skipping CID dump", deviceIndex);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DIAG-SNAPSHOT] dump failed for slot {Slot}", deviceIndex);
+            }
+            _logger.LogInformation("[DIAG-SNAPSHOT] END slot {Slot}", deviceIndex);
 
             // Device-side name (feature 0x0005) — more accurate than register read.
             if (device.DeviceNameIndex is { } dnIdx)

@@ -643,19 +643,21 @@ internal static class Commands
         }
 
         Console.WriteLine();
-        Console.WriteLine("==================================== SUMMARY ====================================");
-        Console.WriteLine("Per trial: open → divert (0x03) → apply clear → test → close → re-test");
+        Console.WriteLine("======================================== SUMMARY ========================================");
+        Console.WriteLine("Per trial: open → baseline → divert (0x03) → apply clear → test → close → recovery");
         Console.WriteLine();
-        Console.WriteLine("┌────────────────────────────────────────┬──────────────────┬──────────────────┐");
-        Console.WriteLine("│ clear bfield                           │ live-session     │ after session    │");
-        Console.WriteLine("│                                        │ wheel-mode works │ close, recovered │");
-        Console.WriteLine("├────────────────────────────────────────┼──────────────────┼──────────────────┤");
+        Console.WriteLine("┌─────────────────────────────────────┬────────┬──────────┬───────────┬───────────┐");
+        Console.WriteLine("│ clear bfield                        │ bfield │ baseline │ after     │ after     │");
+        Console.WriteLine("│                                     │        │ (no wr)  │ clear     │ close     │");
+        Console.WriteLine("├─────────────────────────────────────┼────────┼──────────┼───────────┼───────────┤");
         foreach (var r in results)
-            Console.WriteLine($"│ {r.Label,-38} │       {(r.ActuatedInSession ? "YES" : "NO ")}        │       {(r.RecoveredAfterClose ? "YES" : "NO ")}        │");
-        Console.WriteLine("└────────────────────────────────────────┴──────────────────┴──────────────────┘");
+            Console.WriteLine($"│ {r.Label,-35} │   --   │   {(r.BaselineActuated ? "YES" : "NO ")}    │    {(r.ActuatedInSession ? "YES" : "NO ")}    │    {(r.RecoveredAfterClose ? "YES" : "NO ")}    │");
+        Console.WriteLine("└─────────────────────────────────────┴────────┴──────────┴───────────┴───────────┘");
         Console.WriteLine();
-        Console.WriteLine("Rows with live-session=YES → that clear bfield IS the in-protocol un-divert.");
-        Console.WriteLine("All live-session=NO        → only session teardown clears; we can't safely bulk-divert.");
+        Console.WriteLine("Interpretation:");
+        Console.WriteLine("  baseline=NO          → HID open + receiver-enable alone breaks the button.");
+        Console.WriteLine("  baseline=YES, clear=YES → that clear bfield restores divert in-session.");
+        Console.WriteLine("  baseline=YES, clear=NO, recovery=YES → only session-close clears divert.");
         return 0;
     }
 
@@ -665,12 +667,13 @@ internal static class Commands
         Console.WriteLine();
         Console.WriteLine($"════════ Trial {trialNumber}/{total}: clear via {label} ════════");
 
+        bool baselineActuated;
         bool actuatedInSession;
 
-        // --- Open session, divert, apply clear, ask user ---
+        // --- Open session, baseline-test, divert, apply clear, ask user ---
         {
             var infos = transport.Enumerate();
-            if (infos.Count == 0) return new TrialResult(label, false, false);
+            if (infos.Count == 0) return new TrialResult(label, false, false, false);
 
             var info = infos[0];
             using var connection = transport.Open(info);
@@ -682,28 +685,35 @@ internal static class Commands
             settled.Wait(TimeSpan.FromMilliseconds(1500), ct);
 
             try { await receiver.DiscoverFeaturesAsync(slot, ct); }
-            catch (Exception ex) { Console.Error.WriteLine($"  discover failed: {ex.Message}"); return new TrialResult(label, false, false); }
+            catch (Exception ex) { Console.Error.WriteLine($"  discover failed: {ex.Message}"); return new TrialResult(label, false, false, false); }
 
             var device = receiver.TryGetDevice(slot);
             if (device?.ReprogControlsIndex is not { } reprogIndex)
             {
                 Console.WriteLine($"  slot {slot} doesn't expose REPROG_CONTROLS_V4");
-                return new TrialResult(label, false, false);
+                return new TrialResult(label, false, false, false);
             }
 
-            // 1. Divert (silently — we trust this).
-            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, 0x03, ct); }
-            catch (Exception ex) { Console.Error.WriteLine($"  divert write failed: {ex.Message}"); return new TrialResult(label, false, false); }
-
-            // 2. Apply candidate clear.
-            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, clearBfield, ct); }
-            catch (Exception ex) { Console.Error.WriteLine($"  clear write failed: {ex.Message}"); return new TrialResult(label, false, false); }
-
-            // 3. Ask user to test while session is still open.
-            Console.WriteLine($"  Session open. Diverted then cleared with 0x{clearBfield:X2}.");
+            // 1. BASELINE — session is open, enable + discover ran, NO writes yet.
+            //    If wheel mode is broken here, opening the HID handle alone is the culprit.
+            Console.WriteLine("  Session open, enable+discover complete, NO divert writes yet.");
             Console.WriteLine("  Press the wheel-mode button once, then press ENTER.");
             await Task.Run(() => Console.ReadLine(), ct);
-            actuatedInSession = AskYesNo("  Did wheel mode actuate normally?");
+            baselineActuated = AskYesNo("  Did wheel mode actuate normally? (baseline)");
+
+            // 2. Divert.
+            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, 0x03, ct); }
+            catch (Exception ex) { Console.Error.WriteLine($"  divert write failed: {ex.Message}"); return new TrialResult(label, baselineActuated, false, false); }
+
+            // 3. Apply candidate clear.
+            try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, clearBfield, ct); }
+            catch (Exception ex) { Console.Error.WriteLine($"  clear write failed: {ex.Message}"); return new TrialResult(label, baselineActuated, false, false); }
+
+            // 4. Test after divert+clear.
+            Console.WriteLine($"  Diverted then cleared with 0x{clearBfield:X2}.");
+            Console.WriteLine("  Press the wheel-mode button once, then press ENTER.");
+            await Task.Run(() => Console.ReadLine(), ct);
+            actuatedInSession = AskYesNo("  Did wheel mode actuate normally? (after clear)");
         }
         // ↑ session disposed here (connection + receiver Dispose).
 
@@ -711,9 +721,9 @@ internal static class Commands
         Console.WriteLine();
         Console.WriteLine("  Session torn down. Press the wheel-mode button once, then press ENTER.");
         await Task.Run(() => Console.ReadLine(), ct);
-        var recoveredAfterClose = AskYesNo("  Did wheel mode actuate normally?");
+        var recoveredAfterClose = AskYesNo("  Did wheel mode actuate normally? (after close)");
 
-        return new TrialResult(label, actuatedInSession, recoveredAfterClose);
+        return new TrialResult(label, baselineActuated, actuatedInSession, recoveredAfterClose);
     }
 
     private static bool AskYesNo(string prompt)
@@ -727,7 +737,237 @@ internal static class Commands
         }
     }
 
-    private sealed record TrialResult(string Label, bool ActuatedInSession, bool RecoveredAfterClose);
+    private sealed record TrialResult(string Label, bool BaselineActuated, bool ActuatedInSession, bool RecoveredAfterClose);
+
+    /// <summary>
+    /// Opens the HID handle to the first receiver, sends NO writes (no
+    /// enable, no enumerate, nothing), and waits for ENTER. Used to test
+    /// whether the bare act of holding the HID handle open is enough to
+    /// affect device firmware behaviour (e.g. wheel-mode toggle).
+    /// </summary>
+    public static async Task<int> RunDiagOpenOnlyAsync(IReceiverTransport transport, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        Console.WriteLine($"Opening {info.ProductString} ({info.Path}) — NO writes will be sent.");
+        using var connection = transport.Open(info);
+        Console.WriteLine("Handle open. Press the wheel-mode + thumb buttons now and test.");
+        Console.WriteLine("Press ENTER when done to close the handle.");
+        await Task.Run(() => Console.ReadLine(), ct);
+        Console.WriteLine("Closing handle.");
+        return 0;
+    }
+
+    /// <summary>
+    /// Opens the Bolt receiver's management interface directly via IOKit
+    /// (bypassing libhidapi) with kIOHIDOptionsTypeNone, holds open until
+    /// ENTER. Used to test whether libhidapi's hid_darwin_set_open_exclusive(0)
+    /// is actually delivering shared access — or whether IOKit-direct with
+    /// explicit None still fixes the wheel-mode break. Mac-only.
+    /// </summary>
+    public static async Task<int> RunDiagIOKitOpenAsync(CancellationToken ct)
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+        {
+            Console.WriteLine("diag-iokit-open is macOS-only.");
+            return 2;
+        }
+
+        // VID 0x046D (Logitech), PID 0xC548 (Bolt receiver). Filter by
+        // UsagePage 0xFF00 + Usage 0x0001 done after enumeration since we
+        // get a CFSet of all matching interfaces and pick the management one.
+        var manager = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, 0);
+        if (manager == IntPtr.Zero) { Console.Error.WriteLine("IOHIDManagerCreate failed"); return 1; }
+
+        try
+        {
+            var match = LogiPlusSwitcher.Core.Hid.IOKitInterop.CreateMatchingDictionary(0x046D, 0xC548);
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerSetDeviceMatching(manager, match);
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(match);
+
+            var open = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerOpen(manager, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            Console.WriteLine($"IOHIDManagerOpen result = 0x{open:X8}");
+
+            var set = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerCopyDevices(manager);
+            if (set == IntPtr.Zero) { Console.Error.WriteLine("No matching IOHIDDevices found"); return 1; }
+
+            var count = (int)LogiPlusSwitcher.Core.Hid.IOKitInterop.CFSetGetCount(set);
+            Console.WriteLine($"Matched {count} HID interface(s) on the Bolt receiver.");
+            var devices = new IntPtr[count];
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFSetGetValues(set, devices);
+
+            IntPtr managementDevice = IntPtr.Zero;
+            foreach (var dev in devices)
+            {
+                if (dev == IntPtr.Zero) continue;
+                var usagePage = LogiPlusSwitcher.Core.Hid.IOKitInterop.GetInt32Property(dev, "PrimaryUsagePage");
+                var usage = LogiPlusSwitcher.Core.Hid.IOKitInterop.GetInt32Property(dev, "PrimaryUsage");
+                Console.WriteLine($"  interface: UsagePage=0x{usagePage:X4} Usage=0x{usage:X4}");
+                if (usagePage == 0xFF00 && usage == 0x0001) managementDevice = dev;
+            }
+
+            if (managementDevice == IntPtr.Zero)
+            {
+                Console.Error.WriteLine("Could not find management interface (UsagePage 0xFF00, Usage 0x0001).");
+                LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+                return 1;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("Opening management interface via IOHIDDeviceOpen(kIOHIDOptionsTypeNone)...");
+            var openResult = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDDeviceOpen(
+                managementDevice, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            Console.WriteLine($"IOHIDDeviceOpen result = 0x{openResult:X8} ({(openResult == 0 ? "OK" : "FAIL")})");
+
+            if (openResult != 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Open failed. Common return values:");
+                Console.WriteLine("  0xE00002C5 = kIOReturnExclusiveAccess (someone else has it seized)");
+                Console.WriteLine("  0xE00002BC = kIOReturnNotPrivileged   (missing Input Monitoring permission)");
+                LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+                return 3;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("Management interface open via IOKit-direct.");
+            Console.WriteLine("Press wheel-mode + thumb buttons on the mouse now and test.");
+            Console.WriteLine("Press ENTER when done to close.");
+            await Task.Run(() => Console.ReadLine(), ct);
+
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDDeviceClose(managementDevice, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+            Console.WriteLine("Closed.");
+            return 0;
+        }
+        finally
+        {
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerClose(manager, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(manager);
+        }
+    }
+
+    /// <summary>
+    /// Opens, sends enable+enumerate (so we can discover features), then sends
+    /// bfield 0x02 (clear/re-arm) to every divertable CID on the given slot,
+    /// then waits for ENTER. Tests whether a bulk "re-arm" handshake restores
+    /// device-firmware button handling that the bare open broke.
+    /// </summary>
+    public static async Task<int> RunDiagOpenAndRearmAsync(IReceiverTransport transport, byte slot, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var linkSub = receiver.LinkEstablished.Subscribe(d => { if (d.DeviceIndex == slot) settled.Set(); });
+        receiver.Start();
+        settled.Wait(TimeSpan.FromMilliseconds(1500), ct);
+
+        try { await receiver.DiscoverFeaturesAsync(slot, ct); }
+        catch (Exception ex) { Console.Error.WriteLine($"discover failed: {ex.Message}"); return 3; }
+
+        var device = receiver.TryGetDevice(slot);
+        if (device?.ReprogControlsIndex is not { } reprogIndex)
+        {
+            Console.WriteLine($"slot {slot} doesn't expose REPROG_CONTROLS_V4");
+            return 2;
+        }
+
+        var controls = await receiver.ReprogControls.ListControlsAsync(slot, reprogIndex, ct);
+        var divertable = controls.Where(c => c.IsDivertable).ToList();
+        Console.WriteLine($"Re-arming {divertable.Count} divertable CID(s) on slot {slot}…");
+        foreach (var c in divertable)
+        {
+            try
+            {
+                await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, c.ControlId, 0x02, ct);
+                Console.WriteLine($"  re-armed 0x{c.ControlId:X4}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  0x{c.ControlId:X4} failed: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Handle still open. Press the wheel-mode + thumb buttons now and test.");
+        Console.WriteLine("Press ENTER when done to close.");
+        await Task.Run(() => Console.ReadLine(), ct);
+        return 0;
+    }
+
+    /// <summary>
+    /// Pure read-only snapshot: enumerates every CID on the given slot via
+    /// getCidInfo, then reads getCidReporting for each, printing flags +
+    /// divert state. Also reads the receiver-level HID++ 1.0 notification
+    /// register (0x00). Used to diff "before App" vs "during App" vs "after
+    /// App" — diff tells us what state changes when our app opens.
+    /// </summary>
+    public static async Task<int> RunDiagSnapshotAsync(IReceiverTransport transport, byte slot, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var linkSub = receiver.LinkEstablished.Subscribe(d => { if (d.DeviceIndex == slot) settled.Set(); });
+        receiver.Start();
+        settled.Wait(TimeSpan.FromMilliseconds(1500), ct);
+
+        try { await receiver.DiscoverFeaturesAsync(slot, ct); }
+        catch (Exception ex) { Console.Error.WriteLine($"discover failed: {ex.Message}"); return 3; }
+
+        var device = receiver.TryGetDevice(slot);
+        if (device?.ReprogControlsIndex is not { } reprogIndex)
+        {
+            Console.WriteLine($"slot {slot} doesn't expose REPROG_CONTROLS_V4 (0x1B04).");
+            return 2;
+        }
+
+        Console.WriteLine($"=== diag-snapshot: slot {slot}, reprog feature 0x{reprogIndex:X2} ===");
+        Console.WriteLine($"=== timestamp (utc): {DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss.fffZ} ===");
+        Console.WriteLine();
+
+        // Reading register 0x00 lets us see if our enable-write changed the
+        // receiver-wide notification flags compared to what Logi+ had set.
+        try
+        {
+            var notifFlags = await receiver.ReadShortReceiverRegisterAsync(0x00, ct);
+            Console.WriteLine($"  Receiver notification register (0x00): bytes=[{BitConverter.ToString(notifFlags).Replace("-", " ")}]");
+        }
+        catch (Exception ex) { Console.WriteLine($"  Notification register read failed: {ex.Message}"); }
+        Console.WriteLine();
+
+        var controls = await receiver.ReprogControls.ListControlsAsync(slot, reprogIndex, ct);
+        Console.WriteLine($"  {controls.Count} CIDs in control table:");
+        Console.WriteLine();
+        Console.WriteLine("  ┌──────┬───────────────────────────────────────┬────────┬──────────┬─────────┬──────────┐");
+        Console.WriteLine("  │ cid  │ flags                                 │ bfield │ divert?  │ persist?│ remap    │");
+        Console.WriteLine("  ├──────┼───────────────────────────────────────┼────────┼──────────┼─────────┼──────────┤");
+        foreach (var c in controls)
+        {
+            try
+            {
+                var st = await receiver.ReprogControls.GetCidReportingAsync(slot, reprogIndex, c.ControlId, ct);
+                Console.WriteLine($"  │0x{c.ControlId:X4}│ {c.Flags,-37} │  0x{st.Bfield:X2}  │   {(st.DivertSet ? "YES" : "NO ")}    │   {(st.PersistDivertSet ? "YES" : "NO ")}   │ 0x{st.RemapControlId:X4}   │");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  │0x{c.ControlId:X4}│ READ FAILED: {ex.Message}");
+            }
+        }
+        Console.WriteLine("  └──────┴───────────────────────────────────────┴────────┴──────────┴─────────┴──────────┘");
+        return 0;
+    }
 
     /// <summary>
     /// Tails the newest LogiPlusSwitcher log file matching the given prefix.

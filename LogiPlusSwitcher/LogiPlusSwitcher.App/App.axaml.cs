@@ -51,7 +51,9 @@ public partial class App : Application
         HidApiBridge.EnsureNativeLibraryResolver();
         HidApiBridge.SetMacOsNonExclusive();
 
-        var transport = new HidApiReceiverTransport(_loggerFactory);
+        // macOS picks IOKit-direct transport (libhidapi opens break device
+        // firmware buttons); Win/Linux stay on libhidapi.
+        var transport = ReceiverTransportFactory.Create(_loggerFactory);
         _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
 
         _disposables.Add(_manager);

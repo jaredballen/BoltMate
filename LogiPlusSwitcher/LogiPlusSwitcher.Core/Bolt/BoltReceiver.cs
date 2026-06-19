@@ -280,6 +280,23 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Reads an arbitrary short receiver register (HID++ 1.0 GET, sub-id 0x81).
+    /// Returns the 3-byte register payload, or an empty array if the read failed.
+    /// Used for diagnostics; e.g. reading register 0x00 to see the receiver's
+    /// current notification-flags mask.
+    /// </summary>
+    public async Task<byte[]> ReadShortReceiverRegisterAsync(byte register, CancellationToken ct = default)
+    {
+        var reply = await Hidpp10ReadAsync(
+            HidPp10.BuildReadShortRegisterFrame(register),
+            expectedRegister: register,
+            window: TimeSpan.FromMilliseconds(500),
+            ct).ConfigureAwait(false);
+        if (reply is null) return Array.Empty<byte>();
+        return reply.Value.Parameters.ToArray();
+    }
+
+    /// <summary>
     /// Reads <c>BOLT_DEVICE_NAME</c> (sub-register <c>0x60 + slot</c>) for a single
     /// slot and stores it on the cached <see cref="PairedDevice"/>. Returns the
     /// name, or null if the read failed (slot empty / device offline).

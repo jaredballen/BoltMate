@@ -10,7 +10,7 @@ using var loggerFactory = LoggerSetup.Create(verbose ? LogLevel.Debug : LogLevel
 HidApiBridge.EnsureNativeLibraryResolver();
 HidApiBridge.SetMacOsNonExclusive();
 
-var transport = new HidApiReceiverTransport(loggerFactory);
+var transport = ReceiverTransportFactory.Create(loggerFactory);
 Commands.LoggerFactory = loggerFactory;
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -71,6 +71,16 @@ return args[0].ToLowerInvariant() switch
                        && ushort.TryParse(args[2].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? args[2][2..] : args[2],
                             System.Globalization.NumberStyles.HexNumber, null, out var ddCid) =>
         await Commands.RunDiagDivertAsync(transport, ddSlot, ddCid, cts.Token),
+
+    "diag-snapshot" when args.Length == 2 && byte.TryParse(args[1], out var dsSlot) =>
+        await Commands.RunDiagSnapshotAsync(transport, dsSlot, cts.Token),
+
+    "diag-open-only" => await Commands.RunDiagOpenOnlyAsync(transport, cts.Token),
+
+    "diag-rearm" when args.Length == 2 && byte.TryParse(args[1], out var drSlot) =>
+        await Commands.RunDiagOpenAndRearmAsync(transport, drSlot, cts.Token),
+
+    "diag-iokit-open" => await Commands.RunDiagIOKitOpenAsync(cts.Token),
 
     "tail" => await Commands.RunTailAsync(
         lastN: args.Skip(1).FirstOrDefault(a => a.StartsWith("-n", StringComparison.Ordinal)) is { } n
