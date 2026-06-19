@@ -35,6 +35,9 @@ internal static class Commands
         Console.WriteLine("  logiplus service install            Register as a background service / login agent.");
         Console.WriteLine("  logiplus service uninstall          Remove the background registration.");
         Console.WriteLine("  logiplus service status             Show service registration status.");
+        Console.WriteLine("  logiplus tail [-n<N>] [--app|--cli] [--no-follow]");
+        Console.WriteLine("                                      Tail the newest log file (App by default). Survives log roll.");
+        Console.WriteLine("  logiplus diag-divert <slot> <cid>   Probe Set/Clear divert on a single CID (engineering tool).");
         Console.WriteLine("  logiplus help                       This message.");
     }
 
@@ -725,6 +728,89 @@ internal static class Commands
     }
 
     private sealed record TrialResult(string Label, bool ActuatedInSession, bool RecoveredAfterClose);
+
+    /// <summary>
+    /// Tails the newest LogiPlusSwitcher log file matching the given prefix.
+    /// App writes logiplus-app-*.log; CLI writes logiplus-*.log. Both land
+    /// in <see cref="AppPaths.LogsDirectory"/>, so one tail can target either
+    /// (or both) by prefix glob.
+    /// </summary>
+    /// <param name="prefix">File prefix glob, e.g. "logiplus-app-*.log" for
+    /// the App, "logiplus-*.log" for everything. Defaults to the App if any
+    /// app-prefixed file exists, else falls back to all .log files.</param>
+    public static async Task<int> RunTailAsync(int lastN, bool follow, string? prefix, CancellationToken ct)
+    {
+        var dir = AppPaths.LogsDirectory;
+        if (!Directory.Exists(dir))
+        {
+            Console.Error.WriteLine($"Logs directory does not exist: {dir}");
+            return 1;
+        }
+
+        string ResolvePrefix()
+        {
+            if (!string.IsNullOrEmpty(prefix)) return prefix!;
+            var hasAppLog = new DirectoryInfo(dir).GetFiles("logiplus-app-*.log").Any();
+            return hasAppLog ? "logiplus-app-*.log" : "*.log";
+        }
+
+        var glob = ResolvePrefix();
+        var newest = new DirectoryInfo(dir).GetFiles(glob)
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .FirstOrDefault();
+        if (newest is null)
+        {
+            Console.Error.WriteLine($"No {glob} files in {dir}");
+            return 1;
+        }
+
+        Console.Error.WriteLine($"==> {newest.FullName} <==");
+
+        await using var stream = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+
+        if (lastN > 0)
+        {
+            var all = new List<string>();
+            while (!reader.EndOfStream)
+            {
+                var line = await reader.ReadLineAsync(ct);
+                if (line is not null) all.Add(line);
+            }
+            var skip = Math.Max(0, all.Count - lastN);
+            for (var i = skip; i < all.Count; i++)
+                Console.WriteLine(all[i]);
+        }
+        else
+        {
+            stream.Seek(0, SeekOrigin.End);
+        }
+
+        if (!follow) return 0;
+
+        var currentPath = newest.FullName;
+        while (!ct.IsCancellationRequested)
+        {
+            string? line;
+            while ((line = await reader.ReadLineAsync(ct)) is not null)
+                Console.WriteLine(line);
+
+            await Task.Delay(250, ct);
+
+            var latestNow = new DirectoryInfo(dir).GetFiles(glob)
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+            if (latestNow is not null && latestNow.FullName != currentPath)
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"==> {latestNow.FullName} <==");
+                reader.Dispose();
+                stream.Dispose();
+                return await RunTailAsync(0, follow: true, prefix, ct);
+            }
+        }
+        return 0;
+    }
 
     /// <summary>Bag of per-receiver disposables for the monitor command.</summary>
     private sealed class ReceiverSubscriptions : IDisposable

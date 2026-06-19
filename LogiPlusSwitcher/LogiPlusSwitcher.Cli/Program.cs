@@ -72,6 +72,15 @@ return args[0].ToLowerInvariant() switch
                             System.Globalization.NumberStyles.HexNumber, null, out var ddCid) =>
         await Commands.RunDiagDivertAsync(transport, ddSlot, ddCid, cts.Token),
 
+    "tail" => await Commands.RunTailAsync(
+        lastN: args.Skip(1).FirstOrDefault(a => a.StartsWith("-n", StringComparison.Ordinal)) is { } n
+                && int.TryParse(n.AsSpan(2), out var nv) ? nv : 50,
+        follow: !args.Contains("--no-follow"),
+        prefix: args.Contains("--app") ? "logiplus-app-*.log"
+              : args.Contains("--cli") ? "logiplus-*.log"
+              : null,
+        cts.Token),
+
     "service" when args.Length == 2 && args[1].Equals("install", StringComparison.OrdinalIgnoreCase)
         => ServiceCommands.Install(),
     "service" when args.Length == 2 && args[1].Equals("uninstall", StringComparison.OrdinalIgnoreCase)
