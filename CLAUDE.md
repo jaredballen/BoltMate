@@ -33,22 +33,43 @@ LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not 
 
 ```
 LogiPlusSwitcher/
-├── LogiPlusSwitcher.Core/        # HID transport + HID++ protocol + Bolt model + Switcher
-│   ├── Hid/                       # IReceiverTransport, IReceiverConnection, HidApi backend
-│   ├── HidPp/                     # frames, client, features (0x0001 / 0x1B04 / 0x1814 / 0x1815)
-│   │   ├── Features/              # one service class per HID++ 2.0 feature ID
+├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface (tier-agnostic)
+│   ├── Hid/                       # IReceiverTransport, IReceiverConnection, HidApi backend,
+│   │   │                          # InputMonitoringPermission (macOS TCC helper)
+│   ├── HidPp/                     # frames, request/reply client, HidPp10 register helpers
+│   │   ├── Features/              # 0x0001 IRoot, 0x0003 DeviceInfo, 0x0005 DeviceName,
+│   │   │                          # 0x0007 DeviceFriendlyName, 0x1004 UnifiedBattery,
+│   │   │                          # 0x1814 ChangeHost, 0x1815 HostsInfo, 0x1B04 ReprogControls
 │   │   └── Notifications/         # parsers for 0x41 DJ_PAIRING, divertedButtonsEvent, Flow snoop
-│   ├── Bolt/                      # BoltReceiver (per-receiver controller), PairedDevice,
-│   │   │                          # ReceiverManager (multi-receiver + hot-plug)
-│   └── Switcher/                  # SwitcherService (fan-out orchestrator)
+│   ├── Bolt/                      # BoltReceiver, PairedDevice (DisplayName resolver),
+│   │   │                          # ReceiverManager, ReceiverDetails, PairingBackup, WpidCatalog
+│   ├── Switcher/                  # SwitcherService (fan-out orchestrator)
+│   ├── AppPaths.cs                # per-platform on-disk locations
+│   └── AppSettings.cs             # JSON config schema
 ├── LogiPlusSwitcher.Cli/         # headless service / diagnostic CLI (`logiplus` binary)
-├── LogiPlusSwitcher.App/         # Avalonia 12 tray app (phase 2 scaffold)
-└── LogiPlusSwitcher.Tests/       # xUnit, FakeReceiverConnection + FakeReceiverTransport doubles
+├── LogiPlusSwitcher.App/         # Avalonia 12 tray app
+│   ├── Assets/                    # tray-icon.png (+@2x), app-icon-512.png, LogiPlusSwitcher.icns
+│   ├── Licensing/                 # ILicenseService + DevAlwaysProLicenseService / FreeOnly stub
+│   ├── App.axaml(.cs)             # tray shell + bootstrap
+│   ├── TrayMenuController.cs      # dynamic menu bound to manager.Receivers cache
+│   ├── DeviceEnricher.cs          # background metadata reads on link-up
+│   ├── SettingsWindow.axaml(.cs)  # receiver/device list, opens from tray
+│   ├── MacActivationPolicy.cs     # NSApp setActivationPolicy P/Invoke (Dock show/hide)
+│   └── AppLoggerSetup.cs          # Serilog logger factory (mirrors CLI's setup)
+└── LogiPlusSwitcher.Tests/       # xUnit (70+ tests), FakeReceiverConnection/Transport doubles
 ```
 
-`Directory.Build.targets` stages libhidapi alongside every project's output and publish bundle.
+`Directory.Build.targets` stages libhidapi alongside every project's output and publish bundle, and wraps publish output in a macOS `.app` bundle for the App project.
 `Directory.Build.props` (gitignored, per-developer) sets `HidApiWindowsPath` for Windows builds.
-`nuget.config` pins restore to nuget.org only (avoids Jared's Azure DevOps feed).
+`nuget.config` pins restore to nuget.org only.
+`version.json` (Nerdbank.GitVersioning) auto-stamps assembly versions from git tags.
+
+## Reactive style + tier gating
+
+Two architectural rules apply across the codebase:
+
+1. **No CLR events on the public Core API.** State is observable via `IObservable<T>` (point events) or DynamicData's `IObservableCache<TObject, TKey>` (collections). Subjects stay private; only `.AsObservable()` is exposed. `CompositeDisposable` everywhere instead of per-field `Dispose` calls. See [feedback-dotnet-reactive-style](.claude/...) memory.
+2. **Tier gating lives at the App layer only.** Core exposes every capability unconditionally; the App's `ILicenseService` decides whether to expose Pro features in the UI. Two stub impls today: `DevAlwaysProLicenseService` (everything unlocked) and `FreeOnlyLicenseService` (testing upsell paths). See [feedback-tier-gating](.claude/...) memory.
 
 ## Build / run
 
@@ -104,9 +125,13 @@ Bolt receiver: VID `0x046D`, PID `0xC548`. Management interface = UsagePage `0xF
 
 **Key features (HID++ 2.0)** — feature indices are device-specific, **always resolve via IRoot `0x0001` getFeature, never hardcode**:
 - `0x0001` IRoot — get feature index by feature ID. `RootService.GetFeatureAsync`.
-- `0x1B04` REPROG_CONTROLS_V4 — Easy-Switch CIDs `0x00D1` (host 1), `0x00D2` (host 2), `0x00D3` (host 3). `getCidInfo` flags: `& 0x20` divertable, `& 0x40` persistently divertable. `setCidReporting` bfield `0x03` = divert valid + divert set. `divertedButtonsEvent` fires on press BEFORE the device-internal host switch executes (~50ms window). See `ReprogControlsService`.
-- `0x1814` CHANGE_HOST — `read fn=0x00` returns `(numHosts, currentHost)`; `write fn=0x10` SetCurrentHost is fire-and-forget. **No event is emitted on host change.** See `ChangeHostService`.
+- `0x0003` DEVICE_INFO — read serial number (fn 0x2). `DeviceInfoService.GetSerialAsync`.
+- `0x0005` DEVICE_NAME — read product name in chunks (fn 0x0 + fn 0x1). `DeviceNameService`.
+- `0x0007` DEVICE_FRIENDLY_NAME — user-editable nickname (read fn 0x0/0x1, write fn 0x2). `DeviceFriendlyNameService`. **Note**: write returns success at the wire level but firmware silently ignores it on tested hardware — tracked as #33.
+- `0x1004` UNIFIED_BATTERY — battery percent + charging status. `BatteryService.GetStatusAsync`.
+- `0x1814` CHANGE_HOST — `read fn=0x00` returns `(numHosts, currentHost)`; `write fn=0x1` SetCurrentHost is fire-and-forget. **No event is emitted on host change.** See `ChangeHostService`.
 - `0x1815` HOSTS_INFO — read-only poll for host names / capabilities. See `HostsInfoService`.
+- `0x1B04` REPROG_CONTROLS_V4 — Easy-Switch CIDs `0x00D1` (host 1), `0x00D2` (host 2), `0x00D3` (host 3). `getCidInfo` flags: `& 0x20` divertable, `& 0x40` persistently divertable. `setCidReporting` bfield `0x03` = divert valid + divert set. `divertedButtonsEvent` fires on press BEFORE the device-internal host switch executes (~50ms window). See `ReprogControlsService`.
 
 **Bolt-specific pairing registers** (for slot metadata, pair/unpair, rename):
 - `BOLT_UNIQUE_ID`, `BOLT_DEVICE_NAME`, `BOLT_PAIRING_INFORMATION`, `BOLT_DEVICE_DISCOVERY`, `BOLT_PAIRING` — see Solaar `receiver.py:484-531`. Wiring tracked in tasks #16–#25.
@@ -128,10 +153,12 @@ Bolt receiver: VID `0x046D`, PID `0xC548`. Management interface = UsagePage `0xF
 
 ## Platform gotchas
 
-- **macOS**: Input Monitoring permission required for HID reads. `dotnet run` from a terminal inherits the terminal app's grant. If reports come back empty or device open fails, that's the first check.
+- **macOS Input Monitoring** required for HID reads. `dotnet run` from a terminal inherits the terminal app's grant. `InputMonitoringPermission.Check()` reports current state; CLI surfaces a clear message when enumeration returns empty. If reports come back empty or device open fails, that's the first check.
 - **macOS Logi+ coexistence**: libhidapi defaults to exclusive opens since 0.12 — we call `hid_darwin_set_open_exclusive(0)` at startup (see `HidApiBridge`). Without this, Logi Options+ and us fight for the device.
-- **Windows**: Standard HID API, no special permission. Logi+ coexists fine because Windows HID is shared by default. **Win 11 fresh install defaults network profile to Public** which excludes the SSH firewall rule on the dev VM — set to Private once.
-- **Windows arm64**: libusb/hidapi GitHub release only ships x64/x86. Build targeting `win-x64` runs under emulation on arm64 Windows. For native arm64 hidapi: vcpkg or build from source. Tracked as a follow-up.
+- **macOS Dock icon**: app is `LSUIElement=true` (menubar-only). `MacActivationPolicy.ShowDockIcon()` / `HideDockIcon()` flip `NSApp.setActivationPolicy` so the Dock icon appears for the duration of the Settings window, then hides on close.
+- **Windows**: standard HID API, no special permission. Logi+ coexists fine because Windows HID is shared by default. **Win 11 fresh install defaults network profile to Public** which excludes the SSH firewall rule on the dev VM — set to Private once.
+- **Windows long HID writes (#31)**: on Win 11 arm64 + x64 emulation, hid_write fails with `ERROR_INVALID_FUNCTION` (1) for long (0x11) HID++ writes to the Bolt management interface. Short writes succeed. SendFeatureReport also fails. Blocks unpair/clear/pair on Win until root-caused; debug plan in `HidApiReceiverConnection.Write` comment.
+- **Windows arm64**: libusb/hidapi GitHub release only ships x64/x86. Build targeting `win-x64` runs under emulation on arm64 Windows. For native arm64 hidapi: vcpkg or build from source.
 - **Linux**: `/dev/hidraw*` requires udev rule for non-root access. Don't run alongside Solaar — both hold the hidraw node.
 
 ## Working with this project
