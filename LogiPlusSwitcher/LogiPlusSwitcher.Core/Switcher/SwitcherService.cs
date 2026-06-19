@@ -1,6 +1,7 @@
 using System.Reactive.Disposables;
-using System.Reactive.Subjects;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.HidPp.Notifications;
 using Microsoft.Extensions.Logging;
@@ -9,87 +10,170 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace LogiPlusSwitcher.Core.Switcher;
 
 /// <summary>
-/// Orchestrator — listens for any host-switch trigger on a receiver (either
-/// a diverted Easy-Switch press OR a Logi Options+ Flow write) and fans the
-/// switch out to every OTHER paired device that supports CHANGE_HOST.
+/// Multi-receiver, topology-aware fan-out orchestrator. One instance per
+/// <see cref="ReceiverManager"/> (NOT per receiver). Subscribes to every
+/// attached <see cref="BoltReceiver"/>'s host-switch streams and routes the
+/// trigger across ALL participating receivers using each device's
+/// <see cref="PairedDevice.HostBindings"/> for BLE-address matching.
 /// </summary>
 /// <remarks>
-/// Two trigger paths:
+/// Algorithm (per trigger event):
 /// <list type="number">
-/// <item><description><see cref="BoltReceiver.HostSwitchPresses"/> — diverted CID,
-/// target host arrives in payload BEFORE the originating device disconnects.</description></item>
-/// <item><description><see cref="BoltReceiver.FlowHostSwitches"/> — Logi+ wrote
-/// CHANGE_HOST to a mouse during a Flow handover; we echo it to siblings.</description></item>
+/// <item>Resolve the originating device's target BLE from its HostBindings.</item>
+/// <item>For each sibling on any participating receiver, find the slot whose
+/// binding points to the same BLE; CHANGE_HOST to that slot.</item>
+/// <item>Skip the originator. Skip non-participating receivers. Skip siblings
+/// without a matching binding (logged for UI hint).</item>
 /// </list>
-/// In both cases the originating slot is excluded from the fan-out.
+/// Falls back to legacy "same host index for every sibling" when the
+/// originator's HostBindings aren't populated yet (e.g. first press before
+/// DeviceEnricher has finished).
 /// </remarks>
 public sealed class SwitcherService : IDisposable
 {
-    private readonly BoltReceiver _receiver;
+    private readonly ReceiverManager _manager;
     private readonly ILogger<SwitcherService> _logger;
     private readonly Subject<FanOutEvent> _fanOuts = new();
     private readonly CompositeDisposable _disposables = new();
 
-    /// <summary>Stream of fan-out writes issued. One per sibling device per trigger.</summary>
+    /// <summary>Stream of fan-out writes issued. One per sibling per trigger.</summary>
     public IObservable<FanOutEvent> FanOuts => _fanOuts.AsObservable();
 
-    public SwitcherService(BoltReceiver receiver, ILogger<SwitcherService>? logger = null)
+    public SwitcherService(ReceiverManager manager, ILogger<SwitcherService>? logger = null)
     {
-        _receiver = receiver;
+        _manager = manager;
         _logger = logger ?? NullLogger<SwitcherService>.Instance;
 
-        _disposables.Add(_receiver.HostSwitchPresses.Subscribe(OnHostSwitchPressed));
-        _disposables.Add(_receiver.FlowHostSwitches.Subscribe(OnFlowHostSwitchDetected));
+        // MergeMany over each receiver's press/flow streams. The closure
+        // captures the receiver so we know the origin without bookkeeping.
+        _disposables.Add(_manager.Receivers.Connect()
+            .MergeMany(r => r.HostSwitchPresses.Select(press => (Origin: r, Press: press)))
+            .Subscribe(t => OnHostSwitchPressed(t.Origin, t.Press)));
+
+        _disposables.Add(_manager.Receivers.Connect()
+            .MergeMany(r => r.FlowHostSwitches.Select(snoop => (Origin: r, Snoop: snoop)))
+            .Subscribe(t => OnFlowHostSwitchDetected(t.Origin, t.Snoop)));
+
         _disposables.Add(_fanOuts);
     }
 
     public void Dispose() => _disposables.Dispose();
 
-    private void OnHostSwitchPressed(DivertedButtonsNotification press)
+    private void OnHostSwitchPressed(BoltReceiver origin, DivertedButtonsNotification press)
     {
-        if (press.TargetHost is not { } host)
-            return;
-        FanOut(originatingSlot: press.DeviceIndex, targetHost: (byte)host, source: FanOutSource.EasySwitchPress);
-    }
-
-    private void OnFlowHostSwitchDetected(ChangeHostWriteSnoop snoop)
-    {
-        FanOut(originatingSlot: snoop.DeviceIndex, targetHost: snoop.TargetHost, source: FanOutSource.FlowSnoop);
-    }
-
-    private void FanOut(byte originatingSlot, byte targetHost, FanOutSource source)
-    {
-        _logger.LogInformation("Fan-out triggered by slot {OriginatingSlot} -> host {TargetHost} (source={Source})",
-            originatingSlot, targetHost, source);
-
-        foreach (var device in _receiver.Devices.Items)
+        if (!origin.IsParticipating)
         {
-            if (device.DeviceIndex == originatingSlot)
-                continue;
-            if (!device.CanReceiveHostSwitch)
-                continue;
-            if (!device.LinkUp)
-                continue;
+            _logger.LogInformation("Ignoring Easy-Switch press on non-participating receiver {Serial}", origin.Info.Serial);
+            return;
+        }
+        if (press.TargetHost is not int target) return;
+        var targetHostIndex = (byte)target;
+        FanOut(origin, press.DeviceIndex, targetHostIndex, FanOutSource.EasySwitchPress);
+    }
 
-            if (_receiver.TrySwitchHost(device.DeviceIndex, targetHost))
+    private void OnFlowHostSwitchDetected(BoltReceiver origin, ChangeHostWriteSnoop snoop)
+    {
+        if (!origin.IsParticipating) return;
+        FanOut(origin, snoop.DeviceIndex, snoop.TargetHost, FanOutSource.FlowSnoop);
+    }
+
+    private void FanOut(BoltReceiver origin, byte originatingSlot, byte originHostIndex, FanOutSource source)
+    {
+        var originDevice = origin.TryGetDevice(originatingSlot);
+        var targetBleKey = originDevice is not null
+                           && originDevice.HostBindings.TryGetValue(originHostIndex, out var binding)
+                           && binding.Paired
+            ? binding.BluetoothAddressKey
+            : null;
+
+        if (targetBleKey is null)
+        {
+            _logger.LogInformation(
+                "Fan-out trigger from {Serial} slot {Slot} host {Host} (source={Source}) — no BLE binding cached; falling back to same-index routing",
+                origin.Info.Serial, originatingSlot, originHostIndex, source);
+            FanOutLegacy(origin, originatingSlot, originHostIndex, source);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Fan-out trigger from {Serial} slot {Slot} -> BLE {Ble} (source={Source})",
+            origin.Info.Serial, originatingSlot, targetBleKey, source);
+
+        foreach (var receiver in _manager.Receivers.Items)
+        {
+            if (!receiver.IsParticipating) continue;
+            foreach (var device in receiver.Devices.Items)
             {
-                _logger.LogInformation("Fan-out wrote CHANGE_HOST({TargetHost}) to slot {Slot}", targetHost, device.DeviceIndex);
-                _fanOuts.OnNext(new FanOutEvent(device, targetHost, source, originatingSlot));
+                if (ReferenceEquals(receiver, origin) && device.DeviceIndex == originatingSlot)
+                    continue;
+                if (!device.CanReceiveHostSwitch) continue;
+                if (!device.LinkUp) continue;
+
+                var matchingSlot = device.FindHostSlotForBleKey(targetBleKey);
+                if (matchingSlot is not byte slot)
+                {
+                    _logger.LogDebug(
+                        "Sibling {Serial} slot {Slot} ({Name}) has no binding to BLE {Ble} — skipping",
+                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, targetBleKey);
+                    continue;
+                }
+
+                if (receiver.TrySwitchHost(device.DeviceIndex, slot))
+                {
+                    _fanOuts.OnNext(new FanOutEvent(
+                        Target: device,
+                        TargetHost: slot,
+                        Source: source,
+                        OriginatingReceiver: origin,
+                        OriginatingSlot: originatingSlot));
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Falls back to the pre-topology behavior: send the same host index to
+    /// every sibling. Used when the originator's HostBindings are not yet
+    /// populated (e.g. the very first press, before background enrichment).
+    /// </summary>
+    private void FanOutLegacy(BoltReceiver origin, byte originatingSlot, byte targetHost, FanOutSource source)
+    {
+        foreach (var receiver in _manager.Receivers.Items)
+        {
+            if (!receiver.IsParticipating) continue;
+            foreach (var device in receiver.Devices.Items)
+            {
+                if (ReferenceEquals(receiver, origin) && device.DeviceIndex == originatingSlot)
+                    continue;
+                if (!device.CanReceiveHostSwitch) continue;
+                if (!device.LinkUp) continue;
+
+                if (receiver.TrySwitchHost(device.DeviceIndex, targetHost))
+                {
+                    _fanOuts.OnNext(new FanOutEvent(
+                        Target: device,
+                        TargetHost: targetHost,
+                        Source: source,
+                        OriginatingReceiver: origin,
+                        OriginatingSlot: originatingSlot));
+                }
             }
         }
     }
 }
 
 /// <summary>Diagnostic event for the CLI / UI.</summary>
-public sealed record FanOutEvent(PairedDevice Target, byte TargetHost, FanOutSource Source, byte OriginatingSlot);
+public sealed record FanOutEvent(
+    PairedDevice Target,
+    byte TargetHost,
+    FanOutSource Source,
+    BoltReceiver OriginatingReceiver,
+    byte OriginatingSlot);
 
 /// <summary>What triggered the fan-out.</summary>
 public enum FanOutSource
 {
-    /// <summary>A diverted Easy-Switch CID was pressed on a paired device.</summary>
     EasySwitchPress,
-    /// <summary>Logi Options+ wrote SetCurrentHost during a Flow handover.</summary>
     FlowSnoop,
-    /// <summary>The user triggered a host switch via our app's CLI or UI.</summary>
     UserHotkey,
 }

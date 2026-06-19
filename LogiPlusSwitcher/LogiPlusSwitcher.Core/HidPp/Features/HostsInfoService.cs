@@ -37,6 +37,74 @@ public sealed class HostsInfoService
     }
 
     /// <summary>
+    /// Reads metadata for a single host slot — paired status, the receiver's
+    /// BLE address as stored on the device, and the host name length. Used to
+    /// build the cross-receiver topology map for fan-out routing.
+    /// </summary>
+    /// <remarks>
+    /// Wire layout (per Solaar <c>hidpp20.py:get_host_info</c>): reply payload
+    /// starts with <c>[hostIdx, status, busType, bleAddr...]</c>. <c>status</c>
+    /// bit 0 set means paired; <c>busType</c> indicates wireless protocol.
+    /// </remarks>
+    public async Task<Bolt.HostBinding> GetHostInfoAsync(byte deviceIndex, byte featureIndex, byte hostIndex, CancellationToken ct = default)
+    {
+        ReadOnlyMemory<byte> request = new byte[] { hostIndex };
+        var reply = await _client.RequestAsync(
+            deviceIndex: deviceIndex,
+            featureIndex: featureIndex,
+            function: 0x1,
+            parameters: request,
+            useLongReport: true,
+            cancellationToken: ct).ConfigureAwait(false);
+
+        var p = reply.Parameters.Span;
+        // Defensive parse — different firmware may omit trailing bytes.
+        if (p.Length < 2)
+            return new Bolt.HostBinding(hostIndex, Paired: false, BluetoothAddress: null, ReceiverName: null);
+
+        var status = p[1];
+        var paired = (status & 0x01) != 0 || status == 0x02;
+
+        byte[]? ble = null;
+        // BLE address starts after [hostIdx(1), status(1), busType(1)] = offset 3, 6 bytes.
+        if (paired && p.Length >= 9)
+            ble = p.Slice(3, 6).ToArray();
+
+        return new Bolt.HostBinding(hostIndex, paired, ble, ReceiverName: null);
+    }
+
+    /// <summary>
+    /// Reads <see cref="GetHostInfoAsync"/> for every host the device exposes
+    /// (typically 3) and returns them in slot order.
+    /// </summary>
+    public async Task<IReadOnlyList<Bolt.HostBinding>> GetAllHostsAsync(byte deviceIndex, byte featureIndex, CancellationToken ct = default)
+    {
+        var info = await GetHostsInfoAsync(deviceIndex, featureIndex, ct).ConfigureAwait(false);
+        var bindings = new List<Bolt.HostBinding>(info.NumberOfHosts);
+        for (byte h = 0; h < info.NumberOfHosts; h++)
+        {
+            try
+            {
+                var binding = await GetHostInfoAsync(deviceIndex, featureIndex, h, ct).ConfigureAwait(false);
+                // Best-effort name read — many devices return empty for un-Logi+-named hosts.
+                try
+                {
+                    var name = await GetHostFriendlyNameAsync(deviceIndex, featureIndex, h, ct).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(name))
+                        binding = binding with { ReceiverName = name.Trim('\0', ' ') };
+                }
+                catch (HidPpException) { /* swallow */ }
+                bindings.Add(binding);
+            }
+            catch (HidPpException)
+            {
+                bindings.Add(new Bolt.HostBinding(h, Paired: false, BluetoothAddress: null, ReceiverName: null));
+            }
+        }
+        return bindings;
+    }
+
+    /// <summary>
     /// Reads the friendly name of the requested host. Names are 7-bit ASCII,
     /// returned in 14-byte chunks; this call assembles them into a string.
     /// </summary>

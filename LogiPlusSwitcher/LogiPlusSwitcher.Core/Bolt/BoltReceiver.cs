@@ -33,6 +33,44 @@ public sealed class BoltReceiver : IDisposable
 
     public BoltReceiverInfo Info { get; }
 
+    /// <summary>
+    /// Whether this receiver participates in switch fan-out. Toggled by the
+    /// App layer based on license / primary-receiver policy. Core never
+    /// reads license state directly — it just respects this flag.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to true. Set to false to exclude this receiver from
+    /// <see cref="Switcher.SwitcherService"/> routing while still allowing
+    /// enumeration / metadata reads / explicit per-device CHANGE_HOST calls.
+    /// </remarks>
+    public bool IsParticipating
+    {
+        get => _isParticipating;
+        set
+        {
+            if (_isParticipating == value) return;
+            _isParticipating = value;
+            _logger.LogInformation("Receiver {Serial} IsParticipating={Value}", Info.Serial, value);
+            _participationChanged.OnNext(value);
+        }
+    }
+    private bool _isParticipating = true;
+    private readonly Subject<bool> _participationChanged = new();
+
+    /// <summary>Hot stream of <see cref="IsParticipating"/> changes.</summary>
+    public IObservable<bool> ParticipationChanges => _participationChanged.AsObservable();
+
+    /// <summary>
+    /// BLE address of this receiver as read from its own flash. Populated
+    /// when <see cref="GetReceiverDetailsAsync"/> succeeds and exposes the
+    /// address (best-effort). Null until then.
+    /// </summary>
+    public byte[]? BluetoothAddress { get; set; }
+
+    /// <summary>Stable lowercase hex string of <see cref="BluetoothAddress"/>, or null.</summary>
+    public string? BluetoothAddressKey =>
+        BluetoothAddress is null ? null : Convert.ToHexString(BluetoothAddress).ToLowerInvariant();
+
     public RootService Root { get; }
     public ChangeHostService ChangeHost { get; }
     public HostsInfoService HostsInfo { get; }
@@ -99,6 +137,7 @@ public sealed class BoltReceiver : IDisposable
         _disposables.Add(_rawFrames);
         _disposables.Add(_linkEstablished);
         _disposables.Add(_linkLost);
+        _disposables.Add(_participationChanged);
         _disposables.Add(_client);
         _disposables.Add(_connection);
     }
@@ -409,6 +448,11 @@ public sealed class BoltReceiver : IDisposable
 
         // Bolt receivers always have 6 device slots. Solaar reads max_devices from product_info, but we hardcode here.
         maxDevices = HidPpConstants.DeviceIndexLastSlot;
+
+        // Stash the BLE address on the receiver so SwitcherService can match
+        // against devices' HostBindings without re-reading on every press.
+        if (ble is not null)
+            BluetoothAddress = ble;
 
         return new ReceiverDetails(serial, fwMajor, fwMinor, fwBuild, maxDevices, ble);
     }

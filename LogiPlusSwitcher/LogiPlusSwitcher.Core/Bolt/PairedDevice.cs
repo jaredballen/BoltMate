@@ -43,6 +43,31 @@ public sealed class PairedDevice
     /// <summary>User-set friendly name from feature 0x0007, when available.</summary>
     public string? FriendlyName { get; set; }
 
+    /// <summary>
+    /// Per-host slot mapping — what BLE address (= receiver) this device will
+    /// reach when switched to each of its hosts. Populated by
+    /// <see cref="HidPp.Features.HostsInfoService.GetAllHostsAsync"/> on link-up.
+    /// Keyed by host index (0..2 typical).
+    /// </summary>
+    public IReadOnlyDictionary<byte, HostBinding> HostBindings { get; set; }
+        = new Dictionary<byte, HostBinding>();
+
+    /// <summary>
+    /// Returns the device's host-slot index whose binding matches
+    /// <paramref name="bluetoothAddressKey"/> (a lowercase hex string).
+    /// Used by <see cref="Switcher.SwitcherService"/> to route a sibling
+    /// device's switch to the slot pointing at the same target receiver.
+    /// </summary>
+    public byte? FindHostSlotForBleKey(string bluetoothAddressKey)
+    {
+        foreach (var (slot, binding) in HostBindings)
+        {
+            if (binding.Paired && binding.BluetoothAddressKey == bluetoothAddressKey)
+                return slot;
+        }
+        return null;
+    }
+
     /// <summary>Most recently observed battery state.</summary>
     public HidPp.Features.BatteryStatus? LastKnownBattery { get; set; }
 

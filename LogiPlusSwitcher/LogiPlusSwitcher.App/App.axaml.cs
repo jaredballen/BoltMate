@@ -18,8 +18,8 @@ namespace LogiPlusSwitcher.App;
 public partial class App : Application
 {
     private readonly CompositeDisposable _disposables = new();
-    private readonly System.Collections.Generic.Dictionary<string, SwitcherService> _switchers = new();
     private ReceiverManager? _manager;
+    private SwitcherService? _switcher;
     private TrayMenuController? _trayController;
     private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
@@ -50,26 +50,13 @@ public partial class App : Application
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
 
-        // Spin up a per-receiver SwitcherService so attach + fan-out works
-        // even before the user opens the tray menu.
-        _disposables.Add(_manager.Receivers.Connect().Subscribe(changes =>
-        {
-            foreach (var change in changes)
-            {
-                if (change.Reason == ChangeReason.Add)
-                {
-                    var switcher = new SwitcherService(change.Current, _loggerFactory.CreateLogger<SwitcherService>());
-                    _switchers[change.Key] = switcher;
-                }
-                else if (change.Reason == ChangeReason.Remove)
-                {
-                    if (_switchers.Remove(change.Key, out var sw))
-                        sw.Dispose();
-                }
-            }
-        }));
+        // One manager-scoped SwitcherService handles fan-out across every
+        // attached receiver. Topology-aware: routes by matching BLE address
+        // through each device's HostBindings.
+        _switcher = new SwitcherService(_manager, _loggerFactory.CreateLogger<SwitcherService>());
+        _disposables.Add(_switcher);
 
-        // Auto-enrich devices on link-up (feature discovery, name, battery).
+        // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
         _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
 
         // Wire the dynamic tray menu now that the manager is up.

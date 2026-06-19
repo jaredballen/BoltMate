@@ -166,6 +166,12 @@ internal static class Commands
         using var attachFailSub = manager.AttachFailures.Subscribe(ex =>
             Console.Error.WriteLine($"  !! attach failed: {ex.Message}"));
 
+        // Single manager-scoped switcher handles topology-aware fan-out across
+        // all attached receivers.
+        using var switcher = new SwitcherService(manager, LoggerFactory.CreateLogger<SwitcherService>());
+        using var fanOutSub = switcher.FanOuts.Subscribe(ev =>
+            Console.WriteLine($"  ->  [{ev.OriginatingReceiver.Info.Serial}] fan-out host={ev.TargetHost} slot={ev.Target.DeviceIndex} src={ev.Source}"));
+
         using var receiverChangesSub = manager.Receivers.Connect().Subscribe(changes =>
         {
             foreach (var change in changes)
@@ -238,10 +244,9 @@ internal static class Commands
         subs.Add(receiver.FlowHostSwitches.Subscribe(snoop =>
             Console.WriteLine($"  >>  [{receiver.Info.Serial}] Flow snoop: slot {snoop.DeviceIndex} -> host {snoop.TargetHost} (sw_id 0x{snoop.SwId:X1})")));
 
-        var switcher = new SwitcherService(receiver, LoggerFactory.CreateLogger<SwitcherService>());
-        subs.Add(switcher);
-        subs.Add(switcher.FanOuts.Subscribe(ev =>
-            Console.WriteLine($"  ->  [{receiver.Info.Serial}] fan-out host={ev.TargetHost} slot={ev.Target.DeviceIndex} src={ev.Source}")));
+        // Note: SwitcherService is now manager-scoped (one for the whole app
+        // instance, not one per receiver). It's constructed in RunMonitorAsync
+        // and subscribed via the FanOuts stream there.
 
         return subs;
     }
