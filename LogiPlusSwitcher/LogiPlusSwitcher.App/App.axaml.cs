@@ -1,13 +1,12 @@
 using System;
-using System.Linq;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using Avalonia.Threading;
 using DynamicData;
+using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.Switcher;
@@ -18,11 +17,11 @@ namespace LogiPlusSwitcher.App;
 
 public partial class App : Application
 {
-    private const int CountMenuItemIndex = 4; // index of "0 receivers..." in the menu
-
     private readonly CompositeDisposable _disposables = new();
     private readonly System.Collections.Generic.Dictionary<string, SwitcherService> _switchers = new();
     private ReceiverManager? _manager;
+    private TrayMenuController? _trayController;
+    private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
 
     public override void Initialize()
@@ -34,7 +33,6 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Tray-first: no main window. Shut down only when the user picks Quit.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             desktop.Exit += (_, _) => _disposables.Dispose();
         }
@@ -51,81 +49,57 @@ public partial class App : Application
 
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
-        _disposables.Add(_manager.Receivers.Connect()
-            .Subscribe(changes =>
+
+        // Spin up a per-receiver SwitcherService so attach + fan-out works
+        // even before the user opens the tray menu.
+        _disposables.Add(_manager.Receivers.Connect().Subscribe(changes =>
+        {
+            foreach (var change in changes)
             {
-                foreach (var change in changes)
+                if (change.Reason == ChangeReason.Add)
                 {
-                    if (change.Reason == ChangeReason.Add)
-                    {
-                        var switcher = new SwitcherService(change.Current, _loggerFactory.CreateLogger<SwitcherService>());
-                        _switchers[change.Key] = switcher;
-                    }
-                    else if (change.Reason == ChangeReason.Remove)
-                    {
-                        if (_switchers.Remove(change.Key, out var sw))
-                            sw.Dispose();
-                    }
+                    var switcher = new SwitcherService(change.Current, _loggerFactory.CreateLogger<SwitcherService>());
+                    _switchers[change.Key] = switcher;
                 }
-                Dispatcher.UIThread.Post(UpdateTrayCount);
-            }));
+                else if (change.Reason == ChangeReason.Remove)
+                {
+                    if (_switchers.Remove(change.Key, out var sw))
+                        sw.Dispose();
+                }
+            }
+        }));
+
+        // Auto-enrich devices on link-up (feature discovery, name, battery).
+        _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
+
+        // Wire the dynamic tray menu now that the manager is up.
+        var trays = TrayIcon.GetIcons(this);
+        if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
+        {
+            _trayController = new TrayMenuController(menu, _manager, _license,
+                _loggerFactory.CreateLogger<TrayMenuController>())
+            {
+                OnSettingsClicked = OpenSettings,
+                OnAboutClicked = ShowAbout,
+            };
+            _disposables.Add(_trayController);
+        }
+        else
+        {
+            log.LogWarning("TrayIcon not found at framework init; dynamic menu wiring skipped");
+        }
 
         base.OnFrameworkInitializationCompleted();
     }
 
-    private void UpdateTrayCount()
+    private void OpenSettings()
     {
-        var receiverCount = _manager?.Receivers.Count ?? 0;
-        var deviceCount = 0;
-        if (_manager is not null)
-        {
-            foreach (var receiver in _manager.Receivers.Items)
-                deviceCount += receiver.Devices.Count;
-        }
-
-        var trays = TrayIcon.GetIcons(this);
-        if (trays is null || trays.Count == 0) return;
-        var menu = trays[0].Menu;
-        if (menu is null || menu.Items.Count <= CountMenuItemIndex) return;
-        if (menu.Items[CountMenuItemIndex] is NativeMenuItem item)
-        {
-            item.Header = $"{receiverCount} receiver{(receiverCount == 1 ? "" : "s")} · {deviceCount} device{(deviceCount == 1 ? "" : "s")}";
-        }
+        // TODO: open settings window and flip activation policy to Regular so
+        // the dock icon shows. Tracked as new task.
     }
 
-    private void OnOpenSettings(object? sender, EventArgs e)
+    private void ShowAbout()
     {
-        // TODO: open a real settings window. When that lands, it should also
-        // flip the app's macOS activation policy to Regular so the dock icon
-        // appears while the window is open, then back to Accessory on close.
-        // For now this is a no-op so the menu item is visible.
-    }
-
-    private void OnAbout(object? sender, EventArgs e)
-    {
-        // Placeholder — a real About dialog comes with the settings window.
-    }
-
-    private void OnSwitchAllHost1(object? sender, EventArgs e) => SwitchAllTo(0);
-    private void OnSwitchAllHost2(object? sender, EventArgs e) => SwitchAllTo(1);
-    private void OnSwitchAllHost3(object? sender, EventArgs e) => SwitchAllTo(2);
-
-    private void SwitchAllTo(byte targetHost)
-    {
-        if (_manager is null) return;
-        foreach (var receiver in _manager.Receivers.Items)
-        {
-            foreach (var device in receiver.Devices.Items)
-            {
-                if (device.CanReceiveHostSwitch)
-                    receiver.TrySwitchHost(device.DeviceIndex, targetHost);
-            }
-        }
-    }
-
-    private void OnQuit(object? sender, EventArgs e)
-    {
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.Shutdown();
+        // TODO: real about dialog.
     }
 }

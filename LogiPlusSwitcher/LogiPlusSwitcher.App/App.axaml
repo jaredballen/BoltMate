@@ -7,23 +7,18 @@
         <FluentTheme />
     </Application.Styles>
 
+    <!--
+        Menu items are populated programmatically by TrayMenuController so they
+        can react to the IObservableCache<BoltReceiver, string> + the
+        per-receiver IObservableCache<PairedDevice, byte>. The XAML defines
+        only the shell + icon + tooltip.
+    -->
     <TrayIcon.Icons>
         <TrayIcons>
             <TrayIcon ToolTipText="LogiPlusSwitcher"
                       Icon="avares://LogiPlusSwitcher.App/Assets/tray-icon.png">
                 <TrayIcon.Menu>
-                    <NativeMenu>
-                        <NativeMenuItem Header="Switch all to Host 1" Click="OnSwitchAllHost1" />
-                        <NativeMenuItem Header="Switch all to Host 2" Click="OnSwitchAllHost2" />
-                        <NativeMenuItem Header="Switch all to Host 3" Click="OnSwitchAllHost3" />
-                        <NativeMenuItemSeparator />
-                        <NativeMenuItem Header="0 receivers · 0 devices" IsEnabled="False" />
-                        <NativeMenuItemSeparator />
-                        <NativeMenuItem Header="Settings…" Click="OnOpenSettings" />
-                        <NativeMenuItem Header="About LogiPlusSwitcher" Click="OnAbout" />
-                        <NativeMenuItemSeparator />
-                        <NativeMenuItem Header="Quit" Click="OnQuit" />
-                    </NativeMenu>
+                    <NativeMenu />
                 </TrayIcon.Menu>
             </TrayIcon>
         </TrayIcons>
