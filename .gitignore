@@ -64,3 +64,6 @@ nunit-*.xml
 .vs/
 *.user
 *.suo
+
+# Per-developer MSBuild overrides (e.g. local libhidapi paths)
+Directory.Build.props
