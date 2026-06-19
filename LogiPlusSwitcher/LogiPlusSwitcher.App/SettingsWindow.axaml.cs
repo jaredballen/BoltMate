@@ -48,7 +48,55 @@ public partial class SettingsWindow : Window
         var keyBox = this.FindControl<TextBox>("LicenseKeyBox");
         if (keyBox is not null) keyBox.Text = settings.LicenseKey ?? "";
 
+        RefreshLaunchAtLogin();
         Populate();
+    }
+
+    private bool _suppressLaunchAtLoginEvent;
+
+    private void RefreshLaunchAtLogin()
+    {
+        var toggle = this.FindControl<CheckBox>("LaunchAtLoginToggle");
+        var detail = this.FindControl<TextBlock>("LaunchAtLoginDetail");
+        if (toggle is null) return;
+
+        if (!AppAutostart.CanRegister())
+        {
+            _suppressLaunchAtLoginEvent = true;
+            toggle.IsEnabled = false;
+            toggle.IsChecked = false;
+            _suppressLaunchAtLoginEvent = false;
+            if (detail is not null)
+                detail.Text = "Disabled: run from a published build (not 'dotnet run') to enable launch-at-login.";
+            return;
+        }
+
+        var installed = AppAutostart.IsInstalled();
+        _suppressLaunchAtLoginEvent = true;
+        toggle.IsChecked = installed;
+        toggle.IsEnabled = true;
+        _suppressLaunchAtLoginEvent = false;
+        if (detail is not null)
+            detail.Text = installed
+                ? "Registered. LogiPlusSwitcher will start automatically when you log in."
+                : "Off. Launch manually from Applications / Start Menu.";
+    }
+
+    private void OnLaunchAtLoginChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_suppressLaunchAtLoginEvent) return;
+        if (sender is not CheckBox cb) return;
+
+        var detail = this.FindControl<TextBlock>("LaunchAtLoginDetail");
+        var want = cb.IsChecked == true;
+        var result = want ? AppAutostart.Install() : AppAutostart.Uninstall();
+        if (detail is not null) detail.Text = result.Message;
+        if (!result.Success)
+        {
+            _suppressLaunchAtLoginEvent = true;
+            cb.IsChecked = !want;
+            _suppressLaunchAtLoginEvent = false;
+        }
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);

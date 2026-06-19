@@ -8,6 +8,18 @@
         WindowStartupLocation="CenterScreen">
 
     <TabControl Margin="12">
+        <!-- General tab -->
+        <TabItem Header="General">
+            <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*">
+                <TextBlock Grid.Row="0" Text="Startup" FontSize="16" FontWeight="Bold" Margin="0,0,0,8" />
+                <CheckBox Grid.Row="1" x:Name="LaunchAtLoginToggle"
+                          Content="Launch LogiPlusSwitcher at login"
+                          IsCheckedChanged="OnLaunchAtLoginChanged" />
+                <TextBlock Grid.Row="2" x:Name="LaunchAtLoginDetail"
+                           Margin="22,4,0,0" Foreground="#999" FontSize="12" TextWrapping="Wrap" />
+            </Grid>
+        </TabItem>
+
         <!-- Receivers tab -->
         <TabItem Header="Receivers">
             <Grid Margin="8" RowDefinitions="Auto,*,Auto">
