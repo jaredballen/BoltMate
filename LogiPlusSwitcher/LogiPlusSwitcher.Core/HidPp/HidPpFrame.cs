@@ -99,6 +99,23 @@ public readonly struct HidPpFrame
     }
 
     /// <summary>
+    /// Builds a HID++ 1.0 long request (long-register sub-ids 0x82 / 0x83). The
+    /// <paramref name="subId"/> goes in the FeatureIndex slot; the first parameter
+    /// byte (the register address) goes in the FunctionAndSwId slot. The
+    /// remaining 15 bytes fill the long payload.
+    /// </summary>
+    public static HidPpFrame Hidpp10Long(byte deviceIndex, byte subId, ReadOnlySpan<byte> parameters = default)
+    {
+        if (parameters.Length is < 1 or > 16)
+            throw new ArgumentOutOfRangeException(nameof(parameters), parameters.Length,
+                "HID++ 1.0 long request parameters must be 1..16 bytes (first byte is the register address).");
+
+        var padded = new byte[HidPpConstants.LongParameterLength];
+        parameters[1..].CopyTo(padded);
+        return new HidPpFrame(HidPpConstants.ReportIdLong, deviceIndex, subId, parameters[0], padded);
+    }
+
+    /// <summary>
     /// Serialises the frame to its wire form (7, 20, or 15 bytes including the report id).
     /// </summary>
     public byte[] ToBytes()

@@ -40,6 +40,18 @@ return args[0].ToLowerInvariant() switch
                   && byte.TryParse(args[3], out var slotHost) =>
         await Commands.RunSwitchSlotAsync(transport, slot, slotHost, cts.Token),
 
+    "device" when args.Length == 3
+                  && byte.TryParse(args[1], out var unpairSlot)
+                  && args[2].Equals("unpair", StringComparison.OrdinalIgnoreCase) =>
+        await Commands.RunUnpairSlotAsync(transport, unpairSlot, cts.Token),
+
+    "device" when args.Length == 5
+                  && args[1].Equals("--receiver", StringComparison.OrdinalIgnoreCase)
+                  && int.TryParse(args[2], out var rIdx)
+                  && byte.TryParse(args[3], out var unpairSlot2)
+                  && args[4].Equals("unpair", StringComparison.OrdinalIgnoreCase) =>
+        await Commands.RunUnpairSlotAsync(transport, unpairSlot2, cts.Token, rIdx),
+
     "service" when args.Length == 2 && args[1].Equals("install", StringComparison.OrdinalIgnoreCase)
         => ServiceCommands.Install(),
     "service" when args.Length == 2 && args[1].Equals("uninstall", StringComparison.OrdinalIgnoreCase)

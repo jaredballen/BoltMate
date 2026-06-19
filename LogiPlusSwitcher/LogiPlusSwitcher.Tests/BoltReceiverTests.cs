@@ -163,6 +163,88 @@ public class BoltReceiverTests
     }
 
     [Fact]
+    public async Task UnpairAsync_writes_bolt_pairing_register_and_removes_slot()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        // Seed slot 3
+        receiver.EnsureSlot(3).LinkUp = true;
+        Assert.NotNull(receiver.TryGetDevice(3));
+
+        // Echo back the success reply when we see the unpair write.
+        using var responder = conn.RespondWith(written =>
+        {
+            if (written is { IsLong: true, FeatureIndex: 0x82 } && written.FunctionAndSwId == 0xC1)
+            {
+                // Receiver echoes the same payload back to confirm.
+                var echo = new byte[HidPpConstants.LongReportLength];
+                echo[0] = 0x11;
+                echo[1] = 0xFF;
+                echo[2] = 0x82;
+                echo[3] = 0xC1;
+                echo[4] = 0x03;
+                echo[5] = written.Parameters.Span[2];
+                conn.Inject(HidPpFrame.TryParse(echo)!.Value);
+            }
+        });
+
+        var ok = await receiver.UnpairAsync(3);
+
+        Assert.True(ok);
+        Assert.Null(receiver.TryGetDevice(3));
+
+        var sent = conn.Writes.Last();
+        Assert.True(sent.IsLong);
+        Assert.Equal((byte)0xFF, sent.DeviceIndex);
+        Assert.Equal((byte)0x82, sent.FeatureIndex);
+        Assert.Equal((byte)0xC1, sent.FunctionAndSwId);
+        Assert.Equal((byte)0x03, sent.Parameters.Span[0]); // unpair sub-action
+        Assert.Equal((byte)0x03, sent.Parameters.Span[1]); // slot index
+    }
+
+    [Fact]
+    public async Task UnpairAsync_throws_on_error_reply()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+        receiver.EnsureSlot(2);
+
+        using var responder = conn.RespondWith(written =>
+        {
+            if (written.IsLong && written.FeatureIndex == 0x82)
+            {
+                // HID++ 1.0 error reply: short report, sub-id 0x8F, then original sub-id, register, error code.
+                var err = new byte[HidPpConstants.ShortReportLength];
+                err[0] = 0x10;
+                err[1] = 0xFF;
+                err[2] = 0x8F;
+                err[3] = 0x82;
+                err[4] = 0xC1;
+                err[5] = (byte)HidPpErrorCode.InvalidArgument;
+                conn.Inject(HidPpFrame.TryParse(err)!.Value);
+            }
+        });
+
+        var ex = await Assert.ThrowsAsync<HidPpException>(() => receiver.UnpairAsync(2));
+        Assert.Equal(HidPpErrorCode.InvalidArgument, ex.ErrorCode);
+    }
+
+    [Fact]
+    public async Task UnpairAsync_returns_false_on_timeout()
+    {
+        var conn = new FakeReceiverConnection(); // no echo
+        using var receiver = new BoltReceiver(Info(), conn);
+        receiver.EnsureSlot(1);
+
+        var ok = await receiver.UnpairAsync(1, TimeSpan.FromMilliseconds(100));
+
+        Assert.False(ok);
+        // Slot still in cache since the unpair wasn't confirmed.
+        Assert.NotNull(receiver.TryGetDevice(1));
+    }
+
+    [Fact]
     public async Task DiscoverFeaturesAsync_resolves_indices_via_IRoot()
     {
         var conn = new FakeReceiverConnection();

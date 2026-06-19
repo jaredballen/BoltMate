@@ -22,6 +22,8 @@ internal static class Commands
         Console.WriteLine("  logiplus monitor                    Listen for Easy-Switch / Flow events and fan out.");
         Console.WriteLine("  logiplus switch <host>              Switch ALL paired devices to host (0..2).");
         Console.WriteLine("  logiplus device <slot> switch <host>  Switch a single slot (1..6) to host (0..2).");
+        Console.WriteLine("  logiplus device <slot> unpair         Unpair slot (1..6) from the first receiver. Destructive.");
+        Console.WriteLine("  logiplus device --receiver <idx> <slot> unpair");
         Console.WriteLine("  logiplus diag                       Dump every raw HID++ frame on the wire.");
         Console.WriteLine("  logiplus service install            Register as a background service / login agent.");
         Console.WriteLine("  logiplus service uninstall          Remove the background registration.");
@@ -224,6 +226,49 @@ internal static class Commands
             return 2;
         }
         return 0;
+    }
+
+    public static async Task<int> RunUnpairSlotAsync(IReceiverTransport transport, byte slot, CancellationToken ct, int receiverIndex = 0)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0)
+        {
+            Console.WriteLine("No Bolt receivers found.");
+            return 1;
+        }
+        if (receiverIndex >= infos.Count)
+        {
+            Console.WriteLine($"Receiver index {receiverIndex} out of range (have {infos.Count}).");
+            return 1;
+        }
+
+        var info = infos[receiverIndex];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var sub = receiver.LinkEstablished.Subscribe(_ => settled.Set());
+        using var lostSub = receiver.LinkLost.Subscribe(_ => settled.Set());
+        receiver.Start();
+        settled.Wait(TimeSpan.FromMilliseconds(750), ct);
+
+        try
+        {
+            Console.WriteLine($"Unpairing slot {slot} on receiver {info.ProductString} (serial {info.Serial})...");
+            var ok = await receiver.UnpairAsync(slot, ct: ct);
+            if (ok)
+            {
+                Console.WriteLine($"  ok — slot {slot} removed.");
+                return 0;
+            }
+            Console.WriteLine($"  timed out waiting for confirmation; slot may or may not be removed.");
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"  unpair failed: {ex.Message}");
+            return 3;
+        }
     }
 
     public static async Task<int> RunSwitchSlotAsync(IReceiverTransport transport, byte slot, byte targetHost, CancellationToken ct)

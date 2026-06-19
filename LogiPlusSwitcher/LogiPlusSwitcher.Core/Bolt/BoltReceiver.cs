@@ -1,6 +1,7 @@
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Reactive.Threading.Tasks;
 using DynamicData;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
@@ -225,6 +226,58 @@ public sealed class BoltReceiver : IDisposable
         }
         device.DivertedHostSwitchCids = [];
         RefreshSlot(deviceIndex);
+    }
+
+    /// <summary>
+    /// Unpairs a device from the receiver, removing the slot's stored pairing.
+    /// Reaches a Bolt receiver's flash via <c>SET_LONG_REGISTER 0x82 BOLT_PAIRING(0xC1)
+    /// subaction 0x03</c>. Awaits the receiver's echo (success) or an error
+    /// reply within <paramref name="timeout"/>.
+    /// </summary>
+    /// <returns>True if the receiver acknowledged the unpair, false on timeout.</returns>
+    /// <exception cref="HidPpException">Thrown if the receiver returns an error reply.</exception>
+    public async Task<bool> UnpairAsync(byte deviceIndex, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        var window = timeout ?? TimeSpan.FromSeconds(2);
+
+        // Watch for an echo (sub-id 0x82, register 0xC1) or error (sub-id 0x8F).
+        var ack = _connection.InboundFrames
+            .Where(f => f.DeviceIndex == HidPpConstants.DeviceIndexReceiver
+                        && ((f.FeatureIndex == HidPp10.SubIdSetLongRegister && f.FunctionAndSwId == HidPp10.RegisterBoltPairing)
+                            || f.FeatureIndex == 0x8F))
+            .FirstAsync()
+            .ToTask(ct);
+
+        _logger.LogInformation("Unpairing slot {Slot} on receiver {Serial}", deviceIndex, Info.Serial);
+        _client.SendOneWay(HidPp10.BuildBoltUnpairFrame(deviceIndex));
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(window);
+        try
+        {
+            var reply = await ack.WaitAsync(cts.Token).ConfigureAwait(false);
+
+            if (reply.FeatureIndex == 0x8F)
+            {
+                // HID++ 1.0 error reply: byte 3 = original sub-id, byte 4 = original register,
+                // byte 5 = error code. In our frame model that maps to FunctionAndSwId,
+                // Parameters[0], Parameters[1] respectively.
+                var errorCode = reply.Parameters.Span.Length > 1
+                    ? (HidPpErrorCode)reply.Parameters.Span[1]
+                    : HidPpErrorCode.Unknown;
+                _logger.LogWarning("Unpair slot {Slot} returned error {Code}", deviceIndex, errorCode);
+                throw new HidPpException(deviceIndex, HidPp10.RegisterBoltPairing, function: 0, errorCode);
+            }
+
+            _devicesCache.RemoveKey(deviceIndex);
+            _logger.LogInformation("Slot {Slot} unpaired", deviceIndex);
+            return true;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("Unpair slot {Slot} timed out after {Ms} ms", deviceIndex, window.TotalMilliseconds);
+            return false;
+        }
     }
 
     /// <summary>
