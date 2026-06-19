@@ -1,6 +1,7 @@
 using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.Switcher;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -81,6 +82,13 @@ internal static class Commands
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"  receiver details unavailable: {ex.Message}");
+            }
+
+            // Read per-slot metadata via Bolt registers (works even for link-down slots).
+            // Iterate the maximum slot range so we pick up devices the 0x41 enumeration missed.
+            for (byte slotIdx = HidPpConstants.DeviceIndexFirstSlot; slotIdx <= HidPpConstants.DeviceIndexLastSlot; slotIdx++)
+            {
+                await receiver.ReadSlotMetadataAsync(slotIdx, ct);
             }
 
             foreach (var device in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))

@@ -34,6 +34,15 @@ public sealed class PairedDevice
     /// <summary>Most recently observed current-host index from HOSTS_INFO/CHANGE_HOST reads.</summary>
     public byte? LastKnownCurrentHost { get; set; }
 
+    /// <summary>Device serial as read from <c>BOLT_PAIRING_INFORMATION</c>. Decodes printable ASCII when possible.</summary>
+    public string? Serial { get; set; }
+
+    /// <summary>Device BLE address from <c>BOLT_PAIRING_INFORMATION</c> (MSB first).</summary>
+    public byte[]? BluetoothAddress { get; set; }
+
+    /// <summary>Wireless protocol version field from <c>BOLT_PAIRING_INFORMATION</c>.</summary>
+    public byte? ProtocolVersion { get; set; }
+
     public PairedDevice(byte deviceIndex)
     {
         if (deviceIndex is < 1 or > 6)
@@ -49,6 +58,7 @@ public sealed class PairedDevice
 
     public override string ToString() =>
         $"slot {DeviceIndex} wpid=0x{Wpid:X4} {(LinkUp ? "up" : "down")} name=\"{Name ?? "?"}\" " +
+        $"serial={Serial ?? "?"} " +
         $"feats[1B04={ReprogControlsIndex?.ToString("X2") ?? "-"} " +
         $"1814={ChangeHostIndex?.ToString("X2") ?? "-"} " +
         $"1815={HostsInfoIndex?.ToString("X2") ?? "-"}] " +

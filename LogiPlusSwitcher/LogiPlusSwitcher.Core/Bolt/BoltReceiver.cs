@@ -229,6 +229,100 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Reads <c>BOLT_DEVICE_NAME</c> (sub-register <c>0x60 + slot</c>) for a single
+    /// slot and stores it on the cached <see cref="PairedDevice"/>. Returns the
+    /// name, or null if the read failed (slot empty / device offline).
+    /// </summary>
+    public async Task<string?> ReadSlotNameAsync(byte slot, CancellationToken ct = default)
+    {
+        if (slot is < HidPpConstants.DeviceIndexFirstSlot or > HidPpConstants.DeviceIndexLastSlot)
+            return null;
+
+        var subRegister = (byte)(HidPp10.InfoSubRegisterBoltDeviceNameBase + slot);
+        var reply = await Hidpp10ReadAsync(
+            HidPp10.BuildReadReceiverInfoFrame(subRegister, extraByte: 0x01),
+            expectedRegister: HidPp10.RegisterReceiverInfo,
+            window: TimeSpan.FromMilliseconds(500),
+            ct).ConfigureAwait(false);
+
+        if (reply is null) return null;
+
+        // Reply payload layout (per Solaar BoltReceiver.device_codename):
+        //   [0]=sub-register echo, [1]=0x01 echo, [2]=name length, [3..]=ASCII chars
+        var p = reply.Value.Parameters.Span;
+        if (p.Length < 4) return null;
+        var nameLen = Math.Min((int)p[2], Math.Min(14, p.Length - 3));
+        if (nameLen <= 0) return null;
+        var name = System.Text.Encoding.ASCII.GetString(p.Slice(3, nameLen)).TrimEnd();
+
+        var device = EnsureSlot(slot);
+        device.Name = name;
+        RefreshSlot(slot);
+        return name;
+    }
+
+    /// <summary>
+    /// Reads <c>BOLT_PAIRING_INFORMATION</c> (sub-register <c>0x50 + slot</c>) for
+    /// a slot — wpid, serial, BLE address, protocol — and populates the cached
+    /// <see cref="PairedDevice"/>.
+    /// </summary>
+    public async Task<bool> ReadSlotPairingInfoAsync(byte slot, CancellationToken ct = default)
+    {
+        if (slot is < HidPpConstants.DeviceIndexFirstSlot or > HidPpConstants.DeviceIndexLastSlot)
+            return false;
+
+        var subRegister = (byte)(HidPp10.InfoSubRegisterBoltPairingInfoBase + slot);
+        var reply = await Hidpp10ReadAsync(
+            HidPp10.BuildReadReceiverInfoFrame(subRegister),
+            expectedRegister: HidPp10.RegisterReceiverInfo,
+            window: TimeSpan.FromMilliseconds(500),
+            ct).ConfigureAwait(false);
+
+        if (reply is null) return false;
+
+        // Solaar BoltReceiver.device_pairing_information parses:
+        //   wpid = bytes 3..4 swapped LE  ([3]=lsb, [2]=msb -> but Solaar does pair_info[3:4]+pair_info[2:3] which puts MSB byte FIRST then LSB)
+        //   ble address bytes follow, protocol byte further on.
+        // Be defensive — fields stay default if the reply layout is short.
+        var p = reply.Value.Parameters.Span;
+        var device = EnsureSlot(slot);
+
+        if (p.Length >= 4)
+        {
+            // Solaar swaps bytes 2..3: extract_wpid(pair_info[3:4] + pair_info[2:3]).
+            // That yields wpid = (p[3] << 8) | p[2]. Match the 0xB034 we get from 0x41.
+            var wpid = (ushort)((p[3] << 8) | p[2]);
+            if (wpid != 0)
+                device.Wpid = wpid;
+        }
+        if (p.Length >= 11)
+        {
+            // BLE address: 6 bytes starting after wpid + small header. Solaar's
+            // extraction varies by firmware; we capture the most-likely span.
+            var ble = new byte[6];
+            p.Slice(4, 6).CopyTo(ble);
+            device.BluetoothAddress = ble;
+        }
+        if (p.Length >= 12)
+        {
+            device.ProtocolVersion = p[10];
+        }
+        RefreshSlot(slot);
+        return true;
+    }
+
+    /// <summary>
+    /// Convenience: reads both BOLT_DEVICE_NAME and BOLT_PAIRING_INFORMATION
+    /// for a slot in one call. Tolerates either failing — successful fields
+    /// are populated and the other stays at its prior value.
+    /// </summary>
+    public async Task ReadSlotMetadataAsync(byte slot, CancellationToken ct = default)
+    {
+        await ReadSlotPairingInfoAsync(slot, ct).ConfigureAwait(false);
+        await ReadSlotNameAsync(slot, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Reads receiver-level metadata: firmware version, max devices, serial,
     /// and BLE address. Issues HID++ 1.0 register reads to <c>BOLT_UNIQUE_ID</c>
     /// (0xFB) and <c>RECEIVER_INFO</c> (0xB5) sub-registers.
