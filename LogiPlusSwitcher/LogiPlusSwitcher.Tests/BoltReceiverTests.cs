@@ -245,6 +245,186 @@ public class BoltReceiverTests
     }
 
     [Fact]
+    public async Task ReadSlotNameAsync_parses_ascii_name_from_bolt_register()
+    {
+        var conn = new FakeReceiverConnection();
+        using var responder = conn.RespondWith(written =>
+        {
+            // BOLT_DEVICE_NAME read: short request, sub-id 0x83, register 0xB5, sub-register 0x6N.
+            if (written.IsShort && written.FeatureIndex == 0x83 && written.FunctionAndSwId == 0xB5)
+            {
+                var subReg = written.Parameters.Span[0];
+                if (subReg == 0x63)
+                {
+                    // Reply payload: [sub-reg echo, 0x01, length, ascii bytes...]
+                    var nameBytes = System.Text.Encoding.ASCII.GetBytes("MX Master 3S");
+                    var payload = new byte[16];
+                    payload[0] = subReg;
+                    payload[1] = 0x01;
+                    payload[2] = (byte)nameBytes.Length;
+                    nameBytes.CopyTo(payload.AsSpan(3));
+                    var reply = HidPpFrame.Long(
+                        deviceIndex: HidPpConstants.DeviceIndexReceiver,
+                        featureIndex: 0x83,
+                        function: 0xB,
+                        swId: 0x5,
+                        parameters: payload);
+                    conn.Inject(reply);
+                }
+            }
+        });
+
+        using var receiver = new BoltReceiver(Info(), conn);
+        var name = await receiver.ReadSlotNameAsync(3);
+
+        Assert.Equal("MX Master 3S", name);
+        Assert.Equal("MX Master 3S", receiver.TryGetDevice(3)?.Name);
+    }
+
+    [Fact]
+    public async Task ClearAllPairingsAsync_unpairs_every_slot_in_cache()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        // Seed three slots
+        receiver.EnsureSlot(1).LinkUp = true;
+        receiver.EnsureSlot(3).LinkUp = false;
+        receiver.EnsureSlot(5).LinkUp = false;
+
+        using var responder = conn.RespondWith(written =>
+        {
+            // Echo every long-register unpair write as success.
+            if (written.IsLong && written.FeatureIndex == 0x82 && written.FunctionAndSwId == 0xC1)
+            {
+                var echo = new byte[HidPpConstants.LongReportLength];
+                echo[0] = 0x11;
+                echo[1] = 0xFF;
+                echo[2] = 0x82;
+                echo[3] = 0xC1;
+                echo[4] = 0x03;
+                echo[5] = written.Parameters.Span[2];
+                conn.Inject(HidPpFrame.TryParse(echo)!.Value);
+            }
+        });
+
+        var cleared = await receiver.ClearAllPairingsAsync();
+
+        Assert.Equal(3, cleared);
+        Assert.Empty(receiver.Devices.Items);
+    }
+
+    [Fact]
+    public async Task RenameDeviceAsync_uses_feature_0x0007_when_link_up_and_index_cached()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        var device = receiver.EnsureSlot(1);
+        device.LinkUp = true;
+        device.DeviceFriendlyNameIndex = 0x0F;
+
+        var writesToFriendlyName = 0;
+        using var responder = conn.RespondWith(written =>
+        {
+            if (written.FeatureIndex == 0x0F && written.Function == 0x2)
+            {
+                writesToFriendlyName++;
+                conn.Inject(HidPpFrame.Long(
+                    written.DeviceIndex, written.FeatureIndex, written.Function, written.SwId,
+                    parameters: written.Parameters.Span));
+            }
+        });
+
+        var ok = await receiver.RenameDeviceAsync(1, "NewNick");
+
+        Assert.True(ok);
+        Assert.Equal(1, writesToFriendlyName);
+        Assert.Equal("NewNick", device.FriendlyName);
+        Assert.Equal("NewNick", device.Name);
+    }
+
+    [Fact]
+    public async Task IdentifyAsync_returns_pressed_cid_within_window()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        var device = receiver.EnsureSlot(1);
+        device.LinkUp = true;
+        device.ReprogControlsIndex = 0x07;
+
+        // Mock the control list — one divertable host-switch CID.
+        using var responder = conn.RespondWith(written =>
+        {
+            // ReprogControlsService.GetControlCountAsync (fn 0 of feature 0x07)
+            if (written.FeatureIndex == 0x07 && written.Function == 0x0)
+            {
+                conn.Inject(HidPpFrame.Short(
+                    written.DeviceIndex, written.FeatureIndex, 0x0, written.SwId,
+                    parameters: [1, 0, 0]));
+                return;
+            }
+            // ReprogControlsService.GetCidInfoAsync (fn 1) — needs at least 5 bytes of payload
+            // (cid msb/lsb, task msb/lsb, flags with divertable bit set)
+            if (written.FeatureIndex == 0x07 && written.Function == 0x1)
+            {
+                conn.Inject(HidPpFrame.Long(
+                    written.DeviceIndex, written.FeatureIndex, 0x1, written.SwId,
+                    parameters: [0x00, 0xD2, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]));
+                return;
+            }
+            // SetCidReportingAsync (fn 3) — just ack.
+            if (written.FeatureIndex == 0x07 && written.Function == 0x3)
+            {
+                conn.Inject(HidPpFrame.Long(
+                    written.DeviceIndex, written.FeatureIndex, 0x3, written.SwId,
+                    parameters: written.Parameters.Span));
+                return;
+            }
+        });
+
+        // Inject a divertedButtonsEvent shortly after we start the identify window.
+        var identifyTask = receiver.IdentifyAsync(1, window: TimeSpan.FromSeconds(1));
+        await Task.Delay(50);
+
+        var press = new byte[HidPpConstants.LongReportLength];
+        press[0] = 0x11;
+        press[1] = 0x01;
+        press[2] = 0x07;
+        press[3] = 0x00;
+        press[4] = 0x00;
+        press[5] = 0xD2;
+        conn.Inject(HidPpFrame.TryParse(press)!.Value);
+
+        var cid = await identifyTask;
+        Assert.Equal((ushort?)0x00D2, cid);
+    }
+
+    [Fact]
+    public async Task IdentifyAsync_returns_null_when_no_press_within_window()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        var device = receiver.EnsureSlot(1);
+        device.LinkUp = true;
+        device.ReprogControlsIndex = 0x07;
+
+        // Mock minimum to get past control discovery — but never inject a press.
+        using var responder = conn.RespondWith(written =>
+        {
+            if (written.Function == 0x0)
+                conn.Inject(HidPpFrame.Short(written.DeviceIndex, written.FeatureIndex, 0x0, written.SwId, parameters: [0, 0, 0]));
+            else if (written.Function == 0x3)
+                conn.Inject(HidPpFrame.Long(written.DeviceIndex, written.FeatureIndex, 0x3, written.SwId, parameters: written.Parameters.Span));
+        });
+
+        var cid = await receiver.IdentifyAsync(1, window: TimeSpan.FromMilliseconds(100));
+        Assert.Null(cid);
+    }
+
+    [Fact]
     public async Task DiscoverFeaturesAsync_resolves_indices_via_IRoot()
     {
         var conn = new FakeReceiverConnection();
