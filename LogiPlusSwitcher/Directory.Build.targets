@@ -48,7 +48,7 @@
   </Target>
 
   <Target Name="StageLibHidApiWindowsOnBuild"
-          AfterTargets="Build"
+          AfterTargets="CopyFilesToOutputDirectory"
           Condition="'$(OS)' == 'Windows_NT'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
     <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
