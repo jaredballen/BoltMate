@@ -90,7 +90,7 @@
                 <TextBlock Grid.Row="1" x:Name="LicenseStatusLine" Margin="0,0,0,12" Foreground="#CCC" />
                 <TextBlock Grid.Row="2" Text="License key" Margin="0,0,0,4" />
                 <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
-                    <TextBox x:Name="LicenseKeyBox" Width="320" Watermark="Paste your key here" />
+                    <TextBox x:Name="LicenseKeyBox" Width="320" PlaceholderText="Paste your key here" />
                     <Button Content="Apply" Click="OnApplyLicense" />
                 </StackPanel>
             </Grid>

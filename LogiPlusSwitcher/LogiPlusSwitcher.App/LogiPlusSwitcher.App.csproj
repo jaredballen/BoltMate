@@ -4,6 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/app-icon.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
 
@@ -32,19 +33,21 @@
 
   <ItemGroup>
     <!-- Bitmap resources loaded at runtime via avares:// -->
-    <AvaloniaResource Include="Assets/tray-icon.png" />
-    <AvaloniaResource Include="Assets/tray-icon@2x.png" />
     <AvaloniaResource Include="Assets/tray-icon-light.png" />
     <AvaloniaResource Include="Assets/tray-icon-light@2x.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
     <AvaloniaResource Include="Assets/app-icon-1024.png" />
 
-    <!-- Source-of-truth SVG + the .icns macOS bundles need at install time -->
-    <Content Include="Assets/LogiPlusSwitcher.icns">
+    <!-- Source-of-truth SVG + platform-specific app icons:
+         .icns is bundled into the macOS .app via the Directory.Build.targets
+         StageMacAppBundle step. .ico is embedded into the Win PE resource
+         section via ApplicationIcon above. -->
+    <Content Include="Assets/app-icon.icns">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <None Include="Assets/app-icon.svg" />
+    <None Include="Assets/app-icon.ico" />
   </ItemGroup>
 </Project>

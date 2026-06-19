@@ -16,7 +16,7 @@
     <TrayIcon.Icons>
         <TrayIcons>
             <TrayIcon ToolTipText="LogiPlusSwitcher"
-                      Icon="avares://LogiPlusSwitcher.App/Assets/tray-icon.png">
+                      Icon="avares://LogiPlusSwitcher.App/Assets/tray-icon-light.png">
                 <TrayIcon.Menu>
                     <NativeMenu />
                 </TrayIcon.Menu>
