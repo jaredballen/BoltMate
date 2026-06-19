@@ -48,24 +48,33 @@
   </Target>
 
   <!--
-    Windows: AfterTargets="Build" + AfterTargets="Publish" hooks were silently
-    skipped on Win 11 arm64 even with the OS condition matching — root cause
-    not yet pinned down. Workaround: resolve the path eagerly during project
-    evaluation (BeforeTargets="BeforeBuild") and add it as a Content item so
-    the standard SDK copy logic stages it to both OutputPath and PublishDir.
+    Windows hidapi.dll staging. Resolved eagerly at project-evaluation time
+    (top-level PropertyGroup + ItemGroup) so the standard SDK copy logic
+    stages it to both OutputPath AND PublishDir. Earlier in-target approaches
+    silently dropped on Publish because the AfterTargets/BeforeTargets hooks
+    didn't intersect with the publish target graph.
   -->
-  <Target Name="_ResolveWindowsHidApiBeforeBuild"
-          BeforeTargets="BeforeBuild;BeforeCompile;PrepareForRun"
-          Condition="'$(OS)' == 'Windows_NT'">
-    <CallTarget Targets="_StageLibHidApiWindowsCore" />
-    <ItemGroup Condition="'$(ResolvedHidApiWindowsSource)' != ''">
-      <Content Include="$(ResolvedHidApiWindowsSource)">
-        <Link>hidapi.dll</Link>
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-        <Visible>false</Visible>
-      </Content>
-    </ItemGroup>
+  <PropertyGroup Condition="'$(OS)' == 'Windows_NT'">
+    <_WindowsSysHidApi>$(WINDIR)\System32\hidapi.dll</_WindowsSysHidApi>
+    <_VcpkgHidApi>C:\vcpkg\installed\x64-windows\bin\hidapi.dll</_VcpkgHidApi>
+    <_DevHidApi>C:\dev\hidapi-win\x64\hidapi.dll</_DevHidApi>
+    <ResolvedHidApiWindowsSource Condition="'$(HidApiWindowsPath)' != '' AND Exists('$(HidApiWindowsPath)')">$(HidApiWindowsPath)</ResolvedHidApiWindowsSource>
+    <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(_DevHidApi)')">$(_DevHidApi)</ResolvedHidApiWindowsSource>
+    <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(_VcpkgHidApi)')">$(_VcpkgHidApi)</ResolvedHidApiWindowsSource>
+    <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(_WindowsSysHidApi)')">$(_WindowsSysHidApi)</ResolvedHidApiWindowsSource>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT' AND '$(ResolvedHidApiWindowsSource)' != ''">
+    <Content Include="$(ResolvedHidApiWindowsSource)">
+      <Link>hidapi.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+  <Target Name="_WarnIfMissingWindowsHidApi"
+          BeforeTargets="Build"
+          Condition="'$(OS)' == 'Windows_NT' AND '$(ResolvedHidApiWindowsSource)' == ''">
+    <Warning Text="hidapi.dll not found. Install via vcpkg (vcpkg install hidapi), extract from a libusb/hidapi GitHub release into C:\dev\hidapi-win\x64\, or set HidApiWindowsPath in Directory.Build.props." />
   </Target>
 
   <!--
@@ -110,17 +119,5 @@
     <Message Importance="high" Text="Built macOS app bundle: $(_AppBundlePath)" />
   </Target>
 
-  <Target Name="_StageLibHidApiWindowsCore">
-    <PropertyGroup>
-      <!-- Common Windows install locations. Override $(HidApiWindowsPath) in
-           a developer-local Directory.Build.props if libhidapi lives elsewhere. -->
-      <WindowsSysHidApi>$(WINDIR)\System32\hidapi.dll</WindowsSysHidApi>
-      <VcpkgHidApi>C:\vcpkg\installed\x64-windows\bin\hidapi.dll</VcpkgHidApi>
-      <ResolvedHidApiWindowsSource Condition="'$(HidApiWindowsPath)' != '' AND Exists('$(HidApiWindowsPath)')">$(HidApiWindowsPath)</ResolvedHidApiWindowsSource>
-      <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(VcpkgHidApi)')">$(VcpkgHidApi)</ResolvedHidApiWindowsSource>
-      <ResolvedHidApiWindowsSource Condition="'$(ResolvedHidApiWindowsSource)' == '' AND Exists('$(WindowsSysHidApi)')">$(WindowsSysHidApi)</ResolvedHidApiWindowsSource>
-    </PropertyGroup>
-    <Warning Text="hidapi.dll not found. Install via vcpkg (vcpkg install hidapi) or set HidApiWindowsPath in Directory.Build.props." Condition="'$(ResolvedHidApiWindowsSource)' == ''" />
-  </Target>
 
 </Project>
