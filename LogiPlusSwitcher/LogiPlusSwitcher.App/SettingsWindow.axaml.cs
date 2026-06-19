@@ -407,6 +407,40 @@ public partial class SettingsWindow : Window
         Populate();
     }
 
+    private async void OnEditReceiverHostNames(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_settings is null || sender is not Button btn || btn.Tag is not string serial || string.IsNullOrEmpty(serial)) return;
+
+        _settings.Receivers.TryGetValue(serial, out var rs);
+        var initial = rs?.HostNames ?? _settings.HostNames;
+        var result = await Dialogs.HostNamesDialog.AskAsync(
+            this,
+            title: $"Host labels for {serial}",
+            header: $"Host labels (override for receiver {serial})",
+            hint: "Clear all three to remove the override and fall back to the global defaults.",
+            initial: initial);
+        if (result is null) return;
+
+        // Empty-all => remove override.
+        if (result.All(string.IsNullOrWhiteSpace))
+        {
+            if (rs is not null) rs.HostNames = null;
+        }
+        else
+        {
+            rs ??= new ReceiverSettings();
+            rs.HostNames = new[]
+            {
+                string.IsNullOrWhiteSpace(result[0]) ? "Host 1" : result[0],
+                string.IsNullOrWhiteSpace(result[1]) ? "Host 2" : result[1],
+                string.IsNullOrWhiteSpace(result[2]) ? "Host 3" : result[2],
+            };
+            _settings.Receivers[serial] = rs;
+        }
+        _settings.Save();
+        Populate();
+    }
+
     private async void OnClearAllPairings(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not string serial || _manager is null) return;

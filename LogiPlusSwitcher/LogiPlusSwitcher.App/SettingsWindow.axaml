@@ -75,6 +75,9 @@
                                                             IsVisible="{Binding ShowSetPrimary}"
                                                             Click="OnSetPrimary"
                                                             Tag="{Binding Serial}" />
+                                                    <Button Content="Hosts…"
+                                                            Click="OnEditReceiverHostNames"
+                                                            Tag="{Binding Serial}" />
                                                     <Button Content="Clear all pairings"
                                                             Foreground="#E57373"
                                                             Click="OnClearAllPairings"
