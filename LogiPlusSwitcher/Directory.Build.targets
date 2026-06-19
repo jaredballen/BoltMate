@@ -67,6 +67,45 @@
           Condition="'$(ResolvedHidApiWindowsSource)' != ''" />
   </Target>
 
+  <!--
+    macOS .app bundle build: when publishing LogiPlusSwitcher.App for osx-*,
+    wrap the publish output in a proper .app directory with Info.plist so the
+    binary behaves as a real Mac menubar app (LSUIElement) and can be code-
+    signed / notarized.
+  -->
+  <Target Name="StageMacAppBundle"
+          AfterTargets="Publish"
+          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'
+                     AND ('$(RuntimeIdentifier)' == 'osx-arm64' OR '$(RuntimeIdentifier)' == 'osx-x64')
+                     AND '$(AssemblyName)' == 'LogiPlusSwitcher.App'">
+    <PropertyGroup>
+      <!-- Use a subdir so we don't collide with the build-output executable
+           (named LogiPlusSwitcher.App, which on a case-insensitive volume
+           clashes with LogiPlusSwitcher.app). -->
+      <_AppBundlePath>$([System.IO.Path]::GetFullPath('$(PublishDir)../app-bundle/LogiPlusSwitcher.app'))</_AppBundlePath>
+      <_AppContents>$(_AppBundlePath)/Contents</_AppContents>
+      <_AppMacOS>$(_AppContents)/MacOS</_AppMacOS>
+      <_AppResources>$(_AppContents)/Resources</_AppResources>
+    </PropertyGroup>
+
+    <RemoveDir Directories="$(_AppBundlePath)" Condition="Exists('$(_AppBundlePath)')" />
+    <Exec Command="mkdir -p &quot;$(_AppMacOS)&quot; &quot;$(_AppResources)&quot;" />
+
+    <ItemGroup>
+      <_PublishedFiles Include="$(PublishDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PublishedFiles)" DestinationFolder="$(_AppMacOS)" SkipUnchangedFiles="true" />
+
+    <WriteLinesToFile
+        File="$(_AppContents)/Info.plist"
+        Overwrite="true"
+        Lines="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;;&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTD/PropertyList-1.0.dtd&quot;&gt;;&lt;plist version=&quot;1.0&quot;&gt;;&lt;dict&gt;;  &lt;key&gt;CFBundleIdentifier&lt;/key&gt;;  &lt;string&gt;com.jaredballen.LogiPlusSwitcher&lt;/string&gt;;  &lt;key&gt;CFBundleName&lt;/key&gt;;  &lt;string&gt;LogiPlusSwitcher&lt;/string&gt;;  &lt;key&gt;CFBundleDisplayName&lt;/key&gt;;  &lt;string&gt;LogiPlus Switcher&lt;/string&gt;;  &lt;key&gt;CFBundleExecutable&lt;/key&gt;;  &lt;string&gt;LogiPlusSwitcher.App&lt;/string&gt;;  &lt;key&gt;CFBundleVersion&lt;/key&gt;;  &lt;string&gt;$(Version)&lt;/string&gt;;  &lt;key&gt;CFBundleShortVersionString&lt;/key&gt;;  &lt;string&gt;$(Version)&lt;/string&gt;;  &lt;key&gt;CFBundlePackageType&lt;/key&gt;;  &lt;string&gt;APPL&lt;/string&gt;;  &lt;key&gt;LSMinimumSystemVersion&lt;/key&gt;;  &lt;string&gt;11.0&lt;/string&gt;;  &lt;key&gt;LSUIElement&lt;/key&gt;;  &lt;true/&gt;;  &lt;key&gt;NSHumanReadableCopyright&lt;/key&gt;;  &lt;string&gt;Copyright (c) Jared Ballen&lt;/string&gt;;  &lt;key&gt;NSHighResolutionCapable&lt;/key&gt;;  &lt;true/&gt;;&lt;/dict&gt;;&lt;/plist&gt;" />
+
+    <Exec Command="chmod +x &quot;$(_AppMacOS)/LogiPlusSwitcher.App&quot;" IgnoreExitCode="true" />
+
+    <Message Importance="high" Text="Built macOS app bundle: $(_AppBundlePath)" />
+  </Target>
+
   <Target Name="_StageLibHidApiWindowsCore">
     <PropertyGroup>
       <!-- Common Windows install locations. Override $(HidApiWindowsPath) in
