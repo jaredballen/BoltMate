@@ -12,8 +12,11 @@ public static class FeatureIds
     /// <summary>DEVICE_INFO — firmware version, serial number, transport info.</summary>
     public const ushort DeviceInfo = 0x0003;
 
-    /// <summary>DEVICE_NAME — product name (and on some firmwares, setName).</summary>
+    /// <summary>DEVICE_NAME — product name (read-only).</summary>
     public const ushort DeviceName = 0x0005;
+
+    /// <summary>DEVICE_FRIENDLY_NAME — user-editable nickname (writable on firmwares that expose fn 0x2).</summary>
+    public const ushort DeviceFriendlyName = 0x0007;
 
     /// <summary>UNIFIED_BATTERY — modern battery status feature.</summary>
     public const ushort UnifiedBattery = 0x1004;

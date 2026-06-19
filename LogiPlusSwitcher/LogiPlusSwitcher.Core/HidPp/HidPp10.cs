@@ -142,8 +142,10 @@ public static class HidPp10
         ArgumentException.ThrowIfNullOrEmpty(name);
 
         var nameBytes = System.Text.Encoding.ASCII.GetBytes(name);
-        if (nameBytes.Length > 14)
-            nameBytes = nameBytes[..14];
+        // After 4 fixed header bytes (register / subregister / 0x01 / length) we have
+        // 16 - 4 = 12 bytes of payload available in the long-register write.
+        if (nameBytes.Length > 12)
+            nameBytes = nameBytes[..12];
 
         Span<byte> parameters = stackalloc byte[HidPpConstants.LongParameterLength];
         parameters[0] = RegisterReceiverInfo;

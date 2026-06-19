@@ -40,6 +40,7 @@ public sealed class BoltReceiver : IDisposable
     public DeviceNameService DeviceName { get; }
     public DeviceInfoService DeviceInfo { get; }
     public BatteryService Battery { get; }
+    public DeviceFriendlyNameService DeviceFriendlyName { get; }
 
     /// <summary>The HID++ client (escape hatch — most callers use the typed services above).</summary>
     public HidPpClient Client => _client;
@@ -88,6 +89,7 @@ public sealed class BoltReceiver : IDisposable
         DeviceName = new DeviceNameService(_client);
         DeviceInfo = new DeviceInfoService(_client);
         Battery = new BatteryService(_client);
+        DeviceFriendlyName = new DeviceFriendlyNameService(_client);
 
         _disposables.Add(_client.Notifications.Subscribe(OnNotification));
         _disposables.Add(_devicesCache);
@@ -169,6 +171,7 @@ public sealed class BoltReceiver : IDisposable
         device.DeviceInfoIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceInfo, ct).ConfigureAwait(false))?.Index;
         device.DeviceNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceName, ct).ConfigureAwait(false))?.Index;
         device.UnifiedBatteryIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.UnifiedBattery, ct).ConfigureAwait(false))?.Index;
+        device.DeviceFriendlyNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceFriendlyName, ct).ConfigureAwait(false))?.Index;
 
         RefreshSlot(deviceIndex);
     }
@@ -561,9 +564,36 @@ public sealed class BoltReceiver : IDisposable
     /// implementation keeps the API contract so consumers can call it; expect
     /// a <see cref="HidPpException"/> until the device-side write is wired.
     /// </remarks>
-    /// <returns>True if the receiver acknowledged the write; throws on error reply; false on timeout.</returns>
+    /// <returns>True if the rename succeeded (either via device-side
+    /// FRIENDLY_NAME or receiver-side BOLT_DEVICE_NAME); throws on error reply; false on timeout.</returns>
     public async Task<bool> RenameDeviceAsync(byte deviceIndex, string newName, TimeSpan? timeout = null, CancellationToken ct = default)
     {
+        // Prefer the device-side path (HID++ 2.0 feature 0x0007 setFriendlyName)
+        // when available — this is what Logi Options+ uses and the only path
+        // current Bolt firmware actually accepts.
+        var cached = TryGetDevice(deviceIndex);
+        if (cached is { LinkUp: true, DeviceFriendlyNameIndex: { } friendlyIndex })
+        {
+            try
+            {
+                _logger.LogInformation("Renaming slot {Slot} via DEVICE_FRIENDLY_NAME (feature 0x0007) to {Name}", deviceIndex, newName);
+                await DeviceFriendlyName.SetFriendlyNameAsync(deviceIndex, friendlyIndex, newName, ct).ConfigureAwait(false);
+                cached.FriendlyName = newName;
+                cached.Name = newName;
+                RefreshSlot(deviceIndex);
+                return true;
+            }
+            catch (HidPpException ex)
+            {
+                _logger.LogWarning(ex, "DEVICE_FRIENDLY_NAME setName rejected; falling back to BOLT_DEVICE_NAME write");
+                // fall through to legacy path
+            }
+        }
+
+        // Legacy / fallback: SET_LONG_REGISTER on BOLT_DEVICE_NAME. Current
+        // Bolt firmware tends to reject this with InvalidArgument; we try
+        // anyway so we get a meaningful error code surfaced for devices we
+        // haven't established the friendly-name path on yet.
         var window = timeout ?? TimeSpan.FromSeconds(2);
         var request = HidPp10.BuildWriteBoltDeviceNameFrame(deviceIndex, newName);
 

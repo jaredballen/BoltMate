@@ -37,6 +37,12 @@ public sealed class PairedDevice
     /// <summary>Feature index of UNIFIED_BATTERY (0x1004).</summary>
     public byte? UnifiedBatteryIndex { get; set; }
 
+    /// <summary>Feature index of DEVICE_FRIENDLY_NAME (0x0007) — the writable nickname.</summary>
+    public byte? DeviceFriendlyNameIndex { get; set; }
+
+    /// <summary>User-set friendly name from feature 0x0007, when available.</summary>
+    public string? FriendlyName { get; set; }
+
     /// <summary>Most recently observed battery state.</summary>
     public HidPp.Features.BatteryStatus? LastKnownBattery { get; set; }
 
@@ -67,6 +73,17 @@ public sealed class PairedDevice
 
     /// <summary>True if this device's Easy-Switch keys are being observed.</summary>
     public bool CanEmitHostSwitch => ReprogControlsIndex.HasValue && DivertedHostSwitchCids.Count > 0;
+
+    /// <summary>
+    /// The most informative human label for this device. Prefers the
+    /// user-set friendly name (feature 0x0007), then the device-side product
+    /// name (feature 0x0005), then the BOLT_DEVICE_NAME register read, then
+    /// the <see cref="WpidCatalog"/> model lookup, finally a hex placeholder.
+    /// </summary>
+    public string DisplayName =>
+        !string.IsNullOrWhiteSpace(FriendlyName) ? FriendlyName!
+        : !string.IsNullOrWhiteSpace(Name) ? Name!
+        : WpidCatalog.LookupOrFallback(Wpid);
 
     public override string ToString() =>
         $"slot {DeviceIndex} wpid=0x{Wpid:X4} {(LinkUp ? "up" : "down")} name=\"{Name ?? "?"}\" " +

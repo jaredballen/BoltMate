@@ -435,6 +435,10 @@ internal static class Commands
         receiver.Start();
         settled.Wait(TimeSpan.FromMilliseconds(750), ct);
 
+        // Discover features so RenameDeviceAsync can pick the DEVICE_FRIENDLY_NAME (0x0007) path.
+        try { await receiver.DiscoverFeaturesAsync(slot, ct); }
+        catch (Exception ex) { Console.Error.WriteLine($"  feature discovery failed: {ex.Message}"); }
+
         // Read current name first so we have something to display.
         var oldName = await receiver.ReadSlotNameAsync(slot, ct) ?? "(unknown)";
         Console.WriteLine($"Renaming slot {slot}: \"{oldName}\" -> \"{newName}\"");
@@ -443,7 +447,15 @@ internal static class Commands
             var ok = await receiver.RenameDeviceAsync(slot, newName, ct: ct);
             if (!ok) { Console.WriteLine("  timed out — name may or may not have been written."); return 2; }
 
-            var readBack = await receiver.ReadSlotNameAsync(slot, ct);
+            // Try friendly-name read-back (feature 0x0007) first; fall back to BOLT_DEVICE_NAME.
+            string? readBack = null;
+            var d = receiver.TryGetDevice(slot);
+            if (d?.DeviceFriendlyNameIndex is { } fIdx)
+            {
+                try { readBack = await receiver.DeviceFriendlyName.GetAsync(slot, fIdx, ct); }
+                catch (HidPpException) { /* fall through */ }
+            }
+            readBack ??= await receiver.ReadSlotNameAsync(slot, ct);
             Console.WriteLine($"  ok — read back: \"{readBack}\"");
             return 0;
         }
