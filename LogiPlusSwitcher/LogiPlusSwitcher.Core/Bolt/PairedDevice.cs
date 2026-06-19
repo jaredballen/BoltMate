@@ -28,6 +28,12 @@ public sealed class PairedDevice
     /// <summary>Feature index of HOSTS_INFO (0x1815) or null if unsupported.</summary>
     public byte? HostsInfoIndex { get; set; }
 
+    /// <summary>Feature index of DEVICE_INFO (0x0003).</summary>
+    public byte? DeviceInfoIndex { get; set; }
+
+    /// <summary>Feature index of DEVICE_NAME (0x0005).</summary>
+    public byte? DeviceNameIndex { get; set; }
+
     /// <summary>CIDs (0x00D1/D2/D3) that this device exposes and we successfully diverted.</summary>
     public IReadOnlyList<ushort> DivertedHostSwitchCids { get; set; } = [];
 

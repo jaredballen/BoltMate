@@ -9,6 +9,18 @@ public static class FeatureIds
     /// <summary>IRoot — feature lookup. Index is always 0x00.</summary>
     public const ushort IRoot = 0x0001;
 
+    /// <summary>DEVICE_INFO — firmware version, serial number, transport info.</summary>
+    public const ushort DeviceInfo = 0x0003;
+
+    /// <summary>DEVICE_NAME — product name (and on some firmwares, setName).</summary>
+    public const ushort DeviceName = 0x0005;
+
+    /// <summary>BATTERY_UNIFIED_LEVEL_STATUS — newer battery feature.</summary>
+    public const ushort BatteryUnifiedLevelStatus = 0x1004;
+
+    /// <summary>BATTERY_VOLTAGE — older battery feature.</summary>
+    public const ushort BatteryVoltage = 0x1001;
+
     /// <summary>REPROG_CONTROLS_V4 — divert reprogrammable controls (Easy-Switch keys).</summary>
     public const ushort ReprogControlsV4 = 0x1B04;
 

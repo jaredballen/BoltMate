@@ -93,18 +93,37 @@ internal static class Commands
 
             foreach (var device in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
             {
-                try
+                if (device.LinkUp)
                 {
-                    await receiver.DiscoverFeaturesAsync(device.DeviceIndex, ct);
-                    if (device.HostsInfoIndex is { } hostsIndex)
+                    try
                     {
-                        var hosts = await receiver.HostsInfo.GetHostsInfoAsync(device.DeviceIndex, hostsIndex, ct);
-                        device.LastKnownCurrentHost = hosts.CurrentHost;
+                        await receiver.DiscoverFeaturesAsync(device.DeviceIndex, ct);
+
+                        if (device.DeviceNameIndex is { } dnIndex)
+                        {
+                            try
+                            {
+                                var liveName = await receiver.DeviceName.GetNameAsync(device.DeviceIndex, dnIndex, ct);
+                                if (!string.IsNullOrEmpty(liveName))
+                                    device.Name = liveName;
+                            }
+                            catch (HidPpException) { /* skip */ }
+                        }
+                        if (device.DeviceInfoIndex is { } diIndex)
+                        {
+                            var serial = await receiver.DeviceInfo.GetSerialAsync(device.DeviceIndex, diIndex, ct);
+                            if (serial is not null) device.Serial = serial;
+                        }
+                        if (device.HostsInfoIndex is { } hostsIndex)
+                        {
+                            var hosts = await receiver.HostsInfo.GetHostsInfoAsync(device.DeviceIndex, hostsIndex, ct);
+                            device.LastKnownCurrentHost = hosts.CurrentHost;
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"    slot {device.DeviceIndex} discover failed: {ex.Message}");
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"    slot {device.DeviceIndex} discover failed: {ex.Message}");
+                    }
                 }
                 Console.WriteLine($"  {device}");
             }
