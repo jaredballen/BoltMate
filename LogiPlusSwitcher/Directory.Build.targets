@@ -49,7 +49,7 @@
 
   <Target Name="StageLibHidApiWindowsOnBuild"
           AfterTargets="Build"
-          Condition="'$([MSBuild]::IsOSPlatform(`Windows`))' == 'true'">
+          Condition="'$(OS)' == 'Windows_NT'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
     <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
           DestinationFolder="$(OutputPath)"
@@ -59,7 +59,7 @@
 
   <Target Name="StageLibHidApiWindowsOnPublish"
           AfterTargets="Publish"
-          Condition="'$([MSBuild]::IsOSPlatform(`Windows`))' == 'true'">
+          Condition="'$(OS)' == 'Windows_NT'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
     <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
           DestinationFolder="$(PublishDir)"
