@@ -29,4 +29,14 @@
   <ItemGroup>
     <ProjectReference Include="..\LogiPlusSwitcher.Core\LogiPlusSwitcher.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/tray-icon.png" />
+    <AvaloniaResource Include="Assets/tray-icon@2x.png" />
+    <AvaloniaResource Include="Assets/app-icon-512.png" />
+    <Content Include="Assets/LogiPlusSwitcher.icns">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

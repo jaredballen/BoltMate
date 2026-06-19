@@ -93,6 +93,19 @@ public partial class App : Application
         }
     }
 
+    private void OnOpenSettings(object? sender, EventArgs e)
+    {
+        // TODO: open a real settings window. When that lands, it should also
+        // flip the app's macOS activation policy to Regular so the dock icon
+        // appears while the window is open, then back to Accessory on close.
+        // For now this is a no-op so the menu item is visible.
+    }
+
+    private void OnAbout(object? sender, EventArgs e)
+    {
+        // Placeholder — a real About dialog comes with the settings window.
+    }
+
     private void OnSwitchAllHost1(object? sender, EventArgs e) => SwitchAllTo(0);
     private void OnSwitchAllHost2(object? sender, EventArgs e) => SwitchAllTo(1);
     private void OnSwitchAllHost3(object? sender, EventArgs e) => SwitchAllTo(2);
