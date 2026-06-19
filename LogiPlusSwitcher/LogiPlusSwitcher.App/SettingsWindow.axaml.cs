@@ -11,6 +11,8 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using DynamicData;
 using LogiPlusSwitcher.App.Licensing;
+using LogiPlusSwitcher.App.Updates;
+using Microsoft.Extensions.Logging.Abstractions;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 
@@ -29,6 +31,7 @@ public partial class SettingsWindow : Window
     private readonly ObservableCollection<ReceiverRow> _rows = new();
     private readonly ObservableCollection<TopologyRow> _topology = new();
     private readonly CompositeDisposable _disposables = new();
+    private UpdateService? _updates;
 
     public SettingsWindow()
     {
@@ -54,9 +57,65 @@ public partial class SettingsWindow : Window
         var keyBox = this.FindControl<TextBox>("LicenseKeyBox");
         if (keyBox is not null) keyBox.Text = settings.LicenseKey ?? "";
 
+        _updates = new UpdateService(settings, NullLogger<UpdateService>.Instance);
+
         RefreshLaunchAtLogin();
+        RefreshUpdatesTab();
         Populate();
         WireLiveRefresh();
+    }
+
+    private void RefreshUpdatesTab()
+    {
+        if (_updates is null || _settings is null) return;
+        var v = this.FindControl<TextBlock>("CurrentVersionLine");
+        var lc = this.FindControl<TextBlock>("LastCheckedLine");
+        var toggle = this.FindControl<CheckBox>("AutoCheckToggle");
+        if (v is not null) v.Text = _updates.CurrentVersion;
+        if (lc is not null)
+            lc.Text = _updates.LastCheckUtc?.ToLocalTime().ToString("g") ?? "never";
+        if (toggle is not null)
+        {
+            _suppressAutoCheckEvent = true;
+            toggle.IsChecked = _settings.AutoCheckForUpdates;
+            _suppressAutoCheckEvent = false;
+        }
+    }
+
+    private bool _suppressAutoCheckEvent;
+
+    private void OnAutoCheckChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_suppressAutoCheckEvent || _settings is null) return;
+        if (sender is not CheckBox cb) return;
+        _settings.AutoCheckForUpdates = cb.IsChecked == true;
+        _settings.Save();
+    }
+
+    private async void OnCheckForUpdatesNow(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_updates is null) return;
+        var line = this.FindControl<TextBlock>("UpdateStatusLine");
+        var btn = this.FindControl<Button>("CheckNowButton");
+        if (btn is not null) btn.IsEnabled = false;
+        if (line is not null) line.Text = "Checking…";
+        try
+        {
+            var info = await _updates.CheckAsync();
+            if (line is not null)
+                line.Text = info is null
+                    ? $"You're up to date on {_updates.CurrentVersion}."
+                    : $"Update available: {info.Version}. Download: {info.DownloadUrl}";
+            RefreshUpdatesTab();
+        }
+        catch (Exception ex)
+        {
+            if (line is not null) line.Text = $"Update check failed: {ex.Message}";
+        }
+        finally
+        {
+            if (btn is not null) btn.IsEnabled = true;
+        }
     }
 
     /// <summary>

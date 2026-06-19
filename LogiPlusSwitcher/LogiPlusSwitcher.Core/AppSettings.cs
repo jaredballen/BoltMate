@@ -40,6 +40,15 @@ public sealed class AppSettings
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 
+    /// <summary>Auto-check for updates on startup + every <see cref="UpdateCheckIntervalHours"/>.</summary>
+    public bool AutoCheckForUpdates { get; set; } = true;
+
+    /// <summary>Hours between background update checks. 0 disables periodic; manual only.</summary>
+    public int UpdateCheckIntervalHours { get; set; } = 24;
+
+    /// <summary>ISO-8601 timestamp of the last update check, or null if never checked.</summary>
+    public string? LastUpdateCheckUtc { get; set; }
+
     public static AppSettings Load()
     {
         if (!File.Exists(AppPaths.SettingsFile))
