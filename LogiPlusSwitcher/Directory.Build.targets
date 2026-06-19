@@ -47,24 +47,25 @@
     <Warning Text="libhidapi.dylib not found at standard Homebrew paths. Run 'brew install hidapi'." Condition="'$(ResolvedHidApiMacSource)' == ''" />
   </Target>
 
-  <Target Name="StageLibHidApiWindowsOnBuild"
-          AfterTargets="CopyFilesToOutputDirectory"
+  <!--
+    Windows: AfterTargets="Build" + AfterTargets="Publish" hooks were silently
+    skipped on Win 11 arm64 even with the OS condition matching — root cause
+    not yet pinned down. Workaround: resolve the path eagerly during project
+    evaluation (BeforeTargets="BeforeBuild") and add it as a Content item so
+    the standard SDK copy logic stages it to both OutputPath and PublishDir.
+  -->
+  <Target Name="_ResolveWindowsHidApiBeforeBuild"
+          BeforeTargets="BeforeBuild;BeforeCompile;PrepareForRun"
           Condition="'$(OS)' == 'Windows_NT'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
-    <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
-          DestinationFolder="$(OutputPath)"
-          SkipUnchangedFiles="true"
-          Condition="'$(ResolvedHidApiWindowsSource)' != ''" />
-  </Target>
-
-  <Target Name="StageLibHidApiWindowsOnPublish"
-          AfterTargets="Publish"
-          Condition="'$(OS)' == 'Windows_NT'">
-    <CallTarget Targets="_StageLibHidApiWindowsCore" />
-    <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
-          DestinationFolder="$(PublishDir)"
-          SkipUnchangedFiles="true"
-          Condition="'$(ResolvedHidApiWindowsSource)' != ''" />
+    <ItemGroup Condition="'$(ResolvedHidApiWindowsSource)' != ''">
+      <Content Include="$(ResolvedHidApiWindowsSource)">
+        <Link>hidapi.dll</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <Visible>false</Visible>
+      </Content>
+    </ItemGroup>
   </Target>
 
   <!--
