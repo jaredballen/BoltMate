@@ -61,8 +61,56 @@ public partial class SettingsWindow : Window
 
         RefreshLaunchAtLogin();
         RefreshUpdatesTab();
+        RefreshDiagnosticsTab();
         Populate();
         WireLiveRefresh();
+    }
+
+    private bool _suppressTelemetryEvent;
+
+    private void RefreshDiagnosticsTab()
+    {
+        if (_settings is null) return;
+        var t = this.FindControl<CheckBox>("TelemetryToggle");
+        if (t is not null)
+        {
+            _suppressTelemetryEvent = true;
+            t.IsChecked = _settings.TelemetryEnabled;
+            _suppressTelemetryEvent = false;
+        }
+        var line = this.FindControl<TextBlock>("LogsPathLine");
+        if (line is not null) line.Text = $"Logs: {AppPaths.LogsDirectory}";
+    }
+
+    private void OnTelemetryChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_suppressTelemetryEvent || _settings is null) return;
+        if (sender is not CheckBox cb) return;
+        _settings.TelemetryEnabled = cb.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void OnOpenLogsFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        RevealInFileManager(AppPaths.LogsDirectory);
+
+    private void OnOpenSettingsFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        RevealInFileManager(System.IO.Path.GetDirectoryName(AppPaths.SettingsFile) ?? AppPaths.LogsDirectory);
+
+    private static void RevealInFileManager(string path)
+    {
+        try
+        {
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+                System.Diagnostics.Process.Start("open", $"\"{path}\"");
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+                System.Diagnostics.Process.Start("explorer.exe", $"\"{path}\"");
+            else
+                System.Diagnostics.Process.Start("xdg-open", $"\"{path}\"");
+        }
+        catch
+        {
+            // best-effort; ignore platform-specific failures
+        }
     }
 
     private void RefreshUpdatesTab()

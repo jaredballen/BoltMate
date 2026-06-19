@@ -10,14 +10,38 @@
     <TabControl Margin="12">
         <!-- General tab -->
         <TabItem Header="General">
-            <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*">
-                <TextBlock Grid.Row="0" Text="Startup" FontSize="16" FontWeight="Bold" Margin="0,0,0,8" />
-                <CheckBox Grid.Row="1" x:Name="LaunchAtLoginToggle"
-                          Content="Launch LogiPlusSwitcher at login"
-                          IsCheckedChanged="OnLaunchAtLoginChanged" />
-                <TextBlock Grid.Row="2" x:Name="LaunchAtLoginDetail"
-                           Margin="22,4,0,0" Foreground="#999" FontSize="12" TextWrapping="Wrap" />
-            </Grid>
+            <ScrollViewer>
+                <StackPanel Margin="8" Spacing="16">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Startup" FontSize="16" FontWeight="Bold" />
+                        <CheckBox x:Name="LaunchAtLoginToggle"
+                                  Content="Launch LogiPlusSwitcher at login"
+                                  IsCheckedChanged="OnLaunchAtLoginChanged" />
+                        <TextBlock x:Name="LaunchAtLoginDetail"
+                                   Margin="22,0,0,0" Foreground="#999" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Privacy" FontSize="16" FontWeight="Bold" />
+                        <CheckBox x:Name="TelemetryToggle"
+                                  Content="Send anonymous diagnostics"
+                                  IsCheckedChanged="OnTelemetryChanged" />
+                        <TextBlock Margin="22,0,0,0" Foreground="#999" FontSize="12" TextWrapping="Wrap">
+                            Off by default. When on, error reports and de-identified usage counts go to Azure App Insights.
+                            No device serials, key strokes, or file paths are ever sent.
+                        </TextBlock>
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Diagnostics" FontSize="16" FontWeight="Bold" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Open logs folder" Click="OnOpenLogsFolder" />
+                            <Button Content="Open settings folder" Click="OnOpenSettingsFolder" />
+                        </StackPanel>
+                        <TextBlock x:Name="LogsPathLine" Foreground="#999" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
         </TabItem>
 
         <!-- Receivers tab -->
