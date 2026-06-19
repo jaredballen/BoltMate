@@ -14,7 +14,7 @@
 
   <Target Name="StageLibHidApiMacOnBuild"
           AfterTargets="Build"
-          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">
+          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'">
     <CallTarget Targets="_StageLibHidApiMacCore">
       <Output PropertyName="_DropDir" TaskParameter="TargetOutputs" />
     </CallTarget>
@@ -29,7 +29,7 @@
 
   <Target Name="StageLibHidApiMacOnPublish"
           AfterTargets="Publish"
-          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">
+          Condition="'$([MSBuild]::IsOSPlatform(`OSX`))' == 'true'">
     <CallTarget Targets="_StageLibHidApiMacCore" />
     <Copy SourceFiles="$(ResolvedHidApiMacSource)"
           DestinationFolder="$(PublishDir)"
@@ -49,7 +49,7 @@
 
   <Target Name="StageLibHidApiWindowsOnBuild"
           AfterTargets="Build"
-          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">
+          Condition="'$([MSBuild]::IsOSPlatform(`Windows`))' == 'true'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
     <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
           DestinationFolder="$(OutputPath)"
@@ -59,7 +59,7 @@
 
   <Target Name="StageLibHidApiWindowsOnPublish"
           AfterTargets="Publish"
-          Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">
+          Condition="'$([MSBuild]::IsOSPlatform(`Windows`))' == 'true'">
     <CallTarget Targets="_StageLibHidApiWindowsCore" />
     <Copy SourceFiles="$(ResolvedHidApiWindowsSource)"
           DestinationFolder="$(PublishDir)"
