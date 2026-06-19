@@ -34,6 +34,12 @@ public sealed class PairedDevice
     /// <summary>Feature index of DEVICE_NAME (0x0005).</summary>
     public byte? DeviceNameIndex { get; set; }
 
+    /// <summary>Feature index of UNIFIED_BATTERY (0x1004).</summary>
+    public byte? UnifiedBatteryIndex { get; set; }
+
+    /// <summary>Most recently observed battery state.</summary>
+    public HidPp.Features.BatteryStatus? LastKnownBattery { get; set; }
+
     /// <summary>CIDs (0x00D1/D2/D3) that this device exposes and we successfully diverted.</summary>
     public IReadOnlyList<ushort> DivertedHostSwitchCids { get; set; } = [];
 
@@ -65,6 +71,7 @@ public sealed class PairedDevice
     public override string ToString() =>
         $"slot {DeviceIndex} wpid=0x{Wpid:X4} {(LinkUp ? "up" : "down")} name=\"{Name ?? "?"}\" " +
         $"serial={Serial ?? "?"} " +
+        $"battery={(LastKnownBattery.HasValue ? LastKnownBattery.Value.ToString() : "?")} " +
         $"feats[1B04={ReprogControlsIndex?.ToString("X2") ?? "-"} " +
         $"1814={ChangeHostIndex?.ToString("X2") ?? "-"} " +
         $"1815={HostsInfoIndex?.ToString("X2") ?? "-"}] " +

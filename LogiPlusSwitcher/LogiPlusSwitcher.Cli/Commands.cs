@@ -114,6 +114,11 @@ internal static class Commands
                             var serial = await receiver.DeviceInfo.GetSerialAsync(device.DeviceIndex, diIndex, ct);
                             if (serial is not null) device.Serial = serial;
                         }
+                        if (device.UnifiedBatteryIndex is { } batIndex)
+                        {
+                            var battery = await receiver.Battery.GetStatusAsync(device.DeviceIndex, batIndex, ct);
+                            if (battery is { } b) device.LastKnownBattery = b;
+                        }
                         if (device.HostsInfoIndex is { } hostsIndex)
                         {
                             var hosts = await receiver.HostsInfo.GetHostsInfoAsync(device.DeviceIndex, hostsIndex, ct);

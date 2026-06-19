@@ -19,7 +19,7 @@ namespace LogiPlusSwitcher.Core.HidPp;
 /// </remarks>
 public sealed class HidPpClient : IDisposable
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMilliseconds(1500);
 
     private readonly IReceiverConnection _connection;
     private readonly ConcurrentDictionary<byte, SemaphoreSlim> _deviceLocks = new();

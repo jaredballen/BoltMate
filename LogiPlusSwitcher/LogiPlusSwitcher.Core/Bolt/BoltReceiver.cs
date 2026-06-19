@@ -39,6 +39,7 @@ public sealed class BoltReceiver : IDisposable
     public ReprogControlsService ReprogControls { get; }
     public DeviceNameService DeviceName { get; }
     public DeviceInfoService DeviceInfo { get; }
+    public BatteryService Battery { get; }
 
     /// <summary>The HID++ client (escape hatch — most callers use the typed services above).</summary>
     public HidPpClient Client => _client;
@@ -86,6 +87,7 @@ public sealed class BoltReceiver : IDisposable
         ReprogControls = new ReprogControlsService(_client);
         DeviceName = new DeviceNameService(_client);
         DeviceInfo = new DeviceInfoService(_client);
+        Battery = new BatteryService(_client);
 
         _disposables.Add(_client.Notifications.Subscribe(OnNotification));
         _disposables.Add(_devicesCache);
@@ -166,6 +168,7 @@ public sealed class BoltReceiver : IDisposable
         device.HostsInfoIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.HostsInfo, ct).ConfigureAwait(false))?.Index;
         device.DeviceInfoIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceInfo, ct).ConfigureAwait(false))?.Index;
         device.DeviceNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceName, ct).ConfigureAwait(false))?.Index;
+        device.UnifiedBatteryIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.UnifiedBattery, ct).ConfigureAwait(false))?.Index;
 
         RefreshSlot(deviceIndex);
     }

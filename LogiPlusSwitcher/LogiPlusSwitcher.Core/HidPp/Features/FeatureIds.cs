@@ -15,10 +15,10 @@ public static class FeatureIds
     /// <summary>DEVICE_NAME — product name (and on some firmwares, setName).</summary>
     public const ushort DeviceName = 0x0005;
 
-    /// <summary>BATTERY_UNIFIED_LEVEL_STATUS — newer battery feature.</summary>
-    public const ushort BatteryUnifiedLevelStatus = 0x1004;
+    /// <summary>UNIFIED_BATTERY — modern battery status feature.</summary>
+    public const ushort UnifiedBattery = 0x1004;
 
-    /// <summary>BATTERY_VOLTAGE — older battery feature.</summary>
+    /// <summary>BATTERY_VOLTAGE — voltage-based battery status (older devices).</summary>
     public const ushort BatteryVoltage = 0x1001;
 
     /// <summary>REPROG_CONTROLS_V4 — divert reprogrammable controls (Easy-Switch keys).</summary>
