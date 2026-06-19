@@ -448,6 +448,35 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Unpairs every populated slot on the receiver. Returns the number of
+    /// slots successfully unpaired. Sequential, not parallel — receiver
+    /// firmware often serialises pairing-register writes anyway.
+    /// </summary>
+    public async Task<int> ClearAllPairingsAsync(TimeSpan? perSlotTimeout = null, CancellationToken ct = default)
+    {
+        // Snapshot the cache so we don't iterate while it mutates.
+        var slots = _devicesCache.Items.Select(d => d.DeviceIndex).OrderBy(s => s).ToArray();
+        _logger.LogInformation("Clearing all pairings on receiver {Serial}: {Count} slot(s)", Info.Serial, slots.Length);
+
+        var cleared = 0;
+        foreach (var slot in slots)
+        {
+            try
+            {
+                if (await UnpairAsync(slot, perSlotTimeout, ct).ConfigureAwait(false))
+                    cleared++;
+            }
+            catch (HidPpException ex)
+            {
+                _logger.LogWarning(ex, "Unpair slot {Slot} failed during clear", slot);
+            }
+        }
+
+        _logger.LogInformation("Cleared {Cleared}/{Total} slots on receiver {Serial}", cleared, slots.Length, Info.Serial);
+        return cleared;
+    }
+
+    /// <summary>
     /// Writes a new ASCII name to <c>BOLT_DEVICE_NAME</c> for the given slot.
     /// Up to 14 ASCII chars. Mutates the cached <see cref="PairedDevice.Name"/>
     /// on success.

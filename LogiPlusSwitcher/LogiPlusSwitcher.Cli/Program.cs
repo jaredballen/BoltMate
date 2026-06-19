@@ -50,6 +50,9 @@ return args[0].ToLowerInvariant() switch
                   && args[2].Equals("rename", StringComparison.OrdinalIgnoreCase) =>
         await Commands.RunRenameSlotAsync(transport, renSlot, args[3], cts.Token),
 
+    "receiver" when args.Length >= 2 && args[1].Equals("clear", StringComparison.OrdinalIgnoreCase) =>
+        await Commands.RunClearReceiverAsync(transport, cts.Token, assumeYes: args.Contains("--yes") || args.Contains("-y")),
+
     "device" when args.Length == 5
                   && args[1].Equals("--receiver", StringComparison.OrdinalIgnoreCase)
                   && int.TryParse(args[2], out var rIdx)

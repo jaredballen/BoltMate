@@ -250,6 +250,49 @@ internal static class Commands
         return 0;
     }
 
+    public static async Task<int> RunClearReceiverAsync(IReceiverTransport transport, CancellationToken ct, int receiverIndex = 0, bool assumeYes = false)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0 || receiverIndex >= infos.Count)
+        {
+            Console.WriteLine("No matching Bolt receiver.");
+            return 1;
+        }
+
+        var info = infos[receiverIndex];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var sub = receiver.LinkEstablished.Subscribe(_ => settled.Set());
+        using var lostSub = receiver.LinkLost.Subscribe(_ => settled.Set());
+        receiver.Start();
+        settled.Wait(TimeSpan.FromMilliseconds(750), ct);
+
+        // Read every slot's metadata first so the confirmation prompt shows real names.
+        for (byte s = HidPpConstants.DeviceIndexFirstSlot; s <= HidPpConstants.DeviceIndexLastSlot; s++)
+            await receiver.ReadSlotMetadataAsync(s, ct);
+
+        Console.WriteLine($"About to unpair ALL devices on receiver {info.ProductString} (serial {info.Serial}):");
+        foreach (var d in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
+            Console.WriteLine($"  slot {d.DeviceIndex}: \"{d.Name ?? "?"}\" wpid=0x{d.Wpid:X4}");
+
+        if (!assumeYes)
+        {
+            Console.Write("Type YES to confirm: ");
+            var answer = Console.ReadLine();
+            if (!string.Equals(answer, "YES", StringComparison.Ordinal))
+            {
+                Console.WriteLine("Cancelled.");
+                return 0;
+            }
+        }
+
+        var cleared = await receiver.ClearAllPairingsAsync(ct: ct);
+        Console.WriteLine($"Cleared {cleared} slot(s).");
+        return 0;
+    }
+
     public static async Task<int> RunRenameSlotAsync(IReceiverTransport transport, byte slot, string newName, CancellationToken ct, int receiverIndex = 0)
     {
         var infos = transport.Enumerate();
