@@ -53,6 +53,12 @@ return args[0].ToLowerInvariant() switch
     "receiver" when args.Length >= 2 && args[1].Equals("clear", StringComparison.OrdinalIgnoreCase) =>
         await Commands.RunClearReceiverAsync(transport, cts.Token, assumeYes: args.Contains("--yes") || args.Contains("-y")),
 
+    "backup" => await Commands.RunBackupAsync(transport,
+        args.Length >= 2 ? args[1] : null, cts.Token),
+
+    "diagnose" => await Commands.RunDiagnoseAsync(transport,
+        args.Length >= 2 ? args[1] : null, cts.Token),
+
     "device" when args.Length == 5
                   && args[1].Equals("--receiver", StringComparison.OrdinalIgnoreCase)
                   && int.TryParse(args[2], out var rIdx)

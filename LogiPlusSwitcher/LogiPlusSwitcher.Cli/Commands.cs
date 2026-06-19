@@ -1,4 +1,5 @@
 using DynamicData;
+using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
@@ -25,6 +26,10 @@ internal static class Commands
         Console.WriteLine("  logiplus device <slot> switch <host>  Switch a single slot (1..6) to host (0..2).");
         Console.WriteLine("  logiplus device <slot> unpair         Unpair slot (1..6) from the first receiver. Destructive.");
         Console.WriteLine("  logiplus device --receiver <idx> <slot> unpair");
+        Console.WriteLine("  logiplus device <slot> rename <name>  Rename a paired device. Currently rejected by firmware (see #32).");
+        Console.WriteLine("  logiplus receiver clear [--yes]       Unpair every device on the first receiver. Destructive.");
+        Console.WriteLine("  logiplus backup [path]                Dump all receiver pairings to JSON.");
+        Console.WriteLine("  logiplus diagnose [path]              Bundle pairings + logs + system info into a zip.");
         Console.WriteLine("  logiplus diag                       Dump every raw HID++ frame on the wire.");
         Console.WriteLine("  logiplus service install            Register as a background service / login agent.");
         Console.WriteLine("  logiplus service uninstall          Remove the background registration.");
@@ -272,6 +277,100 @@ internal static class Commands
             return 2;
         }
         return 0;
+    }
+
+    public static async Task<int> RunBackupAsync(IReceiverTransport transport, string? outputPath, CancellationToken ct)
+    {
+        AppPaths.EnsureDirectories();
+        outputPath ??= Path.Combine(AppPaths.BackupsDirectory, $"pairings-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+
+        var backup = new PairingBackup { CapturedAt = DateTimeOffset.Now };
+
+        foreach (var info in transport.Enumerate())
+        {
+            using var connection = transport.Open(info);
+            using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+            using var settled = new ManualResetEventSlim(false);
+            using var sub = receiver.LinkEstablished.Subscribe(_ => settled.Set());
+            using var lostSub = receiver.LinkLost.Subscribe(_ => settled.Set());
+            receiver.Start();
+            settled.Wait(TimeSpan.FromMilliseconds(750), ct);
+
+            var details = await receiver.GetReceiverDetailsAsync(ct: ct);
+            for (byte s = HidPpConstants.DeviceIndexFirstSlot; s <= HidPpConstants.DeviceIndexLastSlot; s++)
+                await receiver.ReadSlotMetadataAsync(s, ct);
+
+            var rb = new ReceiverBackup
+            {
+                Serial = details.Serial,
+                ProductString = info.ProductString,
+                FirmwareVersion = details.FirmwareVersionString,
+            };
+            foreach (var d in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
+            {
+                rb.Slots.Add(new SlotBackup
+                {
+                    DeviceIndex = d.DeviceIndex,
+                    Wpid = d.Wpid,
+                    Name = d.Name,
+                    Serial = d.Serial,
+                    BluetoothAddress = d.BluetoothAddress is null ? null
+                        : string.Join(":", d.BluetoothAddress.Select(b => b.ToString("X2"))),
+                    CurrentHost = d.LastKnownCurrentHost,
+                });
+            }
+            backup.Receivers.Add(rb);
+        }
+
+        await PairingBackup.SaveAsync(backup, outputPath, ct);
+        Console.WriteLine($"Wrote backup of {backup.Receivers.Count} receiver(s) to {outputPath}");
+        return 0;
+    }
+
+    public static async Task<int> RunDiagnoseAsync(IReceiverTransport transport, string? outputPath, CancellationToken ct)
+    {
+        AppPaths.EnsureDirectories();
+        outputPath ??= Path.Combine(AppPaths.BackupsDirectory, $"diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+
+        var tmpDir = Directory.CreateTempSubdirectory("logiplus-diag-");
+        try
+        {
+            // 1. Pairings + receiver metadata snapshot
+            var backupJson = Path.Combine(tmpDir.FullName, "pairings.json");
+            await RunBackupAsync(transport, backupJson, ct);
+
+            // 2. Last log files
+            var logsDir = AppPaths.LogsDirectory;
+            if (Directory.Exists(logsDir))
+            {
+                var diagLogs = Path.Combine(tmpDir.FullName, "logs");
+                Directory.CreateDirectory(diagLogs);
+                foreach (var f in Directory.EnumerateFiles(logsDir).OrderByDescending(File.GetLastWriteTime).Take(5))
+                    File.Copy(f, Path.Combine(diagLogs, Path.GetFileName(f)), overwrite: true);
+            }
+
+            // 3. System info text
+            var sysInfo = $"""
+                LogiPlusSwitcher diagnostic bundle
+                Captured: {DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}
+                OS:       {Environment.OSVersion}
+                Arch:     {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}
+                .NET:     {Environment.Version}
+                hidapi:   {HidApi.Hid.VersionString()}
+                """;
+            await File.WriteAllTextAsync(Path.Combine(tmpDir.FullName, "system.txt"), sysInfo, ct);
+
+            // 4. Zip
+            if (File.Exists(outputPath)) File.Delete(outputPath);
+            System.IO.Compression.ZipFile.CreateFromDirectory(tmpDir.FullName, outputPath);
+            Console.WriteLine($"Wrote diagnostic bundle to {outputPath}");
+            return 0;
+        }
+        finally
+        {
+            try { tmpDir.Delete(recursive: true); } catch { /* swallow */ }
+        }
     }
 
     public static async Task<int> RunClearReceiverAsync(IReceiverTransport transport, CancellationToken ct, int receiverIndex = 0, bool assumeYes = false)
