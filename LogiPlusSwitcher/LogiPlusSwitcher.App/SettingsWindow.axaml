@@ -1,0 +1,45 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:LogiPlusSwitcher.App"
+        x:Class="LogiPlusSwitcher.App.SettingsWindow"
+        Width="640" Height="480"
+        MinWidth="480" MinHeight="320"
+        Title="LogiPlusSwitcher Settings"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
+            <TextBlock Text="Receivers and devices" FontSize="16" FontWeight="Bold" />
+            <TextBlock x:Name="StatusLine" Foreground="#888" />
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
+            <ScrollViewer>
+                <ItemsControl x:Name="ReceiverList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="app:SettingsWindow+ReceiverRow">
+                            <Border Padding="12" Margin="0,0,0,1" Background="#16FFFFFF">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="{Binding Header}" FontWeight="Bold" />
+                                    <TextBlock Text="{Binding SubLine}" FontSize="12" Foreground="#999" />
+                                    <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="app:SettingsWindow+SlotRow">
+                                                <TextBlock Text="{Binding Line}" FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,12,0,0">
+            <Button Content="Refresh" Click="OnRefresh" />
+            <Button Content="Close" Click="OnClose" />
+        </StackPanel>
+    </Grid>
+</Window>

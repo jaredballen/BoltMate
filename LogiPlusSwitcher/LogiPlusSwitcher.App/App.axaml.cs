@@ -92,10 +92,29 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
+    private SettingsWindow? _settingsWindow;
+
     private void OpenSettings()
     {
-        // TODO: open settings window and flip activation policy to Regular so
-        // the dock icon shows. Tracked as new task.
+        if (_manager is null) return;
+
+        if (_settingsWindow is not null && _settingsWindow.IsVisible)
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+
+        // Show the dock icon for the duration of the settings window so users
+        // who Cmd-Tab can find us. Restore accessory mode on close.
+        MacActivationPolicy.ShowDockIcon();
+
+        _settingsWindow = new SettingsWindow(_manager);
+        _settingsWindow.Closed += (_, _) =>
+        {
+            _settingsWindow = null;
+            MacActivationPolicy.HideDockIcon();
+        };
+        _settingsWindow.Show();
     }
 
     private void ShowAbout()
