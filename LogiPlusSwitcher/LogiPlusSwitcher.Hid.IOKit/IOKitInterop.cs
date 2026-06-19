@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.IOKit;
 
 /// <summary>
 /// Native macOS IOKit + Core Foundation interop for opening IOHIDDevice

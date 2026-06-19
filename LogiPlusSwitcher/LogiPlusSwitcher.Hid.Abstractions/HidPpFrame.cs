@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace LogiPlusSwitcher.Core.HidPp;
+namespace LogiPlusSwitcher.Hid.Abstractions;
 
 /// <summary>
 /// A single HID++ wire frame (short, long, or DJ). Immutable.

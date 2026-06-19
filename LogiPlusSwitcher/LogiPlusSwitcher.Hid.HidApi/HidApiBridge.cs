@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.HidApi;
 
 /// <summary>
 /// Native-library bootstrap and macOS-specific configuration for libhidapi.
@@ -125,7 +125,7 @@ public static class HidApiBridge
         {
             // 1. Force libhidapi to run its first hid_init NOW — this resets
             //    device_open_options to 1 (exclusive) as a backward-compat default.
-            HidApi.Hid.Init();
+            global::HidApi.Hid.Init();
             // 2. Override to 0 (shared / non-exclusive). This persists for all
             //    subsequent hid_open_path calls because hid_init is now a no-op.
             hid_darwin_set_open_exclusive(0);

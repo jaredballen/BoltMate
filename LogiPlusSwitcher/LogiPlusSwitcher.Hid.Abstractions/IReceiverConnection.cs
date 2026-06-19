@@ -1,6 +1,4 @@
-using LogiPlusSwitcher.Core.HidPp;
-
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.Abstractions;
 
 /// <summary>
 /// An open, non-exclusive connection to a Bolt receiver's HID++ management

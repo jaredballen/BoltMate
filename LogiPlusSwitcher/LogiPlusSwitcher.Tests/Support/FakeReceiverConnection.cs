@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
 using LogiPlusSwitcher.Core.HidPp;
 
 namespace LogiPlusSwitcher.Tests.Support;

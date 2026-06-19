@@ -3,7 +3,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Reactive.Threading.Tasks;
 using DynamicData;
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
 using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.HidPp.Features;
 using LogiPlusSwitcher.Core.HidPp.Notifications;

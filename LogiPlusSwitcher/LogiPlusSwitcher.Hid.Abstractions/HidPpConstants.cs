@@ -1,4 +1,4 @@
-namespace LogiPlusSwitcher.Core.HidPp;
+namespace LogiPlusSwitcher.Hid.Abstractions;
 
 /// <summary>
 /// HID++ wire constants — report IDs, special device indexes, and the

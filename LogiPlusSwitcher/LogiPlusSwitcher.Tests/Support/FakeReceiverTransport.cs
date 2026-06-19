@@ -1,4 +1,4 @@
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
 
 namespace LogiPlusSwitcher.Tests.Support;
 

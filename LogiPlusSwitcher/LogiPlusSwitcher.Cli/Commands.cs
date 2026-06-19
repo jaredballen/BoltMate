@@ -2,7 +2,8 @@ using System.Reactive.Linq;
 using DynamicData;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
+using LogiPlusSwitcher.Hid.IOKit;
 using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.Switcher;
 using Microsoft.Extensions.Logging;
@@ -846,32 +847,32 @@ internal static class Commands
         // VID 0x046D (Logitech), PID 0xC548 (Bolt receiver). Filter by
         // UsagePage 0xFF00 + Usage 0x0001 done after enumeration since we
         // get a CFSet of all matching interfaces and pick the management one.
-        var manager = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, 0);
+        var manager = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, 0);
         if (manager == IntPtr.Zero) { Console.Error.WriteLine("IOHIDManagerCreate failed"); return 1; }
 
         try
         {
-            var match = LogiPlusSwitcher.Core.Hid.IOKitInterop.CreateMatchingDictionary(0x046D, 0xC548);
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerSetDeviceMatching(manager, match);
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(match);
+            var match = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CreateMatchingDictionary(0x046D, 0xC548);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerSetDeviceMatching(manager, match);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(match);
 
-            var open = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerOpen(manager, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            var open = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerOpen(manager, LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
             Console.WriteLine($"IOHIDManagerOpen result = 0x{open:X8}");
 
-            var set = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerCopyDevices(manager);
+            var set = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerCopyDevices(manager);
             if (set == IntPtr.Zero) { Console.Error.WriteLine("No matching IOHIDDevices found"); return 1; }
 
-            var count = (int)LogiPlusSwitcher.Core.Hid.IOKitInterop.CFSetGetCount(set);
+            var count = (int)LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFSetGetCount(set);
             Console.WriteLine($"Matched {count} HID interface(s) on the Bolt receiver.");
             var devices = new IntPtr[count];
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFSetGetValues(set, devices);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFSetGetValues(set, devices);
 
             IntPtr managementDevice = IntPtr.Zero;
             foreach (var dev in devices)
             {
                 if (dev == IntPtr.Zero) continue;
-                var usagePage = LogiPlusSwitcher.Core.Hid.IOKitInterop.GetInt32Property(dev, "PrimaryUsagePage");
-                var usage = LogiPlusSwitcher.Core.Hid.IOKitInterop.GetInt32Property(dev, "PrimaryUsage");
+                var usagePage = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.GetInt32Property(dev, "PrimaryUsagePage");
+                var usage = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.GetInt32Property(dev, "PrimaryUsage");
                 Console.WriteLine($"  interface: UsagePage=0x{usagePage:X4} Usage=0x{usage:X4}");
                 if (usagePage == 0xFF00 && usage == 0x0001) managementDevice = dev;
             }
@@ -879,14 +880,14 @@ internal static class Commands
             if (managementDevice == IntPtr.Zero)
             {
                 Console.Error.WriteLine("Could not find management interface (UsagePage 0xFF00, Usage 0x0001).");
-                LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(set);
                 return 1;
             }
 
             Console.WriteLine();
             Console.WriteLine("Opening management interface via IOHIDDeviceOpen(kIOHIDOptionsTypeNone)...");
-            var openResult = LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDDeviceOpen(
-                managementDevice, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
+            var openResult = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceOpen(
+                managementDevice, LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
             Console.WriteLine($"IOHIDDeviceOpen result = 0x{openResult:X8} ({(openResult == 0 ? "OK" : "FAIL")})");
 
             if (openResult != 0)
@@ -895,7 +896,7 @@ internal static class Commands
                 Console.WriteLine("Open failed. Common return values:");
                 Console.WriteLine("  0xE00002C5 = kIOReturnExclusiveAccess (someone else has it seized)");
                 Console.WriteLine("  0xE00002BC = kIOReturnNotPrivileged   (missing Input Monitoring permission)");
-                LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(set);
                 return 3;
             }
 
@@ -905,15 +906,15 @@ internal static class Commands
             Console.WriteLine("Press ENTER when done to close.");
             await Task.Run(() => Console.ReadLine(), ct);
 
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDDeviceClose(managementDevice, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(set);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceClose(managementDevice, LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(set);
             Console.WriteLine("Closed.");
             return 0;
         }
         finally
         {
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.IOHIDManagerClose(manager, LogiPlusSwitcher.Core.Hid.IOKitInterop.OptionsNone);
-            LogiPlusSwitcher.Core.Hid.IOKitInterop.CFRelease(manager);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerClose(manager, LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(manager);
         }
     }
 

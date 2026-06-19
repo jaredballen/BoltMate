@@ -1,9 +1,9 @@
 using HidApi;
-using LogiPlusSwitcher.Core.Bolt;
+using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.HidApi;
 
 /// <summary>
 /// libhidapi-backed transport. Wires up the macOS non-exclusive flag at
@@ -26,8 +26,8 @@ public sealed class HidApiReceiverTransport : IReceiverTransport
 
     public IReadOnlyList<BoltReceiverInfo> Enumerate()
     {
-        var infos = HidApi.Hid.Enumerate(BoltConstants.LogitechVendorId, BoltConstants.BoltReceiverProductId);
-        var result = BoltReceiverInfo.Filter(infos).ToList();
+        var infos = global::HidApi.Hid.Enumerate(BoltConstants.LogitechVendorId, BoltConstants.BoltReceiverProductId);
+        var result = HidApiDeviceInfoExtensions.ToBoltReceiverInfos(infos).ToList();
         _logger.LogDebug("Enumerated {Count} Bolt receiver management interface(s)", result.Count);
         return result;
     }

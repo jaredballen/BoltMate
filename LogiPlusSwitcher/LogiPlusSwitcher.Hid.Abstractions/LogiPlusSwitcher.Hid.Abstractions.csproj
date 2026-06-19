@@ -4,20 +4,11 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>LogiPlusSwitcher.Core</RootNamespace>
-    <AssemblyName>LogiPlusSwitcher.Core</AssemblyName>
+    <RootNamespace>LogiPlusSwitcher.Hid.Abstractions</RootNamespace>
+    <AssemblyName>LogiPlusSwitcher.Hid.Abstractions</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\LogiPlusSwitcher.Hid.Abstractions\LogiPlusSwitcher.Hid.Abstractions.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Using Include="LogiPlusSwitcher.Hid.Abstractions" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="DynamicData" Version="9.4.31" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="Nerdbank.GitVersioning" Version="3.9.50">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

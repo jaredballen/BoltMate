@@ -1,9 +1,9 @@
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.Abstractions;
 
 /// <summary>
 /// Discovers Bolt receivers and opens a HID++ management-interface connection
-/// to one of them. Abstracted so we can swap the underlying HID library
-/// (libhidapi today, WinRT HID for the eventual Microsoft Store build, etc.).
+/// to one of them. Abstracted so we can swap the underlying HID backend per
+/// platform (IOKit on macOS, libhidapi on Win/Linux).
 /// </summary>
 public interface IReceiverTransport
 {

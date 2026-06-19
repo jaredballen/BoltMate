@@ -11,8 +11,8 @@ using LogiPlusSwitcher.App.Updates;
 using Avalonia.Threading;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
-using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.Switcher;
+using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -48,12 +48,13 @@ public partial class App : Application
         log.LogInformation("LogiPlusSwitcher.App starting (Avalonia 12)");
 
         _settings = AppSettings.Load();
-        HidApiBridge.EnsureNativeLibraryResolver();
-        HidApiBridge.SetMacOsNonExclusive();
-
-        // macOS picks IOKit-direct transport (libhidapi opens break device
-        // firmware buttons); Win/Linux stay on libhidapi.
-        var transport = ReceiverTransportFactory.Create(_loggerFactory);
+        // Composition root for the HID transport.
+        // macOS uses IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
+        // breaks device firmware buttons — see project_mac_hid_open_breaks_device
+        // memory). Win/Linux use the libhidapi-backed transport.
+        IReceiverTransport transport = OperatingSystem.IsMacOS()
+            ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(_loggerFactory)
+            : new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
         _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
 
         _disposables.Add(_manager);

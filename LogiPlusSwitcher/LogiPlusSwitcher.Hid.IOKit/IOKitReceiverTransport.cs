@@ -1,9 +1,9 @@
 using System.Runtime.InteropServices;
-using LogiPlusSwitcher.Core.Bolt;
+using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.IOKit;
 
 /// <summary>
 /// macOS-only transport that bypasses libhidapi and talks to IOKit

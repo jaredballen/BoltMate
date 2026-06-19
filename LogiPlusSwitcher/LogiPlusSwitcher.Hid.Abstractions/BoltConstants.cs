@@ -1,4 +1,4 @@
-namespace LogiPlusSwitcher.Core.Bolt;
+namespace LogiPlusSwitcher.Hid.Abstractions;
 
 /// <summary>
 /// USB and HID identifiers for the Logitech Bolt receiver.

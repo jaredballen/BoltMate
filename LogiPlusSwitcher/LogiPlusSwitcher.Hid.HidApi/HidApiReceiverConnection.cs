@@ -2,11 +2,11 @@ using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using HidApi;
-using LogiPlusSwitcher.Core.HidPp;
+using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace LogiPlusSwitcher.Core.Hid;
+namespace LogiPlusSwitcher.Hid.HidApi;
 
 /// <summary>
 /// Wraps a libhidapi <see cref="Device"/> with a background read pump that

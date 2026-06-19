@@ -1,6 +1,6 @@
 using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
 using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.HidPp.Notifications;
 using LogiPlusSwitcher.Tests.Support;

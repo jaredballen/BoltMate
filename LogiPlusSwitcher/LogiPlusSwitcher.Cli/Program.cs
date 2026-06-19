@@ -1,5 +1,5 @@
 using LogiPlusSwitcher.Cli;
-using LogiPlusSwitcher.Core.Hid;
+using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 
 var verbose = args.Contains("--verbose") || args.Contains("-v");
@@ -7,10 +7,12 @@ args = args.Where(a => a is not ("--verbose" or "-v")).ToArray();
 
 using var loggerFactory = LoggerSetup.Create(verbose ? LogLevel.Debug : LogLevel.Information);
 
-HidApiBridge.EnsureNativeLibraryResolver();
-HidApiBridge.SetMacOsNonExclusive();
-
-var transport = ReceiverTransportFactory.Create(loggerFactory);
+// Composition root for the HID transport. macOS uses IOKit-direct (libhidapi
+// 0.15.0 ignores shared-access flag); Win/Linux use the libhidapi-backed
+// transport.
+IReceiverTransport transport = OperatingSystem.IsMacOS()
+    ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(loggerFactory)
+    : new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(loggerFactory);
 Commands.LoggerFactory = loggerFactory;
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>

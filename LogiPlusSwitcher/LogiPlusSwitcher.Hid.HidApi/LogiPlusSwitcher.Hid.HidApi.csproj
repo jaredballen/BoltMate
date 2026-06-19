@@ -4,8 +4,8 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>LogiPlusSwitcher.Core</RootNamespace>
-    <AssemblyName>LogiPlusSwitcher.Core</AssemblyName>
+    <RootNamespace>LogiPlusSwitcher.Hid.HidApi</RootNamespace>
+    <AssemblyName>LogiPlusSwitcher.Hid.HidApi</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,11 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Using Include="LogiPlusSwitcher.Hid.Abstractions" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="DynamicData" Version="9.4.31" />
+    <PackageReference Include="HidApi.Net" Version="1.2.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
     <PackageReference Include="Nerdbank.GitVersioning" Version="3.9.50">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
