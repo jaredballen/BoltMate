@@ -32,6 +32,22 @@ public sealed class BoltReceiver : IDisposable
     /// <summary>Snapshot of paired devices known on this receiver.</summary>
     public IReadOnlyCollection<PairedDevice> Devices => _devices.Values.ToList();
 
+    /// <summary>
+    /// Returns the <see cref="PairedDevice"/> for <paramref name="deviceIndex"/>,
+    /// creating an empty one if we have not seen this slot yet. Tests use this
+    /// to seed feature indices; production code calls it indirectly via
+    /// <see cref="DiscoverFeaturesAsync"/> and the 0x41 notification path.
+    /// </summary>
+    public PairedDevice EnsureSlot(byte deviceIndex) =>
+        _devices.GetOrAdd(deviceIndex, idx => new PairedDevice(idx));
+
+    /// <summary>
+    /// Returns the <see cref="PairedDevice"/> for <paramref name="deviceIndex"/>
+    /// without creating one if absent.
+    /// </summary>
+    public PairedDevice? TryGetDevice(byte deviceIndex) =>
+        _devices.TryGetValue(deviceIndex, out var device) ? device : null;
+
     /// <summary>Fires when a 0x41 DJ_PAIRING notification reports a slot transitioning up.</summary>
     public event EventHandler<PairedDevice>? DeviceLinkEstablished;
 
