@@ -12,14 +12,14 @@ public class HidPpClientTests
         var conn = new FakeReceiverConnection();
         // Auto-reply: when the client writes a request, echo back a "reply"
         // with the same device, feature, fn|swid byte and a recognisable payload.
-        conn.OnWrite += outFrame =>
+        using var _ = conn.RespondWith(outFrame =>
         {
             var reply = HidPpFrame.Short(
                 outFrame.DeviceIndex, outFrame.FeatureIndex,
                 outFrame.Function, outFrame.SwId,
                 parameters: [0xAB, 0xCD]);
             conn.Inject(reply);
-        };
+        });
 
         using var client = new HidPpClient(conn);
         var reply = await client.RequestAsync(deviceIndex: 0x01, featureIndex: 0x05, function: 0x2);
@@ -34,7 +34,7 @@ public class HidPpClientTests
     public async Task Error_reply_throws_HidPpException_with_decoded_code()
     {
         var conn = new FakeReceiverConnection();
-        conn.OnWrite += outFrame =>
+        using var _ = conn.RespondWith(outFrame =>
         {
             // HID++ 2.0 error: feature_index 0x8F, function|swid echoed, payload [origFeatureIdx, errorCode, ...].
             var error = HidPpFrame.Short(
@@ -44,7 +44,7 @@ public class HidPpClientTests
                 swId: outFrame.SwId,
                 parameters: [outFrame.FeatureIndex, (byte)HidPpErrorCode.Unsupported]);
             conn.Inject(error);
-        };
+        });
 
         using var client = new HidPpClient(conn);
 
@@ -77,7 +77,7 @@ public class HidPpClientTests
         using var client = new HidPpClient(conn);
 
         HidPpFrame? observed = null;
-        client.NotificationReceived += (_, frame) => observed = frame;
+        using var sub = client.Notifications.Subscribe(frame => observed = frame);
 
         // Logi Options+ style: sw_id = 1 (not ours which is 0x0E)
         var foreign = HidPpFrame.Long(deviceIndex: 0x02, featureIndex: 0x09, function: 0x1, swId: 0x01);
@@ -95,7 +95,7 @@ public class HidPpClientTests
         using var client = new HidPpClient(conn);
 
         HidPpFrame? observed = null;
-        client.NotificationReceived += (_, frame) => observed = frame;
+        using var sub = client.Notifications.Subscribe(frame => observed = frame);
 
         // Stale reply (our sw_id) with no pending request — should NOT silently
         // get dropped; route to notifications so it's at least observable.

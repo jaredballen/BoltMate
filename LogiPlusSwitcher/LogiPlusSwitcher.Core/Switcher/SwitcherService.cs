@@ -1,62 +1,61 @@
+using System.Reactive.Disposables;
+using System.Reactive.Subjects;
+using System.Reactive.Linq;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.HidPp.Notifications;
 
 namespace LogiPlusSwitcher.Core.Switcher;
 
 /// <summary>
-/// Orchestrator — listens for any host-switch trigger on the receiver (either
+/// Orchestrator — listens for any host-switch trigger on a receiver (either
 /// a diverted Easy-Switch press OR a Logi Options+ Flow write) and fans the
 /// switch out to every OTHER paired device that supports CHANGE_HOST.
 /// </summary>
 /// <remarks>
 /// Two trigger paths:
 /// <list type="number">
-/// <item><description><see cref="BoltReceiver.HostSwitchPressed"/> — diverted CID,
+/// <item><description><see cref="BoltReceiver.HostSwitchPresses"/> — diverted CID,
 /// target host arrives in payload BEFORE the originating device disconnects.</description></item>
-/// <item><description><see cref="BoltReceiver.FlowHostSwitchDetected"/> — Logi+ wrote
+/// <item><description><see cref="BoltReceiver.FlowHostSwitches"/> — Logi+ wrote
 /// CHANGE_HOST to a mouse during a Flow handover; we echo it to siblings.</description></item>
 /// </list>
-/// In both cases the originating slot is excluded from the fan-out — it's
-/// either already switching itself, or Logi+ already wrote to it.
+/// In both cases the originating slot is excluded from the fan-out.
 /// </remarks>
 public sealed class SwitcherService : IDisposable
 {
     private readonly BoltReceiver _receiver;
-    private bool _disposed;
+    private readonly Subject<FanOutEvent> _fanOuts = new();
+    private readonly CompositeDisposable _disposables = new();
 
-    /// <summary>Fires once for each device a fan-out write was issued to.</summary>
-    public event EventHandler<FanOutEvent>? FanOutIssued;
+    /// <summary>Stream of fan-out writes issued. One per sibling device per trigger.</summary>
+    public IObservable<FanOutEvent> FanOuts => _fanOuts.AsObservable();
 
     public SwitcherService(BoltReceiver receiver)
     {
         _receiver = receiver;
-        _receiver.HostSwitchPressed += OnHostSwitchPressed;
-        _receiver.FlowHostSwitchDetected += OnFlowHostSwitchDetected;
+
+        _disposables.Add(_receiver.HostSwitchPresses.Subscribe(OnHostSwitchPressed));
+        _disposables.Add(_receiver.FlowHostSwitches.Subscribe(OnFlowHostSwitchDetected));
+        _disposables.Add(_fanOuts);
     }
 
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _receiver.HostSwitchPressed -= OnHostSwitchPressed;
-        _receiver.FlowHostSwitchDetected -= OnFlowHostSwitchDetected;
-    }
+    public void Dispose() => _disposables.Dispose();
 
-    private void OnHostSwitchPressed(object? sender, DivertedButtonsNotification press)
+    private void OnHostSwitchPressed(DivertedButtonsNotification press)
     {
         if (press.TargetHost is not { } host)
             return;
         FanOut(originatingSlot: press.DeviceIndex, targetHost: (byte)host, source: FanOutSource.EasySwitchPress);
     }
 
-    private void OnFlowHostSwitchDetected(object? sender, ChangeHostWriteSnoop snoop)
+    private void OnFlowHostSwitchDetected(ChangeHostWriteSnoop snoop)
     {
         FanOut(originatingSlot: snoop.DeviceIndex, targetHost: snoop.TargetHost, source: FanOutSource.FlowSnoop);
     }
 
     private void FanOut(byte originatingSlot, byte targetHost, FanOutSource source)
     {
-        foreach (var device in _receiver.Devices)
+        foreach (var device in _receiver.Devices.Items)
         {
             if (device.DeviceIndex == originatingSlot)
                 continue;
@@ -66,7 +65,7 @@ public sealed class SwitcherService : IDisposable
                 continue;
 
             if (_receiver.TrySwitchHost(device.DeviceIndex, targetHost))
-                FanOutIssued?.Invoke(this, new FanOutEvent(device, targetHost, source, originatingSlot));
+                _fanOuts.OnNext(new FanOutEvent(device, targetHost, source, originatingSlot));
         }
     }
 }

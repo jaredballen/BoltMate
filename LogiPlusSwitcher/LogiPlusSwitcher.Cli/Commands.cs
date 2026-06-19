@@ -1,6 +1,6 @@
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
-using LogiPlusSwitcher.Core.HidPp.Features;
 using LogiPlusSwitcher.Core.Switcher;
 
 namespace LogiPlusSwitcher.Cli;
@@ -17,6 +17,9 @@ internal static class Commands
         Console.WriteLine("  logiplus switch <host>              Switch ALL paired devices to host (0..2).");
         Console.WriteLine("  logiplus device <slot> switch <host>  Switch a single slot (1..6) to host (0..2).");
         Console.WriteLine("  logiplus diag                       Dump every raw HID++ frame on the wire.");
+        Console.WriteLine("  logiplus service install            Register as a background service / login agent.");
+        Console.WriteLine("  logiplus service uninstall          Remove the background registration.");
+        Console.WriteLine("  logiplus service status             Show service registration status.");
         Console.WriteLine("  logiplus help                       This message.");
     }
 
@@ -42,8 +45,8 @@ internal static class Commands
 
             // Settle a brief window for paired-device 0x41 notifications.
             using var enumWait = new ManualResetEventSlim(false);
-            receiver.DeviceLinkEstablished += (_, _) => enumWait.Set();
-            receiver.DeviceLinkLost += (_, _) => enumWait.Set();
+            using var linkUpSub = receiver.LinkEstablished.Subscribe(_ => enumWait.Set());
+            using var linkLostSub = receiver.LinkLost.Subscribe(_ => enumWait.Set());
             receiver.Start();
 
             using var settleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -58,7 +61,7 @@ internal static class Commands
             }
             catch (OperationCanceledException) { }
 
-            foreach (var device in receiver.Devices.OrderBy(d => d.DeviceIndex))
+            foreach (var device in receiver.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
             {
                 try
                 {
@@ -86,63 +89,46 @@ internal static class Commands
 
     public static async Task<int> RunMonitorAsync(IReceiverTransport transport, CancellationToken ct, bool dumpFrames = false)
     {
-        var switchers = new Dictionary<BoltReceiver, SwitcherService>();
+        var perReceiver = new Dictionary<string, ReceiverSubscriptions>();
 
         using var manager = new ReceiverManager(transport, pollInterval: TimeSpan.FromSeconds(2));
-        manager.AttachFailed += (_, ex) =>
-            Console.Error.WriteLine($"  !! attach failed: {ex.Message}");
+        using var attachFailSub = manager.AttachFailures.Subscribe(ex =>
+            Console.Error.WriteLine($"  !! attach failed: {ex.Message}"));
 
-        manager.ReceiverAttached += (_, receiver) =>
+        using var receiverChangesSub = manager.Receivers.Connect().Subscribe(changes =>
         {
-            Console.WriteLine($"  ** receiver attached: {receiver.Info.ProductString} (serial {receiver.Info.Serial})");
-
-            if (dumpFrames)
-                receiver.RawFrameReceived += (_, frame) =>
-                    Console.WriteLine($"  IN  [{receiver.Info.Serial}] {frame}");
-
-            receiver.DeviceLinkEstablished += (_, device) =>
+            foreach (var change in changes)
             {
-                Console.WriteLine($"  ++  [{receiver.Info.Serial}] slot {device.DeviceIndex} link UP wpid=0x{device.Wpid:X4}");
-                Task.Run(() => DiscoverAndDivertAsync(receiver, device.DeviceIndex, ct));
-            };
-            receiver.DeviceLinkLost += (_, device) =>
-                Console.WriteLine($"  --  [{receiver.Info.Serial}] slot {device.DeviceIndex} link LOST");
-            receiver.HostSwitchPressed += (_, ev) =>
-                Console.WriteLine($"  >>  [{receiver.Info.Serial}] Easy-Switch slot {ev.DeviceIndex} -> host {ev.TargetHost} (cid 0x{ev.PrimaryCid:X4})");
-            receiver.FlowHostSwitchDetected += (_, snoop) =>
-                Console.WriteLine($"  >>  [{receiver.Info.Serial}] Flow snoop: slot {snoop.DeviceIndex} -> host {snoop.TargetHost} (sw_id 0x{snoop.SwId:X1})");
+                switch (change.Reason)
+                {
+                    case ChangeReason.Add:
+                        var receiver = change.Current;
+                        Console.WriteLine($"  ** receiver attached: {receiver.Info.ProductString} (serial {receiver.Info.Serial})");
+                        perReceiver[receiver.Info.Path] = WireReceiver(receiver, ct, dumpFrames);
+                        break;
 
-            var switcher = new SwitcherService(receiver);
-            switcher.FanOutIssued += (_, ev) =>
-                Console.WriteLine($"  ->  [{receiver.Info.Serial}] fan-out host={ev.TargetHost} slot={ev.Target.DeviceIndex} src={ev.Source}");
-            switchers[receiver] = switcher;
-        };
-
-        manager.ReceiverDetached += (_, receiver) =>
-        {
-            Console.WriteLine($"  ** receiver detached: serial {receiver.Info.Serial}");
-            if (switchers.TryGetValue(receiver, out var switcher))
-            {
-                switcher.Dispose();
-                switchers.Remove(receiver);
+                    case ChangeReason.Remove:
+                        var path = change.Key;
+                        Console.WriteLine($"  ** receiver detached: serial {change.Current.Info.Serial}");
+                        if (perReceiver.Remove(path, out var subs))
+                            subs.Dispose();
+                        break;
+                }
             }
-        };
+        });
 
         Console.WriteLine("Monitoring. Hot-plug supported. Ctrl+C to stop.");
         try
         {
             await Task.Delay(Timeout.Infinite, ct);
         }
-        catch (OperationCanceledException)
-        {
-            // Expected on Ctrl+C.
-        }
+        catch (OperationCanceledException) { }
 
         Console.WriteLine();
         Console.WriteLine("Restoring CID divert state on all receivers...");
-        foreach (var receiver in manager.Receivers)
+        foreach (var receiver in manager.Receivers.Items)
         {
-            foreach (var device in receiver.Devices)
+            foreach (var device in receiver.Devices.Items)
             {
                 try
                 {
@@ -155,10 +141,38 @@ internal static class Commands
             }
         }
 
-        foreach (var switcher in switchers.Values)
-            switcher.Dispose();
+        foreach (var subs in perReceiver.Values)
+            subs.Dispose();
 
         return 0;
+    }
+
+    private static ReceiverSubscriptions WireReceiver(BoltReceiver receiver, CancellationToken ct, bool dumpFrames)
+    {
+        var subs = new ReceiverSubscriptions();
+
+        if (dumpFrames)
+            subs.Add(receiver.RawFrames.Subscribe(frame =>
+                Console.WriteLine($"  IN  [{receiver.Info.Serial}] {frame}")));
+
+        subs.Add(receiver.LinkEstablished.Subscribe(device =>
+        {
+            Console.WriteLine($"  ++  [{receiver.Info.Serial}] slot {device.DeviceIndex} link UP wpid=0x{device.Wpid:X4}");
+            Task.Run(() => DiscoverAndDivertAsync(receiver, device.DeviceIndex, ct));
+        }));
+        subs.Add(receiver.LinkLost.Subscribe(device =>
+            Console.WriteLine($"  --  [{receiver.Info.Serial}] slot {device.DeviceIndex} link LOST")));
+        subs.Add(receiver.HostSwitchPresses.Subscribe(ev =>
+            Console.WriteLine($"  >>  [{receiver.Info.Serial}] Easy-Switch slot {ev.DeviceIndex} -> host {ev.TargetHost} (cid 0x{ev.PrimaryCid:X4})")));
+        subs.Add(receiver.FlowHostSwitches.Subscribe(snoop =>
+            Console.WriteLine($"  >>  [{receiver.Info.Serial}] Flow snoop: slot {snoop.DeviceIndex} -> host {snoop.TargetHost} (sw_id 0x{snoop.SwId:X1})")));
+
+        var switcher = new SwitcherService(receiver);
+        subs.Add(switcher);
+        subs.Add(switcher.FanOuts.Subscribe(ev =>
+            Console.WriteLine($"  ->  [{receiver.Info.Serial}] fan-out host={ev.TargetHost} slot={ev.Target.DeviceIndex} src={ev.Source}")));
+
+        return subs;
     }
 
     public static async Task<int> RunSwitchAllAsync(IReceiverTransport transport, byte targetHost, CancellationToken ct)
@@ -175,12 +189,12 @@ internal static class Commands
         using var receiver = new BoltReceiver(info, connection);
 
         using var settled = new ManualResetEventSlim(false);
-        receiver.DeviceLinkEstablished += (_, _) => settled.Set();
+        using var sub = receiver.LinkEstablished.Subscribe(_ => settled.Set());
         receiver.Start();
         settled.Wait(TimeSpan.FromMilliseconds(750), ct);
 
         var sent = 0;
-        foreach (var device in receiver.Devices)
+        foreach (var device in receiver.Devices.Items)
         {
             try
             {
@@ -220,10 +234,10 @@ internal static class Commands
         using var receiver = new BoltReceiver(info, connection);
 
         using var settled = new ManualResetEventSlim(false);
-        receiver.DeviceLinkEstablished += (_, ev) =>
+        using var sub = receiver.LinkEstablished.Subscribe(device =>
         {
-            if (ev.DeviceIndex == slot) settled.Set();
-        };
+            if (device.DeviceIndex == slot) settled.Set();
+        });
         receiver.Start();
         settled.Wait(TimeSpan.FromMilliseconds(750), ct);
 
@@ -275,6 +289,18 @@ internal static class Commands
         catch (Exception ex)
         {
             Console.Error.WriteLine($"      discover slot {deviceIndex} failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Bag of per-receiver disposables for the monitor command.</summary>
+    private sealed class ReceiverSubscriptions : IDisposable
+    {
+        private readonly List<IDisposable> _items = new();
+        public void Add(IDisposable d) => _items.Add(d);
+        public void Dispose()
+        {
+            foreach (var d in _items) try { d.Dispose(); } catch { /* swallow */ }
+            _items.Clear();
         }
     }
 }

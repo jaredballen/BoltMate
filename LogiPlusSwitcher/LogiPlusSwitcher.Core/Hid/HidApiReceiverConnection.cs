@@ -1,3 +1,6 @@
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using HidApi;
 using LogiPlusSwitcher.Core.HidPp;
 
@@ -5,21 +8,29 @@ namespace LogiPlusSwitcher.Core.Hid;
 
 /// <summary>
 /// Wraps a libhidapi <see cref="Device"/> with a background read pump that
-/// parses inbound bytes into <see cref="HidPpFrame"/> events.
+/// parses inbound bytes into <see cref="HidPpFrame"/>s and pushes them onto
+/// the <see cref="InboundFrames"/> stream.
 /// </summary>
 internal sealed class HidApiReceiverConnection : IReceiverConnection
 {
     private readonly Device _device;
     private readonly object _gate = new();
+    private readonly Subject<HidPpFrame> _frames = new();
+    private readonly Subject<Exception> _readErrors = new();
+    private readonly CompositeDisposable _disposables = new();
     private CancellationTokenSource? _cts;
     private Task? _pump;
 
-    public event EventHandler<HidPpFrame>? FrameReceived;
-    public event EventHandler<Exception>? ReadError;
+    public IObservable<HidPpFrame> InboundFrames => _frames.AsObservable();
+    public IObservable<Exception> ReadErrors => _readErrors.AsObservable();
 
     public HidApiReceiverConnection(Device device)
     {
         _device = device;
+        _disposables.Add(_frames);
+        _disposables.Add(_readErrors);
+        _disposables.Add(Disposable.Create(StopAndWait));
+        _disposables.Add(Disposable.Create(_device.Dispose));
     }
 
     public void Write(HidPpFrame frame)
@@ -43,7 +54,11 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
         }
     }
 
-    public void Stop()
+    public void Stop() => StopAndWait();
+
+    public void Dispose() => _disposables.Dispose();
+
+    private void StopAndWait()
     {
         CancellationTokenSource? cts;
         Task? pump;
@@ -58,12 +73,6 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
         cts?.Cancel();
         try { pump?.Wait(TimeSpan.FromSeconds(1)); } catch { /* swallow */ }
         cts?.Dispose();
-    }
-
-    public void Dispose()
-    {
-        Stop();
-        _device.Dispose();
     }
 
     private void Pump(CancellationToken token)
@@ -84,11 +93,11 @@ internal sealed class HidApiReceiverConnection : IReceiverConnection
 
                 var frame = HidPpFrame.TryParse(buffer[..read]);
                 if (frame is { } f)
-                    FrameReceived?.Invoke(this, f);
+                    _frames.OnNext(f);
             }
             catch (Exception ex) when (!token.IsCancellationRequested)
             {
-                ReadError?.Invoke(this, ex);
+                _readErrors.OnNext(ex);
                 return;
             }
         }

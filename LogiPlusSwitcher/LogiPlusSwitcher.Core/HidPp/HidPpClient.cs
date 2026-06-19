@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using LogiPlusSwitcher.Core.Hid;
 
 namespace LogiPlusSwitcher.Core.HidPp;
@@ -8,7 +11,7 @@ namespace LogiPlusSwitcher.Core.HidPp;
 /// <see cref="IReceiverConnection"/>. Outbound requests are stamped with our
 /// software id (<see cref="HidPpConstants.OurSwId"/>); replies are matched
 /// by (deviceIndex, function|swid byte). Frames whose sw_id is not ours are
-/// surfaced as notifications.
+/// surfaced on <see cref="Notifications"/>.
 /// </summary>
 /// <remarks>
 /// Requests to a single device are serialised by a per-slot semaphore so that
@@ -21,11 +24,13 @@ public sealed class HidPpClient : IDisposable
     private readonly IReceiverConnection _connection;
     private readonly ConcurrentDictionary<byte, SemaphoreSlim> _deviceLocks = new();
     private readonly ConcurrentDictionary<int, TaskCompletionSource<HidPpFrame>> _pending = new();
+    private readonly Subject<HidPpFrame> _notifications = new();
+    private readonly CompositeDisposable _disposables = new();
     private readonly byte _swId;
     private bool _disposed;
 
-    /// <summary>Notifications — frames from a device whose sw_id is not ours.</summary>
-    public event EventHandler<HidPpFrame>? NotificationReceived;
+    /// <summary>Hot stream of inbound frames whose sw_id is not ours (device notifications + foreign writes).</summary>
+    public IObservable<HidPpFrame> Notifications => _notifications.AsObservable();
 
     /// <summary>The connection this client wraps.</summary>
     public IReceiverConnection Connection => _connection;
@@ -40,7 +45,19 @@ public sealed class HidPpClient : IDisposable
 
         _connection = connection;
         _swId = swId;
-        _connection.FrameReceived += OnFrameReceived;
+
+        _disposables.Add(_connection.InboundFrames.Subscribe(OnFrame));
+        _disposables.Add(_notifications);
+        _disposables.Add(Disposable.Create(() =>
+        {
+            foreach (var kvp in _pending)
+                kvp.Value.TrySetCanceled();
+            _pending.Clear();
+
+            foreach (var sem in _deviceLocks.Values)
+                sem.Dispose();
+            _deviceLocks.Clear();
+        }));
     }
 
     /// <summary>
@@ -109,8 +126,8 @@ public sealed class HidPpClient : IDisposable
     }
 
     /// <summary>
-    /// Sends a fire-and-forget HID++ frame (e.g. receiver register writes or
-    /// CHANGE_HOST setCurrentHost that don't yield a reply we care about).
+    /// Sends a fire-and-forget HID++ frame (receiver register writes, CHANGE_HOST
+    /// setCurrentHost, etc.) that don't yield a reply we care about.
     /// </summary>
     public void SendOneWay(HidPpFrame frame)
     {
@@ -142,19 +159,10 @@ public sealed class HidPpClient : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-
-        _connection.FrameReceived -= OnFrameReceived;
-
-        foreach (var kvp in _pending)
-            kvp.Value.TrySetCanceled();
-        _pending.Clear();
-
-        foreach (var sem in _deviceLocks.Values)
-            sem.Dispose();
-        _deviceLocks.Clear();
+        _disposables.Dispose();
     }
 
-    private void OnFrameReceived(object? sender, HidPpFrame frame)
+    private void OnFrame(HidPpFrame frame)
     {
         // Error replies use feature_index 0x8F but preserve the original fn|swid byte.
         var key = MakeKey(frame.DeviceIndex, frame.FunctionAndSwId);
@@ -167,7 +175,7 @@ public sealed class HidPpClient : IDisposable
 
         // Anything else (device-originated notifications swid=0, Logi Options+ writes
         // with their swid, etc.) is a notification.
-        NotificationReceived?.Invoke(this, frame);
+        _notifications.OnNext(frame);
     }
 
     private static int MakeKey(byte deviceIndex, byte fnSwIdByte) =>

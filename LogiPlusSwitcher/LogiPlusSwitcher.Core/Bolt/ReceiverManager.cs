@@ -1,4 +1,7 @@
-using System.Collections.Concurrent;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
+using DynamicData;
 using LogiPlusSwitcher.Core.Hid;
 
 namespace LogiPlusSwitcher.Core.Bolt;
@@ -18,26 +21,21 @@ namespace LogiPlusSwitcher.Core.Bolt;
 public sealed class ReceiverManager : IDisposable
 {
     private readonly IReceiverTransport _transport;
-    private readonly ConcurrentDictionary<string, BoltReceiver> _receivers = new();
     private readonly Func<BoltReceiverInfo, IReceiverConnection, BoltReceiver> _factory;
-    private readonly Timer? _pollTimer;
+    private readonly SourceCache<BoltReceiver, string> _receiversCache;
+    private readonly Subject<Exception> _attachFailures = new();
+    private readonly CompositeDisposable _disposables = new();
     private readonly object _refreshGate = new();
     private bool _disposed;
 
     /// <summary>How often to re-enumerate USB devices.</summary>
     public TimeSpan PollInterval { get; }
 
-    /// <summary>Currently-attached receivers.</summary>
-    public IReadOnlyCollection<BoltReceiver> Receivers => _receivers.Values.ToList();
+    /// <summary>Live cache of currently-attached Bolt receivers, keyed by HID path.</summary>
+    public IObservableCache<BoltReceiver, string> Receivers { get; }
 
-    /// <summary>Fires immediately after a new receiver is opened and started.</summary>
-    public event EventHandler<BoltReceiver>? ReceiverAttached;
-
-    /// <summary>Fires just before a vanished receiver is disposed.</summary>
-    public event EventHandler<BoltReceiver>? ReceiverDetached;
-
-    /// <summary>Fires when an attach attempt throws (e.g. device disappeared mid-open).</summary>
-    public event EventHandler<Exception>? AttachFailed;
+    /// <summary>Stream of attach failures (open threw — device went away mid-open, OS error).</summary>
+    public IObservable<Exception> AttachFailures => _attachFailures.AsObservable();
 
     public ReceiverManager(
         IReceiverTransport transport,
@@ -48,9 +46,19 @@ public sealed class ReceiverManager : IDisposable
         _transport = transport;
         _factory = receiverFactory ?? ((info, conn) => new BoltReceiver(info, conn));
         PollInterval = pollInterval ?? TimeSpan.FromSeconds(2);
+        _receiversCache = new SourceCache<BoltReceiver, string>(r => r.Info.Path);
+        Receivers = _receiversCache.AsObservableCache();
+
+        _disposables.Add(_receiversCache);
+        _disposables.Add((IDisposable)Receivers);
+        _disposables.Add(_attachFailures);
+        _disposables.Add(Disposable.Create(DisposeAllReceivers));
 
         if (autoStart)
-            _pollTimer = new Timer(_ => SafeRefresh(), null, TimeSpan.Zero, PollInterval);
+        {
+            var timer = new Timer(_ => SafeRefresh(), null, TimeSpan.Zero, PollInterval);
+            _disposables.Add(timer);
+        }
     }
 
     /// <summary>
@@ -63,14 +71,16 @@ public sealed class ReceiverManager : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _disposables.Dispose();
+    }
 
-        _pollTimer?.Dispose();
-
-        foreach (var receiver in _receivers.Values)
+    private void DisposeAllReceivers()
+    {
+        foreach (var receiver in _receiversCache.Items)
         {
             try { receiver.Dispose(); } catch { /* swallow */ }
         }
-        _receivers.Clear();
+        _receiversCache.Clear();
     }
 
     private void SafeRefresh()
@@ -95,37 +105,29 @@ public sealed class ReceiverManager : IDisposable
         var currentPaths = new HashSet<string>(current.Select(i => i.Path));
 
         // Remove vanished receivers.
-        foreach (var (path, receiver) in _receivers.ToArray())
+        var removed = _receiversCache.Items.Where(r => !currentPaths.Contains(r.Info.Path)).ToArray();
+        foreach (var receiver in removed)
         {
-            if (currentPaths.Contains(path))
-                continue;
-            if (!_receivers.TryRemove(path, out var removed))
-                continue;
-            try { ReceiverDetached?.Invoke(this, removed); } catch { /* swallow */ }
-            try { removed.Dispose(); } catch { /* swallow */ }
+            _receiversCache.Remove(receiver);
+            try { receiver.Dispose(); } catch { /* swallow */ }
         }
 
         // Add new receivers.
         foreach (var info in current)
         {
-            if (_receivers.ContainsKey(info.Path))
+            if (_receiversCache.Lookup(info.Path).HasValue)
                 continue;
 
             try
             {
                 var connection = _transport.Open(info);
                 var receiver = _factory(info, connection);
-                if (!_receivers.TryAdd(info.Path, receiver))
-                {
-                    receiver.Dispose();
-                    continue;
-                }
+                _receiversCache.AddOrUpdate(receiver);
                 receiver.Start();
-                ReceiverAttached?.Invoke(this, receiver);
             }
             catch (Exception ex)
             {
-                AttachFailed?.Invoke(this, ex);
+                _attachFailures.OnNext(ex);
             }
         }
     }

@@ -1,3 +1,4 @@
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Tests.Support;
 using Xunit;
@@ -13,36 +14,28 @@ public class ReceiverManagerTests
         transport.AddReceiver("/test/bolt-0", "SER-0");
         transport.AddReceiver("/test/bolt-1", "SER-1");
 
-        var attached = new List<BoltReceiver>();
         using var mgr = new ReceiverManager(transport, autoStart: false);
-        mgr.ReceiverAttached += (_, r) => attached.Add(r);
-
         mgr.Refresh();
 
-        Assert.Equal(2, attached.Count);
         Assert.Equal(2, mgr.Receivers.Count);
-        Assert.Equal(new[] { "SER-0", "SER-1" }, mgr.Receivers.Select(r => r.Info.Serial).OrderBy(s => s));
+        var serials = mgr.Receivers.Items.Select(r => r.Info.Serial).OrderBy(s => s).ToArray();
+        Assert.Equal(new[] { "SER-0", "SER-1" }, serials);
     }
 
     [Fact]
-    public void Receiver_unplug_fires_detached_and_disposes()
+    public void Receiver_unplug_removes_from_cache_and_disposes()
     {
         var transport = new FakeReceiverTransport();
         transport.AddReceiver("/test/bolt-0", "SER-0");
 
         using var mgr = new ReceiverManager(transport, autoStart: false);
         mgr.Refresh();
-        var initial = mgr.Receivers.Single();
-
-        BoltReceiver? detached = null;
-        mgr.ReceiverDetached += (_, r) => detached = r;
+        var initial = mgr.Receivers.Items.Single();
 
         transport.RemoveReceiver("/test/bolt-0");
         mgr.Refresh();
 
-        Assert.NotNull(detached);
-        Assert.Same(initial, detached);
-        Assert.Empty(mgr.Receivers);
+        Assert.Empty(mgr.Receivers.Items);
     }
 
     [Fact]
@@ -53,21 +46,21 @@ public class ReceiverManagerTests
 
         using var mgr = new ReceiverManager(transport, autoStart: false);
         mgr.Refresh();
-        var first = mgr.Receivers.Single();
+        var first = mgr.Receivers.Items.Single();
 
         transport.RemoveReceiver("/test/bolt-0");
         mgr.Refresh();
-        Assert.Empty(mgr.Receivers);
+        Assert.Empty(mgr.Receivers.Items);
 
         transport.AddReceiver("/test/bolt-0", "SER-0");
         mgr.Refresh();
 
-        var second = mgr.Receivers.Single();
+        var second = mgr.Receivers.Items.Single();
         Assert.NotSame(first, second);
     }
 
     [Fact]
-    public void Attach_failure_surfaces_via_AttachFailed_event_without_killing_manager()
+    public void Attach_failure_surfaces_via_AttachFailures_stream_without_killing_manager()
     {
         var transport = new FakeReceiverTransport();
         transport.AddReceiver("/test/bolt-0", "SER-0");
@@ -85,15 +78,15 @@ public class ReceiverManagerTests
                     throw new InvalidOperationException("simulated open failure");
                 return new BoltReceiver(info, conn);
             });
-        mgr.AttachFailed += (_, ex) => observed = ex;
+        using var sub = mgr.AttachFailures.Subscribe(ex => observed = ex);
 
         mgr.Refresh();
         Assert.NotNull(observed);
-        Assert.Empty(mgr.Receivers);
+        Assert.Empty(mgr.Receivers.Items);
 
         // Next refresh should retry and succeed.
         mgr.Refresh();
-        Assert.Single(mgr.Receivers);
+        Assert.Single(mgr.Receivers.Items);
     }
 
     [Fact]
@@ -102,14 +95,21 @@ public class ReceiverManagerTests
         var transport = new FakeReceiverTransport();
         transport.AddReceiver("/test/bolt-0", "SER-0");
 
-        var attaches = 0;
+        var adds = 0;
         using var mgr = new ReceiverManager(transport, autoStart: false);
-        mgr.ReceiverAttached += (_, _) => attaches++;
+        using var sub = mgr.Receivers.Connect()
+            .Subscribe(changes =>
+            {
+                foreach (var c in changes)
+                {
+                    if (c.Reason == ChangeReason.Add) adds++;
+                }
+            });
 
         mgr.Refresh();
         mgr.Refresh();
         mgr.Refresh();
 
-        Assert.Equal(1, attaches);
+        Assert.Equal(1, adds);
     }
 }

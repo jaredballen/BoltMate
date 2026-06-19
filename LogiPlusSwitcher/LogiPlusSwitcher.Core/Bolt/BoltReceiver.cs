@@ -1,4 +1,7 @@
-using System.Collections.Concurrent;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
+using DynamicData;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
 using LogiPlusSwitcher.Core.HidPp.Features;
@@ -8,16 +11,21 @@ namespace LogiPlusSwitcher.Core.Bolt;
 
 /// <summary>
 /// High-level controller for a single Bolt receiver. Owns the underlying HID
-/// connection, the HID++ client, and the paired-device table. Routes inbound
-/// notifications to the right parsers and exposes app-level events.
+/// connection, the HID++ client, and the paired-device cache. Routes inbound
+/// notifications to the right parsers and exposes app-level streams.
 /// </summary>
 public sealed class BoltReceiver : IDisposable
 {
     private readonly IReceiverConnection _connection;
     private readonly HidPpClient _client;
-    private readonly ConcurrentDictionary<byte, PairedDevice> _devices = new();
+    private readonly SourceCache<PairedDevice, byte> _devicesCache;
+    private readonly Subject<DivertedButtonsNotification> _hostSwitchPressed = new();
+    private readonly Subject<ChangeHostWriteSnoop> _flowHostSwitchDetected = new();
+    private readonly Subject<HidPpFrame> _rawFrames = new();
+    private readonly Subject<PairedDevice> _linkEstablished = new();
+    private readonly Subject<PairedDevice> _linkLost = new();
+    private readonly CompositeDisposable _disposables = new();
     private bool _started;
-    private bool _disposed;
 
     public BoltReceiverInfo Info { get; }
 
@@ -29,59 +37,57 @@ public sealed class BoltReceiver : IDisposable
     /// <summary>The HID++ client (escape hatch — most callers use the typed services above).</summary>
     public HidPpClient Client => _client;
 
-    /// <summary>Snapshot of paired devices known on this receiver.</summary>
-    public IReadOnlyCollection<PairedDevice> Devices => _devices.Values.ToList();
+    /// <summary>Live cache of paired devices on this receiver, keyed by slot index 1..6.</summary>
+    public IObservableCache<PairedDevice, byte> Devices { get; }
 
     /// <summary>
-    /// Returns the <see cref="PairedDevice"/> for <paramref name="deviceIndex"/>,
-    /// creating an empty one if we have not seen this slot yet. Tests use this
-    /// to seed feature indices; production code calls it indirectly via
-    /// <see cref="DiscoverFeaturesAsync"/> and the 0x41 notification path.
-    /// </summary>
-    public PairedDevice EnsureSlot(byte deviceIndex) =>
-        _devices.GetOrAdd(deviceIndex, idx => new PairedDevice(idx));
-
-    /// <summary>
-    /// Returns the <see cref="PairedDevice"/> for <paramref name="deviceIndex"/>
-    /// without creating one if absent.
-    /// </summary>
-    public PairedDevice? TryGetDevice(byte deviceIndex) =>
-        _devices.TryGetValue(deviceIndex, out var device) ? device : null;
-
-    /// <summary>Fires when a 0x41 DJ_PAIRING notification reports a slot transitioning up.</summary>
-    public event EventHandler<PairedDevice>? DeviceLinkEstablished;
-
-    /// <summary>Fires when a 0x41 DJ_PAIRING notification reports a slot losing its link.</summary>
-    public event EventHandler<PairedDevice>? DeviceLinkLost;
-
-    /// <summary>
-    /// Fires when a diverted Easy-Switch CID press is observed. Payload's
+    /// Stream of diverted Easy-Switch CID presses. Payload's
     /// <see cref="DivertedButtonsNotification.TargetHost"/> is the host the
     /// device is about to switch to.
     /// </summary>
-    public event EventHandler<DivertedButtonsNotification>? HostSwitchPressed;
+    public IObservable<DivertedButtonsNotification> HostSwitchPresses =>
+        _hostSwitchPressed.AsObservable();
 
     /// <summary>
-    /// Fires when a HID++ <c>SetCurrentHost</c> write from another piece of
-    /// software (Logi Options+ doing a Flow handover) is seen on the wire.
+    /// Stream of foreign <c>SetCurrentHost</c> writes — Logi Options+ doing a
+    /// Mouse Flow handover that we want to fan out to siblings.
     /// </summary>
-    public event EventHandler<ChangeHostWriteSnoop>? FlowHostSwitchDetected;
+    public IObservable<ChangeHostWriteSnoop> FlowHostSwitches =>
+        _flowHostSwitchDetected.AsObservable();
 
-    /// <summary>Generic dump of every inbound frame — for diagnostics / CLI.</summary>
-    public event EventHandler<HidPpFrame>? RawFrameReceived;
+    /// <summary>Diagnostic dump of every inbound frame (CLI / debug).</summary>
+    public IObservable<HidPpFrame> RawFrames => _rawFrames.AsObservable();
+
+    /// <summary>Stream of slots that just gained a wireless link.</summary>
+    public IObservable<PairedDevice> LinkEstablished => _linkEstablished.AsObservable();
+
+    /// <summary>Stream of slots that just lost their wireless link.</summary>
+    public IObservable<PairedDevice> LinkLost => _linkLost.AsObservable();
 
     public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, HidPpClient? client = null)
     {
         Info = info;
         _connection = connection;
         _client = client ?? new HidPpClient(connection);
+        _devicesCache = new SourceCache<PairedDevice, byte>(d => d.DeviceIndex);
+
+        Devices = _devicesCache.AsObservableCache();
 
         Root = new RootService(_client);
         ChangeHost = new ChangeHostService(_client);
         HostsInfo = new HostsInfoService(_client);
         ReprogControls = new ReprogControlsService(_client);
 
-        _client.NotificationReceived += OnNotificationReceived;
+        _disposables.Add(_client.Notifications.Subscribe(OnNotification));
+        _disposables.Add(_devicesCache);
+        _disposables.Add((IDisposable)Devices);
+        _disposables.Add(_hostSwitchPressed);
+        _disposables.Add(_flowHostSwitchDetected);
+        _disposables.Add(_rawFrames);
+        _disposables.Add(_linkEstablished);
+        _disposables.Add(_linkLost);
+        _disposables.Add(_client);
+        _disposables.Add(_connection);
     }
 
     /// <summary>
@@ -100,26 +106,66 @@ public sealed class BoltReceiver : IDisposable
     }
 
     /// <summary>
+    /// Returns the cached <see cref="PairedDevice"/> for a slot, or null.
+    /// Mutations to the returned instance should be followed by
+    /// <see cref="RefreshSlot"/> so subscribers see the change.
+    /// </summary>
+    public PairedDevice? TryGetDevice(byte deviceIndex) =>
+        _devicesCache.Lookup(deviceIndex).HasValue
+            ? _devicesCache.Lookup(deviceIndex).Value
+            : null;
+
+    /// <summary>
+    /// Returns the cached <see cref="PairedDevice"/> for a slot, creating an
+    /// empty one if it does not yet exist (e.g. tests seeding state, or the
+    /// post-link-up discovery flow caching feature indices). Subscribers of
+    /// <see cref="Devices"/> see an Add when this creates a new entry.
+    /// </summary>
+    public PairedDevice EnsureSlot(byte deviceIndex)
+    {
+        var existing = _devicesCache.Lookup(deviceIndex);
+        if (existing.HasValue)
+            return existing.Value;
+
+        var device = new PairedDevice(deviceIndex);
+        _devicesCache.AddOrUpdate(device);
+        return device;
+    }
+
+    /// <summary>
+    /// Notifies <see cref="Devices"/> subscribers that a slot's properties
+    /// have changed (DynamicData refresh — same identity, mutated fields).
+    /// </summary>
+    public void RefreshSlot(byte deviceIndex)
+    {
+        var entry = _devicesCache.Lookup(deviceIndex);
+        if (entry.HasValue)
+            _devicesCache.Refresh(entry.Value);
+    }
+
+    /// <summary>
     /// Resolves the feature indices we care about on a given slot. Safe to
     /// call multiple times — null feature indices are simply re-queried.
     /// </summary>
     public async Task DiscoverFeaturesAsync(byte deviceIndex, CancellationToken ct = default)
     {
-        var device = _devices.GetOrAdd(deviceIndex, _ => new PairedDevice(deviceIndex));
+        var device = EnsureSlot(deviceIndex);
 
         device.ReprogControlsIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.ReprogControlsV4, ct).ConfigureAwait(false))?.Index;
         device.ChangeHostIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.ChangeHost, ct).ConfigureAwait(false))?.Index;
         device.HostsInfoIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.HostsInfo, ct).ConfigureAwait(false))?.Index;
+
+        RefreshSlot(deviceIndex);
     }
 
     /// <summary>
     /// Enumerates the device's reprogrammable controls, finds the Easy-Switch
     /// CIDs that are divertable, and diverts them so subsequent presses fire
-    /// <see cref="HostSwitchPressed"/> instead of executing internally.
+    /// on <see cref="HostSwitchPresses"/> instead of executing internally.
     /// </summary>
     public async Task<IReadOnlyList<ushort>> DivertHostSwitchCidsAsync(byte deviceIndex, bool persistent = false, CancellationToken ct = default)
     {
-        var device = _devices.GetOrAdd(deviceIndex, _ => new PairedDevice(deviceIndex));
+        var device = EnsureSlot(deviceIndex);
         if (device.ReprogControlsIndex is not { } reprogIndex)
             return [];
 
@@ -144,6 +190,7 @@ public sealed class BoltReceiver : IDisposable
         }
 
         device.DivertedHostSwitchCids = diverted;
+        RefreshSlot(deviceIndex);
         return diverted;
     }
 
@@ -154,12 +201,10 @@ public sealed class BoltReceiver : IDisposable
     /// </summary>
     public async Task RestoreHostSwitchCidsAsync(byte deviceIndex, CancellationToken ct = default)
     {
-        if (!_devices.TryGetValue(deviceIndex, out var device))
-            return;
-        if (device.ReprogControlsIndex is not { } reprogIndex)
-            return;
-        if (device.DivertedHostSwitchCids.Count == 0)
-            return;
+        var device = TryGetDevice(deviceIndex);
+        if (device is null) return;
+        if (device.ReprogControlsIndex is not { } reprogIndex) return;
+        if (device.DivertedHostSwitchCids.Count == 0) return;
 
         foreach (var cid in device.DivertedHostSwitchCids)
         {
@@ -174,6 +219,7 @@ public sealed class BoltReceiver : IDisposable
             }
         }
         device.DivertedHostSwitchCids = [];
+        RefreshSlot(deviceIndex);
     }
 
     /// <summary>
@@ -181,63 +227,54 @@ public sealed class BoltReceiver : IDisposable
     /// </summary>
     public bool TrySwitchHost(byte deviceIndex, byte targetHost)
     {
-        if (!_devices.TryGetValue(deviceIndex, out var device))
-            return false;
-        if (device.ChangeHostIndex is not { } featureIndex)
-            return false;
+        var device = TryGetDevice(deviceIndex);
+        if (device is null) return false;
+        if (device.ChangeHostIndex is not { } featureIndex) return false;
 
         ChangeHost.SetCurrentHost(deviceIndex, featureIndex, targetHost);
         return true;
     }
 
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
+    public void Dispose() => _disposables.Dispose();
 
-        _client.NotificationReceived -= OnNotificationReceived;
-        _client.Dispose();
-        _connection.Dispose();
-    }
-
-    /// <summary>
-    /// Pumps an inbound notification through every parser we know and raises
-    /// the matching app-level event. A frame can be both a Bolt link-state
-    /// change AND match some other parser; we route by best fit.
-    /// </summary>
-    private void OnNotificationReceived(object? sender, HidPpFrame frame)
+    private void OnNotification(HidPpFrame frame)
     {
-        RawFrameReceived?.Invoke(this, frame);
+        _rawFrames.OnNext(frame);
 
         if (DjPairingNotification.TryParse(frame, out var pairing))
         {
-            var device = _devices.GetOrAdd(pairing.DeviceIndex, _ => new PairedDevice(pairing.DeviceIndex));
+            var device = EnsureSlot(pairing.DeviceIndex);
+            var previousLinkUp = device.LinkUp;
             device.Wpid = pairing.Wpid;
             device.LinkUp = pairing.LinkEstablished;
+            RefreshSlot(pairing.DeviceIndex);
 
-            if (pairing.LinkEstablished)
-                DeviceLinkEstablished?.Invoke(this, device);
-            else
-                DeviceLinkLost?.Invoke(this, device);
+            if (pairing.LinkEstablished && !previousLinkUp)
+                _linkEstablished.OnNext(device);
+            else if (!pairing.LinkEstablished && previousLinkUp)
+                _linkLost.OnNext(device);
+            // First-seen notification with LinkEstablished: emit as a link-up.
+            else if (pairing.LinkEstablished)
+                _linkEstablished.OnNext(device);
             return;
         }
 
         // Per-slot feature-index routing for HID++ 2.0 notifications.
-        if (_devices.TryGetValue(frame.DeviceIndex, out var slot))
-        {
-            if (slot.ReprogControlsIndex is { } reprogIndex
-                && DivertedButtonsNotification.TryParse(frame, reprogIndex, out var divertedPress))
-            {
-                HostSwitchPressed?.Invoke(this, divertedPress);
-                return;
-            }
+        var existing = _devicesCache.Lookup(frame.DeviceIndex);
+        if (!existing.HasValue) return;
+        var slot = existing.Value;
 
-            if (slot.ChangeHostIndex is { } changeHostIndex
-                && ChangeHostWriteSnoop.TryParse(frame, changeHostIndex, _client.SwId, out var snoop))
-            {
-                FlowHostSwitchDetected?.Invoke(this, snoop);
-                return;
-            }
+        if (slot.ReprogControlsIndex is { } reprogIndex
+            && DivertedButtonsNotification.TryParse(frame, reprogIndex, out var divertedPress))
+        {
+            _hostSwitchPressed.OnNext(divertedPress);
+            return;
+        }
+
+        if (slot.ChangeHostIndex is { } changeHostIndex
+            && ChangeHostWriteSnoop.TryParse(frame, changeHostIndex, _client.SwId, out var snoop))
+        {
+            _flowHostSwitchDetected.OnNext(snoop);
         }
     }
 }

@@ -1,3 +1,4 @@
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
@@ -28,25 +29,22 @@ public class BoltReceiverTests
     }
 
     [Fact]
-    public void Link_established_notification_creates_slot_and_fires_event()
+    public void Link_established_notification_creates_slot_and_appears_in_cache()
     {
         var conn = new FakeReceiverConnection();
         using var receiver = new BoltReceiver(Info(), conn);
 
-        PairedDevice? raised = null;
-        receiver.DeviceLinkEstablished += (_, device) => raised = device;
-
         var frame = HidPpFrame.TryParse([0x10, 0x03, 0x41, 0x10, 0x00, 0x12, 0x34])!.Value;
         conn.Inject(frame);
 
-        Assert.NotNull(raised);
-        Assert.Equal((byte)3, raised!.DeviceIndex);
-        Assert.True(raised.LinkUp);
-        Assert.Equal((ushort)0x3412, raised.Wpid);
+        var device = receiver.Devices.Lookup(3);
+        Assert.True(device.HasValue);
+        Assert.True(device.Value.LinkUp);
+        Assert.Equal((ushort)0x3412, device.Value.Wpid);
     }
 
     [Fact]
-    public void Link_lost_notification_fires_link_lost_event_and_flips_state()
+    public void Link_lost_notification_flips_LinkUp_state()
     {
         var conn = new FakeReceiverConnection();
         using var receiver = new BoltReceiver(Info(), conn);
@@ -55,13 +53,8 @@ public class BoltReceiverTests
         conn.Inject(HidPpFrame.TryParse([0x10, 0x02, 0x41, 0x10, 0x00, 0xAA, 0xBB])!.Value);
         Assert.True(receiver.TryGetDevice(2)!.LinkUp);
 
-        PairedDevice? raised = null;
-        receiver.DeviceLinkLost += (_, device) => raised = device;
-
         conn.Inject(HidPpFrame.TryParse([0x10, 0x02, 0x41, 0x10, 0x40, 0xAA, 0xBB])!.Value);
-
-        Assert.NotNull(raised);
-        Assert.False(raised!.LinkUp);
+        Assert.False(receiver.TryGetDevice(2)!.LinkUp);
     }
 
     [Fact]
@@ -74,7 +67,7 @@ public class BoltReceiverTests
         slot.ReprogControlsIndex = 0x07;
 
         DivertedButtonsNotification? raised = null;
-        receiver.HostSwitchPressed += (_, ev) => raised = ev;
+        using var sub = receiver.HostSwitchPresses.Subscribe(ev => raised = ev);
 
         var buffer = new byte[HidPpConstants.LongReportLength];
         buffer[0] = 0x11;
@@ -95,12 +88,11 @@ public class BoltReceiverTests
         var conn = new FakeReceiverConnection();
         using var receiver = new BoltReceiver(Info(), conn);
 
-        // Slot exists but ReprogControlsIndex is null.
         var slot = receiver.EnsureSlot(1);
         Assert.Null(slot.ReprogControlsIndex);
 
         var raised = false;
-        receiver.HostSwitchPressed += (_, _) => raised = true;
+        using var sub = receiver.HostSwitchPresses.Subscribe(_ => raised = true);
 
         var buffer = new byte[HidPpConstants.LongReportLength];
         buffer[0] = 0x11;
@@ -123,7 +115,7 @@ public class BoltReceiverTests
         slot.ChangeHostIndex = 0x09;
 
         ChangeHostWriteSnoop? raised = null;
-        receiver.FlowHostSwitchDetected += (_, snoop) => raised = snoop;
+        using var sub = receiver.FlowHostSwitches.Subscribe(snoop => raised = snoop);
 
         // Foreign write: fn=1, swid=1 (not ours which is 0x0E).
         var buffer = new byte[HidPpConstants.LongReportLength];
@@ -176,7 +168,7 @@ public class BoltReceiverTests
         var conn = new FakeReceiverConnection();
 
         // Auto-respond to IRoot getFeature(...) with a synthetic index based on the requested feature id.
-        conn.OnWrite += outFrame =>
+        using var _ = conn.RespondWith(outFrame =>
         {
             // IRoot getFeature is short, deviceIndex=N, featureIndex=0x00 (IRootIndex), fn=0.
             if (!outFrame.IsShort) return;
@@ -199,7 +191,7 @@ public class BoltReceiverTests
                 swId: outFrame.SwId,
                 parameters: [index, 0x00, 0x00]);
             conn.Inject(reply);
-        };
+        });
 
         using var receiver = new BoltReceiver(Info(), conn);
 

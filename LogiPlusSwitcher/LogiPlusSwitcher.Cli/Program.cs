@@ -33,6 +33,13 @@ return args[0].ToLowerInvariant() switch
                   && byte.TryParse(args[3], out var slotHost) =>
         await Commands.RunSwitchSlotAsync(transport, slot, slotHost, cts.Token),
 
+    "service" when args.Length == 2 && args[1].Equals("install", StringComparison.OrdinalIgnoreCase)
+        => ServiceCommands.Install(),
+    "service" when args.Length == 2 && args[1].Equals("uninstall", StringComparison.OrdinalIgnoreCase)
+        => ServiceCommands.Uninstall(),
+    "service" when args.Length == 2 && args[1].Equals("status", StringComparison.OrdinalIgnoreCase)
+        => ServiceCommands.Status(),
+
     "help" or "--help" or "-h" => Help(),
 
     _ => Unknown(args)

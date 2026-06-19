@@ -1,3 +1,4 @@
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Hid;
 using LogiPlusSwitcher.Core.HidPp;
@@ -18,12 +19,13 @@ public class SwitcherServiceTests
         public BoltReceiver Receiver { get; }
         public SwitcherService Switcher { get; }
         public List<FanOutEvent> FanOuts { get; } = new();
+        private readonly IDisposable _sub;
 
         public Fixture()
         {
             Receiver = new BoltReceiver(Info(), Conn);
             Switcher = new SwitcherService(Receiver);
-            Switcher.FanOutIssued += (_, ev) => FanOuts.Add(ev);
+            _sub = Switcher.FanOuts.Subscribe(ev => FanOuts.Add(ev));
         }
 
         public PairedDevice AddDevice(byte slot, byte? changeHostIndex = 0x09, byte? reprogControlsIndex = 0x07, bool linkUp = true)
@@ -62,6 +64,7 @@ public class SwitcherServiceTests
 
         public void Dispose()
         {
+            _sub.Dispose();
             Switcher.Dispose();
             Receiver.Dispose();
         }
