@@ -29,6 +29,14 @@ public sealed class AppSettings
     /// </summary>
     public string? PrimaryReceiverSerial { get; set; }
 
+    /// <summary>
+    /// Persisted host-binding cache — keyed by receiver serial, then device
+    /// index, then host slot. Lets us populate the topology view immediately
+    /// on startup before any device wakes up. Refreshed on every link-up.
+    /// </summary>
+    public Dictionary<string, Dictionary<byte, Dictionary<byte, PersistedHostBinding>>> CachedHostBindings { get; set; }
+        = new();
+
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 
@@ -68,7 +76,16 @@ public sealed class ReceiverSettings
     public byte[]? ParticipatingSlots { get; set; }
 }
 
+/// <summary>JSON-serializable mirror of <see cref="Bolt.HostBinding"/> for persistence.</summary>
+public sealed class PersistedHostBinding
+{
+    public bool Paired { get; set; }
+    public string? BluetoothAddressHex { get; set; }
+    public string? ReceiverName { get; set; }
+}
+
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ReceiverSettings))]
+[JsonSerializable(typeof(PersistedHostBinding))]
 internal partial class AppSettingsContext : JsonSerializerContext { }

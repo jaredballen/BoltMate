@@ -72,6 +72,10 @@ public partial class App : Application
         // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
         _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
 
+        // Persist host bindings to disk so offline-device topology survives restarts.
+        _disposables.Add(new HostBindingPersistence(_manager, _settings,
+            _loggerFactory.CreateLogger<HostBindingPersistence>()));
+
         // Wire the dynamic tray menu now that the manager is up.
         var trays = TrayIcon.GetIcons(this);
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
