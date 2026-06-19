@@ -2,10 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using System.Text;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Threading;
+using DynamicData;
 using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
@@ -24,10 +28,12 @@ public partial class SettingsWindow : Window
     private readonly AppSettings? _settings;
     private readonly ObservableCollection<ReceiverRow> _rows = new();
     private readonly ObservableCollection<TopologyRow> _topology = new();
+    private readonly CompositeDisposable _disposables = new();
 
     public SettingsWindow()
     {
         InitializeComponent();
+        Closed += (_, _) => _disposables.Dispose();
     }
 
     public SettingsWindow(
@@ -50,6 +56,27 @@ public partial class SettingsWindow : Window
 
         RefreshLaunchAtLogin();
         Populate();
+        WireLiveRefresh();
+    }
+
+    /// <summary>
+    /// Re-Populate() on any receiver attach/detach or per-device cache change
+    /// (link state, enrichment, host bindings). Coalesced to 200ms so a burst
+    /// of enrichment changes only rebuilds the rows once.
+    /// </summary>
+    private void WireLiveRefresh()
+    {
+        if (_manager is null) return;
+
+        var receiversChanged = _manager.Receivers.Connect().Select(_ => System.Reactive.Unit.Default);
+        var devicesChanged = _manager.Receivers.Connect()
+            .MergeMany(r => r.Devices.Connect())
+            .Select(_ => System.Reactive.Unit.Default);
+
+        _disposables.Add(receiversChanged
+            .Merge(devicesChanged)
+            .Throttle(TimeSpan.FromMilliseconds(200))
+            .Subscribe(_ => Dispatcher.UIThread.Post(Populate)));
     }
 
     private bool _suppressLaunchAtLoginEvent;
