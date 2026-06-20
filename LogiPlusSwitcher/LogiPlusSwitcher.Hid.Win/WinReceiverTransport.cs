@@ -85,15 +85,26 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
                 // collections (keyboard, mouse, digitizer, management); we
                 // only want 0xFF00 / 0x0001.
                 if (!NativeMethods.HidD_GetPreparsedData(probeHandle, out var preparsed)) continue;
+                ushort usagePage, usage, inputLen;
                 try
                 {
                     var caps = new NativeMethods.HIDP_CAPS();
                     var status = NativeMethods.HidP_GetCaps(preparsed, ref caps);
                     if (status != unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS)) continue;
-                    if (caps.UsagePage != BoltConstants.ManagementUsagePage) continue;
-                    if (caps.Usage != BoltConstants.ManagementUsage) continue;
+                    usagePage = caps.UsagePage;
+                    usage = caps.Usage;
+                    inputLen = caps.InputReportByteLength;
                 }
                 finally { NativeMethods.HidD_FreePreparsedData(preparsed); }
+
+                // TEMP: log every Bolt-matching collection we see so we can map
+                // which collection carries short vs long HID++ reports.
+                _logger.LogInformation(
+                    "Bolt collection probed: usagePage=0x{Up:X4} usage=0x{Use:X4} inputReportLen={Len} path={Path}",
+                    usagePage, usage, inputLen, devicePath);
+
+                if (usagePage != BoltConstants.ManagementUsagePage) continue;
+                if (usage != BoltConstants.ManagementUsage) continue;
 
                 var product = ReadHidString(probeHandle, NativeMethods.HidD_GetProductString) ?? "Bolt Receiver";
                 var manufacturer = ReadHidString(probeHandle, NativeMethods.HidD_GetManufacturerString) ?? "Logitech";
@@ -128,25 +139,32 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
             throw new InvalidOperationException($"CreateFile on {info.Path} failed: 0x{err:X}");
         }
 
-        // Discover input report length once at open time — we need a sized
-        // buffer for the read pump. Long HID++ is 20 bytes (rid + 19 data).
-        ushort inputReportLength = 20;
+        // Read-buffer sizing: the Bolt management interface declares the
+        // SHORT report (7 bytes) but the receiver actually delivers BOTH 0x10
+        // short and 0x11 long (20 bytes) reports on the same interface, plus
+        // 0x20 DJ reports. The descriptor's InputReportByteLength only
+        // reflects the maximum length the descriptor explicitly enumerates;
+        // we've observed it returning 7 even though 20-byte 0x11 reports
+        // arrive in the wild. To be safe — and match the IOKit transport's
+        // pre-sized buffer — we always allocate 64 bytes for reads. Windows'
+        // HID class driver delivers whatever size the actual report is and
+        // sets bytesRead accordingly.
+        ushort declaredInputReportLength = 0;
         if (NativeMethods.HidD_GetPreparsedData(handle, out var preparsed))
         {
             try
             {
                 var caps = new NativeMethods.HIDP_CAPS();
-                if (NativeMethods.HidP_GetCaps(preparsed, ref caps) == unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS)
-                    && caps.InputReportByteLength > 0)
-                {
-                    inputReportLength = caps.InputReportByteLength;
-                }
+                if (NativeMethods.HidP_GetCaps(preparsed, ref caps) == unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS))
+                    declaredInputReportLength = caps.InputReportByteLength;
             }
             finally { NativeMethods.HidD_FreePreparsedData(preparsed); }
         }
+        const ushort safeReadBuffer = 64;
+        var inputReportLength = (ushort)Math.Max(declaredInputReportLength, safeReadBuffer);
 
-        _logger.LogInformation("Opened receiver {Product} via native Win HID (input report = {Len} bytes)",
-            info.ProductString, inputReportLength);
+        _logger.LogInformation("Opened receiver {Product} via native Win HID (declared input report = {Declared}, read buffer = {Buf})",
+            info.ProductString, declaredInputReportLength, inputReportLength);
         return new WinReceiverConnection(handle, info.Path, inputReportLength,
             _loggerFactory.CreateLogger<WinReceiverConnection>());
     }
