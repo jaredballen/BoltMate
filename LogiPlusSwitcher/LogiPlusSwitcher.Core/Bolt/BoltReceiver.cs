@@ -67,6 +67,15 @@ public sealed class BoltReceiver : IDisposable
     /// </summary>
     public byte[]? BluetoothAddress { get; set; }
 
+    /// <summary>
+    /// Most recent <see cref="ReceiverDetails"/> read from the receiver's
+    /// flash via HID++ 1.0 registers (serial, firmware version, max devices,
+    /// BLE address). Populated by <see cref="GetReceiverDetailsAsync"/> on
+    /// every successful call and persisted here so the UI / diagnostics
+    /// tree can render it without re-reading.
+    /// </summary>
+    public ReceiverDetails? LastKnownDetails { get; private set; }
+
     /// <summary>Stable lowercase hex string of <see cref="BluetoothAddress"/>, or null.</summary>
     public string? BluetoothAddressKey =>
         BluetoothAddress is null ? null : Convert.ToHexString(BluetoothAddress).ToLowerInvariant();
@@ -482,7 +491,9 @@ public sealed class BoltReceiver : IDisposable
         if (ble is not null)
             BluetoothAddress = ble;
 
-        return new ReceiverDetails(serial, fwMajor, fwMinor, fwBuild, maxDevices, ble);
+        var details = new ReceiverDetails(serial, fwMajor, fwMinor, fwBuild, maxDevices, ble);
+        LastKnownDetails = details;
+        return details;
     }
 
     /// <summary>

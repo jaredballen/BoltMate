@@ -42,6 +42,12 @@ public partial class SettingsWindow : Window
     /// <summary>Accessor returning the latest UDP announcement from each known peer (null = topology off).</summary>
     public Func<IEnumerable<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>>? PeerAnnouncementsProvider { get; set; }
 
+    /// <summary>Accessor returning per-peer stats from <see cref="LogiPlusSwitcher.Core.Topology.UdpTopologyService.PeerSnapshot"/>.</summary>
+    public Func<IEnumerable<LogiPlusSwitcher.Core.Topology.PeerStats>>? PeerStatsProvider { get; set; }
+
+    /// <summary>Accessor returning send-side (attempts, errors) for the diagnostics panel.</summary>
+    public Func<(long Attempts, long Errors)>? SendStatsProvider { get; set; }
+
     public SettingsWindow(
         ReceiverManager manager,
         ReceiverPolicyService policy,
@@ -69,6 +75,7 @@ public partial class SettingsWindow : Window
         RefreshNetworkTab();
         Populate();
         WireLiveRefresh();
+        StartDiagnosticsTimer();
     }
 
     public Action? HotkeysChanged { get; set; }
@@ -762,4 +769,208 @@ public partial class SettingsWindow : Window
     {
         public string Line { get; set; } = "";
     }
+
+    // ====================================================================
+    // Diagnostics tab — full live snapshot of HID state + network sync
+    // ====================================================================
+
+    private DispatcherTimer? _diagTimer;
+
+    private void StartDiagnosticsTimer()
+    {
+        _diagTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _diagTimer.Tick += (_, _) => RefreshDiagnostics();
+        _diagTimer.Start();
+        _disposables.Add(System.Reactive.Disposables.Disposable.Create(() =>
+        {
+            _diagTimer.Stop();
+            _diagTimer = null;
+        }));
+        RefreshDiagnostics();
+    }
+
+    private void OnRefreshDiagnostics(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        RefreshDiagnostics();
+
+    private void RefreshDiagnostics()
+    {
+        var tb = this.FindControl<SelectableTextBlock>("DiagnosticsText");
+        if (tb is null) return;
+        try { tb.Text = BuildDiagnosticsSnapshot(); }
+        catch (Exception ex) { tb.Text = $"(diagnostics render failed: {ex.Message})"; }
+    }
+
+    private string BuildDiagnosticsSnapshot()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("════════════════════════════════════════════════════════════════════");
+        sb.AppendLine($"  LogiPlusSwitcher — diagnostics snapshot at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine("════════════════════════════════════════════════════════════════════");
+        sb.AppendLine();
+
+        // ---- Local receivers ----
+        sb.AppendLine("LOCAL");
+        sb.AppendLine("─────");
+        if (_manager is null || _manager.Receivers.Count == 0)
+        {
+            sb.AppendLine("  (no receivers attached)");
+        }
+        else
+        {
+            foreach (var r in _manager.Receivers.Items)
+                RenderReceiver(sb, r);
+        }
+        sb.AppendLine();
+
+        // ---- Network sync ----
+        sb.AppendLine("NETWORK SYNC");
+        sb.AppendLine("────────────");
+        if (_settings is null || !_settings.Topology.Enabled)
+        {
+            sb.AppendLine("  (disabled in Settings → Network)");
+        }
+        else
+        {
+            var send = SendStatsProvider?.Invoke();
+            if (send is not null)
+            {
+                var (att, err) = send.Value;
+                sb.AppendLine($"  Send attempts: {att,8} | errors: {err,6}{(err > 0 ? " ⚠" : "")}");
+            }
+            sb.AppendLine($"  Local machineId: {_settings.Topology.MachineId ?? "(none)"}");
+            sb.AppendLine($"  UDP port: {_settings.Topology.Port}  |  multicast: {(_settings.Topology.UseMulticast ? _settings.Topology.MulticastGroup : "off")}");
+            sb.AppendLine($"  Repeat: {_settings.Topology.RepeatCount}× per announcement, gap {_settings.Topology.RepeatGapMs}ms");
+            sb.AppendLine($"  Cadence: normal {_settings.Topology.BroadcastIntervalSeconds}s; burst {_settings.Topology.BurstIntervalMs}ms for {_settings.Topology.BurstDurationMs}ms after link-lost");
+            sb.AppendLine();
+
+            var peers = PeerStatsProvider?.Invoke()?.ToList() ?? new List<LogiPlusSwitcher.Core.Topology.PeerStats>();
+            var anns = PeerAnnouncementsProvider?.Invoke()?.ToDictionary(a => a.MachineId, a => a)
+                       ?? new Dictionary<string, LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>();
+
+            if (peers.Count == 0 && anns.Count == 0)
+            {
+                sb.AppendLine("  (no peers discovered yet)");
+            }
+            else
+            {
+                foreach (var peer in peers.OrderBy(p => p.Hostname ?? p.MachineId))
+                    RenderPeer(sb, peer, anns.TryGetValue(peer.MachineId, out var a) ? a : null);
+            }
+        }
+        sb.AppendLine();
+
+        // ---- Settings summary ----
+        sb.AppendLine("SETTINGS");
+        sb.AppendLine("────────");
+        if (_settings is not null)
+        {
+            sb.AppendLine($"  License key set: {(!string.IsNullOrEmpty(_settings.LicenseKey) ? "yes" : "no")}");
+            sb.AppendLine($"  Hotkeys enabled: {_settings.Hotkeys.Enabled} | bindings: {_settings.Hotkeys.Bindings.Count}");
+            foreach (var b in _settings.Hotkeys.Bindings)
+                sb.AppendLine($"    • {b.Chord,-22} → {(string.IsNullOrEmpty(b.TargetBleHex) ? "(unbound)" : $"{b.TargetLabel ?? b.TargetBleHex} [{b.TargetBleHex}]")}");
+            sb.AppendLine($"  Primary receiver: {_settings.PrimaryReceiverSerial ?? "(none)"}");
+            sb.AppendLine($"  Auto-update: {_settings.AutoCheckForUpdates} (every {_settings.UpdateCheckIntervalHours}h)");
+            sb.AppendLine($"  Telemetry enabled: {_settings.TelemetryEnabled}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static void RenderReceiver(StringBuilder sb, BoltReceiver r)
+    {
+        var details = r.LastKnownDetails;
+        var fw = details is not null
+            ? $"fw {details.FirmwareVersionString}"
+            : "fw (not read)";
+        var serial = !string.IsNullOrEmpty(r.Info.Serial) ? r.Info.Serial
+                    : details?.Serial ?? "(no serial)";
+        var part = r.IsParticipating ? "participating" : "STANDBY";
+        var ble = r.BluetoothAddressKey ?? "(no ble)";
+
+        sb.AppendLine($"  ▼ {r.Info.ProductString}  [{part}]");
+        sb.AppendLine($"      serial : {serial}");
+        sb.AppendLine($"      {fw}");
+        sb.AppendLine($"      ble    : {ble}");
+        sb.AppendLine($"      path   : {Shorten(r.Info.Path, 70)}");
+
+        var devices = r.Devices.Items.OrderBy(d => (int)d.DeviceIndex).ToList();
+        if (devices.Count == 0)
+        {
+            sb.AppendLine("      └─ (no paired devices)");
+            return;
+        }
+        foreach (var d in devices)
+            RenderDevice(sb, d);
+    }
+
+    private static void RenderDevice(StringBuilder sb, PairedDevice d)
+    {
+        var name = d.DisplayName;
+        var link = d.LinkUp ? "● online" : "○ offline";
+        var bat = d.LastKnownBattery is { } b
+            ? $"{(b.Percent.HasValue ? b.Percent + "%" : "?")}{(b.Charging == true ? "⚡" : "")}"
+            : "?";
+        var fw = d.Firmware is not null ? d.Firmware.DisplayString : "(fw not read)";
+        var current = d.LastKnownCurrentHost.HasValue ? $" current=H{d.LastKnownCurrentHost + 1}" : "";
+
+        sb.AppendLine($"      ├─ Slot {d.DeviceIndex}  {name}  ({link}){current}");
+        sb.AppendLine($"      │     wpid    : 0x{d.Wpid:X4}");
+        sb.AppendLine($"      │     serial  : {d.Serial ?? "(unknown)"}");
+        sb.AppendLine($"      │     battery : {bat}");
+        sb.AppendLine($"      │     {fw}");
+        if (d.HostBindings.Count == 0)
+        {
+            sb.AppendLine("      │     hosts   : (not yet read)");
+            return;
+        }
+        sb.AppendLine("      │     hosts:");
+        foreach (var (slot, binding) in d.HostBindings.OrderBy(kv => kv.Key))
+        {
+            var marker = d.LastKnownCurrentHost == slot ? " ← current" : "";
+            if (!binding.Paired)
+            {
+                sb.AppendLine($"      │       H{slot + 1}: unpaired{marker}");
+                continue;
+            }
+            var bleKey = binding.BluetoothAddressKey ?? "(no ble)";
+            var rname = !string.IsNullOrEmpty(binding.ReceiverName) ? $" ({binding.ReceiverName})" : "";
+            sb.AppendLine($"      │       H{slot + 1}: {bleKey}{rname}{marker}");
+        }
+    }
+
+    private static void RenderPeer(StringBuilder sb,
+        LogiPlusSwitcher.Core.Topology.PeerStats peer,
+        LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement? lastAnn)
+    {
+        var hostname = string.IsNullOrEmpty(peer.Hostname) ? "(unknown host)" : peer.Hostname;
+        var sinceMs = (DateTime.UtcNow - peer.LastSeenUtc).TotalMilliseconds;
+        var sinceStr = peer.LastSeenUtc == default
+            ? "never"
+            : sinceMs < 1500 ? $"{sinceMs:F0}ms ago"
+                             : $"{sinceMs / 1000:F1}s ago";
+        var alive = sinceMs < 10_000 ? "✓" : "⚠ silent";
+
+        sb.AppendLine($"  ▼ {hostname}  [{alive}]");
+        sb.AppendLine($"      machineId : {peer.MachineId}");
+        sb.AppendLine($"      last seen : {sinceStr}");
+        sb.AppendLine($"      last seq  : {peer.LastSeq}");
+        sb.AppendLine($"      received  : {peer.UniqueReceived} unique / {peer.DuplicatesSuppressed} dup");
+        sb.AppendLine($"      missed in : {peer.MissedFromPeer}  (peer→us packet loss inferred via seq gaps)");
+
+        if (lastAnn is not null)
+        {
+            foreach (var r in lastAnn.Receivers)
+            {
+                var ble = r.BluetoothAddressHex ?? "(no ble)";
+                var ser = string.IsNullOrEmpty(r.Serial) ? "(no serial)" : r.Serial;
+                sb.AppendLine($"      └─ Receiver {ser}  ble={ble}");
+                if (r.OnlineDevices.Count == 0) sb.AppendLine("           (no devices online)");
+                foreach (var od in r.OnlineDevices)
+                    sb.AppendLine($"           ● Slot {od.Slot}  wpid 0x{od.WpidHex}  {od.Name ?? ""}");
+            }
+        }
+    }
+
+    private static string Shorten(string s, int max) =>
+        s.Length > max ? string.Concat("…", s.AsSpan(s.Length - max + 1)) : s;
 }

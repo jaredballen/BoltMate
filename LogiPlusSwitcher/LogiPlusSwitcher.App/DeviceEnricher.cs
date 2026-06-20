@@ -69,8 +69,11 @@ public sealed class DeviceEnricher : IDisposable
     {
         try
         {
-            // Receiver-level read for fw version / serial.
-            _ = receiver.GetReceiverDetailsAsync();
+            // Receiver-level read for fw version / serial. Await so the result
+            // lands on receiver.LastKnownDetails before downstream code (or
+            // the diagnostics view) tries to read it.
+            try { await receiver.GetReceiverDetailsAsync(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "GetReceiverDetailsAsync failed (non-fatal)"); }
 
             // Per-slot metadata for every possible Bolt slot — picks up offline
             // devices' names from receiver flash too.
@@ -129,6 +132,21 @@ public sealed class DeviceEnricher : IDisposable
                     if (!string.IsNullOrEmpty(friendly))
                     {
                         device.FriendlyName = friendly;
+                        receiver.RefreshSlot(deviceIndex);
+                    }
+                }
+                catch (HidPpException) { /* skip */ }
+            }
+
+            // Firmware version (feature 0x0003 fn 0x1, entity 0 = main).
+            if (device.DeviceInfoIndex is { } diIdx)
+            {
+                try
+                {
+                    var fw = await receiver.DeviceInfo.GetFirmwareAsync(deviceIndex, diIdx, entityIndex: 0);
+                    if (fw is not null)
+                    {
+                        device.Firmware = fw;
                         receiver.RefreshSlot(deviceIndex);
                     }
                 }

@@ -80,6 +80,13 @@ public sealed class PairedDevice
     /// <summary>Device serial as read from <c>BOLT_PAIRING_INFORMATION</c>. Decodes printable ASCII when possible.</summary>
     public string? Serial { get; set; }
 
+    /// <summary>
+    /// Firmware identification (main firmware entity) read from HID++ 2.0
+    /// feature <c>0x0003 DEVICE_INFO</c> fn 0x1. Populated by DeviceEnricher
+    /// on link-up. Surfaced in the diagnostics tree.
+    /// </summary>
+    public HidPp.Features.DeviceFirmwareInfo? Firmware { get; set; }
+
     /// <summary>Device BLE address from <c>BOLT_PAIRING_INFORMATION</c> (MSB first).</summary>
     public byte[]? BluetoothAddress { get; set; }
 

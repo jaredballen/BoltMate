@@ -212,6 +212,12 @@ public partial class App : Application
                 _topology is null
                     ? Array.Empty<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>()
                     : _topology.LatestPeerAnnouncements,
+            PeerStatsProvider = () =>
+                _topology is null
+                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.PeerStats>()
+                    : _topology.PeerSnapshot,
+            SendStatsProvider = () =>
+                _topology is null ? (0L, 0L) : _topology.SendStats,
         };
         _settingsWindow.Closed += (_, _) =>
         {

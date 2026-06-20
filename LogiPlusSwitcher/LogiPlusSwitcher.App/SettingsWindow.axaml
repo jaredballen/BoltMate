@@ -230,6 +230,36 @@
             </ScrollViewer>
         </TabItem>
 
+        <!-- Diagnostics tab -->
+        <TabItem Header="Diagnostics">
+            <Grid Margin="8" RowDefinitions="Auto,*,Auto">
+                <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,8">
+                    <TextBlock Text="System diagnostics" FontSize="16" FontWeight="Bold" />
+                    <TextBlock Foreground="#CCC" TextWrapping="Wrap">
+                        Full snapshot of everything the app sees: local Bolt receivers, their paired devices,
+                        host-slot bindings, firmware versions, battery, plus the network sync state and per-peer health.
+                        Refreshes every second. Use "Copy to clipboard" to attach to a support thread.
+                    </TextBlock>
+                </StackPanel>
+
+                <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
+                    <ScrollViewer>
+                        <SelectableTextBlock x:Name="DiagnosticsText"
+                                             Padding="12"
+                                             FontFamily="JetBrains Mono,Menlo,Consolas,monospace"
+                                             FontSize="12"
+                                             TextWrapping="NoWrap"
+                                             Text="(loading…)" />
+                    </ScrollViewer>
+                </Border>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+                    <TextBlock Text="Tip: Click anywhere then Cmd/Ctrl+A → Cmd/Ctrl+C to copy" Foreground="#999" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Button Content="Refresh now" Click="OnRefreshDiagnostics" />
+                </StackPanel>
+            </Grid>
+        </TabItem>
+
         <!-- Updates tab -->
         <TabItem Header="Updates">
             <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*">
