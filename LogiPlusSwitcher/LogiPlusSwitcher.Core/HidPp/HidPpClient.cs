@@ -19,7 +19,10 @@ namespace LogiPlusSwitcher.Core.HidPp;
 /// </remarks>
 public sealed class HidPpClient : IDisposable
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMilliseconds(1500);
+    // 3s default — generous enough for Win arm64 emulating x64 where HID
+    // round-trips can stretch past 1.5s under load. Per-request override is
+    // still available via the timeout parameter.
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMilliseconds(3000);
 
     private readonly IReceiverConnection _connection;
     private readonly ConcurrentDictionary<byte, SemaphoreSlim> _deviceLocks = new();

@@ -43,6 +43,10 @@ public sealed class UdpTopologyService : IDisposable
     // Per-peer observability: count of unique announcements + detected gaps in
     // their sequence numbers + wall-clock last-seen. Exposed to UI / diagnostics.
     private readonly ConcurrentDictionary<string, PeerStats> _peerStats = new();
+    // Latest full announcement per peer — exposed to Settings so the hotkey
+    // target dropdown can discover remote receiver BLEs even when our own
+    // local devices haven't enriched yet.
+    private readonly ConcurrentDictionary<string, ReceiverAnnouncement> _latestByPeer = new();
     // Send-side counters — increments for every attempt; errors are SocketExceptions.
     private long _sendAttempts;
     private long _sendErrors;
@@ -65,6 +69,9 @@ public sealed class UdpTopologyService : IDisposable
 
     /// <summary>Snapshot of per-peer observability for the diagnostics UI.</summary>
     public IReadOnlyCollection<PeerStats> PeerSnapshot => _peerStats.Values.ToArray();
+
+    /// <summary>Latest full announcement received per peer — UI uses this to discover remote receiver BLEs.</summary>
+    public IReadOnlyCollection<ReceiverAnnouncement> LatestPeerAnnouncements => _latestByPeer.Values.ToArray();
 
     public UdpTopologyService(
         ReceiverManager manager,
@@ -251,6 +258,10 @@ public sealed class UdpTopologyService : IDisposable
                         key, missed, lastSeq, announcement.Seq);
                 }
                 Interlocked.Increment(ref stats.UniqueReceived);
+
+                // Cache the full payload so Settings → Hotkeys can discover
+                // remote receiver BLEs even when our own HostBindings are empty.
+                _latestByPeer[key] = announcement;
 
                 _announcements.OnNext(announcement);
             }

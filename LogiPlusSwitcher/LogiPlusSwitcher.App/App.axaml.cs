@@ -204,6 +204,10 @@ public partial class App : Application
             HostNamesChanged = () => _trayController?.RefreshHostLabels(),
             HotkeysChanged = () => _hotkeys?.Apply(),
             TopologyChanged = ApplyTopologySettings,
+            PeerAnnouncementsProvider = () =>
+                _topology is null
+                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>()
+                    : _topology.LatestPeerAnnouncements,
         };
         _settingsWindow.Closed += (_, _) =>
         {

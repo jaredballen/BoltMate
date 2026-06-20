@@ -39,6 +39,9 @@ public partial class SettingsWindow : Window
         Closed += (_, _) => _disposables.Dispose();
     }
 
+    /// <summary>Accessor returning the latest UDP announcement from each known peer (null = topology off).</summary>
+    public Func<IEnumerable<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>>? PeerAnnouncementsProvider { get; set; }
+
     public SettingsWindow(
         ReceiverManager manager,
         ReceiverPolicyService policy,
@@ -117,11 +120,12 @@ public partial class SettingsWindow : Window
         var dict = new Dictionary<string, TargetOption>(StringComparer.OrdinalIgnoreCase);
         if (_manager is null) return dict.Values.ToList();
 
+        // 1. This machine's own receivers + their devices' HostBindings.
         foreach (var r in _manager.Receivers.Items)
         {
             if (r.BluetoothAddressKey is { } bleSelf)
             {
-                var label = string.IsNullOrEmpty(r.Info.Serial) ? "(this receiver)" : $"this Mac ({r.Info.Serial})";
+                var label = string.IsNullOrEmpty(r.Info.Serial) ? "(this receiver)" : $"this machine ({r.Info.Serial})";
                 dict.TryAdd(bleSelf, new TargetOption(bleSelf, label));
             }
             foreach (var d in r.Devices.Items)
@@ -138,6 +142,31 @@ public partial class SettingsWindow : Window
                 }
             }
         }
+
+        // 2. Remote receivers — discovered from inbound UDP announcements.
+        // Lets the user pick a peer as a hotkey target even if our own
+        // device-side HostBindings haven't enriched yet (Win arm64 emulation
+        // sometimes times out the HID++ feature discovery — see task #31).
+        if (PeerAnnouncementsProvider is not null)
+        {
+            try
+            {
+                foreach (var ann in PeerAnnouncementsProvider())
+                {
+                    foreach (var entry in ann.Receivers)
+                    {
+                        if (string.IsNullOrEmpty(entry.BluetoothAddressHex)) continue;
+                        var key = entry.BluetoothAddressHex.ToLowerInvariant();
+                        if (dict.ContainsKey(key)) continue;
+                        var hostname = string.IsNullOrEmpty(ann.Hostname) ? "peer" : ann.Hostname;
+                        var serialPart = string.IsNullOrEmpty(entry.Serial) ? "" : $" · {entry.Serial}";
+                        dict[key] = new TargetOption(key, $"{hostname}{serialPart}");
+                    }
+                }
+            }
+            catch (Exception) { /* defensive — UI never blocks on topology errors */ }
+        }
+
         return dict.Values.OrderBy(t => t.Display, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
