@@ -9,22 +9,22 @@ namespace LogiPlusSwitcher.Core.Bolt;
 /// <param name="FirmwareVersionMinor">Receiver firmware minor.</param>
 /// <param name="FirmwareBuild">Receiver firmware build (big-endian short).</param>
 /// <param name="MaxDevices">Maximum paired devices the receiver supports (6 for Bolt).</param>
-/// <param name="BluetoothAddress">Receiver's own BLE address (raw bytes, MSB first). Null if not exposed.</param>
+/// <param name="HostIdentifier">Receiver's own BLE address (raw bytes, MSB first). Null if not exposed.</param>
 public sealed record ReceiverDetails(
     string? Serial,
     byte FirmwareVersionMajor,
     byte FirmwareVersionMinor,
     ushort FirmwareBuild,
     byte MaxDevices,
-    byte[]? BluetoothAddress)
+    byte[]? HostIdentifier)
 {
     public string FirmwareVersionString => $"{FirmwareVersionMajor:X2}.{FirmwareVersionMinor:X2}.B{FirmwareBuild:X4}";
 
-    public string? BluetoothAddressString =>
-        BluetoothAddress is null
+    public string? HostIdentifierString =>
+        HostIdentifier is null
             ? null
-            : string.Join(":", BluetoothAddress.Select(b => b.ToString("X2")));
+            : string.Join(":", HostIdentifier.Select(b => b.ToString("X2")));
 
     public override string ToString() =>
-        $"serial={Serial ?? "?"} fw={FirmwareVersionString} maxDevices={MaxDevices} ble={BluetoothAddressString ?? "?"}";
+        $"serial={Serial ?? "?"} fw={FirmwareVersionString} maxDevices={MaxDevices} ble={HostIdentifierString ?? "?"}";
 }

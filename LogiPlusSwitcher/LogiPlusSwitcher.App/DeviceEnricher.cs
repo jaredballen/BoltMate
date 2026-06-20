@@ -202,7 +202,7 @@ public sealed class DeviceEnricher : IDisposable
                     device.HostBindings = dict;
 
                     var summary = string.Join(", ", bindings.Select(b =>
-                        $"h{b.HostIndex}={(b.Paired ? (b.BluetoothAddressString ?? "(no ble)") : "unpaired")}"));
+                        $"h{b.HostIndex}={(b.Paired ? (b.HostIdentifierString ?? "(no ble)") : "unpaired")}"));
                     _logger.LogInformation(
                         "Slot {Slot} HostBindings: current={Current} {Summary}",
                         deviceIndex, hosts.CurrentHost, summary);

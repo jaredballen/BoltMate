@@ -130,7 +130,7 @@ public partial class SettingsWindow : Window
         // 1. This machine's own receivers + their devices' HostBindings.
         foreach (var r in _manager.Receivers.Items)
         {
-            if (r.BluetoothAddressKey is { } bleSelf)
+            if (r.HostIdentifierKey is { } bleSelf)
             {
                 var label = string.IsNullOrEmpty(r.Info.Serial) ? "(this receiver)" : $"this machine ({r.Info.Serial})";
                 dict.TryAdd(bleSelf, new TargetOption(bleSelf, label));
@@ -140,10 +140,10 @@ public partial class SettingsWindow : Window
                 foreach (var binding in d.HostBindings.Values)
                 {
                     if (!binding.Paired) continue;
-                    if (binding.BluetoothAddressKey is not { } bleKey) continue;
+                    if (binding.HostIdentifierKey is not { } bleKey) continue;
                     var label = !string.IsNullOrEmpty(binding.ReceiverName)
                         ? binding.ReceiverName!
-                        : (binding.BluetoothAddressString ?? bleKey);
+                        : (binding.HostIdentifierString ?? bleKey);
                     if (!dict.ContainsKey(bleKey))
                         dict[bleKey] = new TargetOption(bleKey, label);
                 }
@@ -162,8 +162,8 @@ public partial class SettingsWindow : Window
                 {
                     foreach (var entry in ann.Receivers)
                     {
-                        if (string.IsNullOrEmpty(entry.BluetoothAddressHex)) continue;
-                        var key = entry.BluetoothAddressHex.ToLowerInvariant();
+                        if (string.IsNullOrEmpty(entry.HostIdentifierHex)) continue;
+                        var key = entry.HostIdentifierHex.ToLowerInvariant();
                         if (dict.ContainsKey(key)) continue;
                         var hostname = string.IsNullOrEmpty(ann.Hostname) ? "peer" : ann.Hostname;
                         var serialPart = string.IsNullOrEmpty(entry.Serial) ? "" : $" · {entry.Serial}";
@@ -515,13 +515,13 @@ public partial class SettingsWindow : Window
         var allBleKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var r in receivers)
         {
-            if (r.BluetoothAddressKey is not null) allBleKeys.Add(r.BluetoothAddressKey);
+            if (r.HostIdentifierKey is not null) allBleKeys.Add(r.HostIdentifierKey);
             foreach (var d in r.Devices.Items)
             {
                 foreach (var binding in d.HostBindings.Values)
                 {
-                    if (binding.Paired && binding.BluetoothAddressKey is not null)
-                        allBleKeys.Add(binding.BluetoothAddressKey);
+                    if (binding.Paired && binding.HostIdentifierKey is not null)
+                        allBleKeys.Add(binding.HostIdentifierKey);
                 }
             }
         }
@@ -532,7 +532,7 @@ public partial class SettingsWindow : Window
         foreach (var ble in bleList)
         {
             // Label as receiver serial if known, else short BLE.
-            var owner = receivers.FirstOrDefault(r => r.BluetoothAddressKey == ble);
+            var owner = receivers.FirstOrDefault(r => r.HostIdentifierKey == ble);
             var label = owner is not null
                 ? (owner.Info.Serial.Length > 0 ? owner.Info.Serial : "this rcvr")
                 : ble[..Math.Min(6, ble.Length)] + "…";
@@ -885,7 +885,7 @@ public partial class SettingsWindow : Window
         var serial = !string.IsNullOrEmpty(r.Info.Serial) ? r.Info.Serial
                     : details?.Serial ?? "(no serial)";
         var part = r.IsParticipating ? "participating" : "STANDBY";
-        var ble = r.BluetoothAddressKey ?? "(no ble)";
+        var ble = r.HostIdentifierKey ?? "(no ble)";
 
         sb.AppendLine($"  ▼ {r.Info.ProductString}  [{part}]");
         sb.AppendLine($"      serial : {serial}");
@@ -932,7 +932,7 @@ public partial class SettingsWindow : Window
                 sb.AppendLine($"      │       H{slot + 1}: unpaired{marker}");
                 continue;
             }
-            var bleKey = binding.BluetoothAddressKey ?? "(no ble)";
+            var bleKey = binding.HostIdentifierKey ?? "(no ble)";
             var rname = !string.IsNullOrEmpty(binding.ReceiverName) ? $" ({binding.ReceiverName})" : "";
             sb.AppendLine($"      │       H{slot + 1}: {bleKey}{rname}{marker}");
         }
@@ -963,7 +963,7 @@ public partial class SettingsWindow : Window
         {
             foreach (var r in lastAnn.Receivers)
             {
-                var ble = r.BluetoothAddressHex ?? "(no ble)";
+                var ble = r.HostIdentifierHex ?? "(no ble)";
                 var ser = string.IsNullOrEmpty(r.Serial) ? "(no serial)" : r.Serial;
                 sb.AppendLine($"      └─ Receiver {ser}  ble={ble}");
                 if (r.OnlineDevices.Count == 0) sb.AppendLine("           (no devices online)");

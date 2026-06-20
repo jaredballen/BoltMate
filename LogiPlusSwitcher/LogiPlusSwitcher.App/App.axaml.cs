@@ -96,7 +96,7 @@ public partial class App : Application
         // after GetReceiverDetailsAsync succeeds. Without this, a freshly
         // launched app on a host that hasn't read its receiver-level
         // identifier yet (or where the read fails) can't include a usable
-        // BluetoothAddressHex in topology announcements, breaking cross-
+        // HostIdentifierHex in topology announcements, breaking cross-
         // machine MATCH for devices arriving on this host.
         _disposables.Add(_manager.Receivers.Connect()
             .Subscribe(changes =>
@@ -108,7 +108,7 @@ public partial class App : Application
                     if (_settings.CachedReceiverIdentifiers.TryGetValue(r.Info.Path, out var cachedHex)
                         && !string.IsNullOrEmpty(cachedHex))
                     {
-                        try { r.BluetoothAddress = Convert.FromHexString(cachedHex); }
+                        try { r.HostIdentifier = Convert.FromHexString(cachedHex); }
                         catch { /* malformed cache — ignore */ }
                     }
                     // Periodically sample the receiver's effective identifier
@@ -122,7 +122,7 @@ public partial class App : Application
                         for (var i = 0; i < 10; i++)
                         {
                             await System.Threading.Tasks.Task.Delay(3000);
-                            string? effective = r.BluetoothAddressKey;
+                            string? effective = r.HostIdentifierKey;
                             if (effective is null)
                             {
                                 foreach (var d in r.Devices.Items)
@@ -130,7 +130,7 @@ public partial class App : Application
                                     if (!d.LinkUp) continue;
                                     if (d.LastKnownCurrentHost is not byte cur) continue;
                                     if (d.HostBindings.TryGetValue(cur, out var binding)
-                                        && binding.BluetoothAddressKey is { } v)
+                                        && binding.HostIdentifierKey is { } v)
                                     { effective = v; break; }
                                 }
                             }
@@ -141,9 +141,9 @@ public partial class App : Application
                                 // Also pin onto receiver itself for immediate use by the
                                 // announcement builder, in case GetReceiverDetailsAsync
                                 // never actually returned a value.
-                                if (r.BluetoothAddressKey is null)
+                                if (r.HostIdentifierKey is null)
                                 {
-                                    try { r.BluetoothAddress = Convert.FromHexString(effective); }
+                                    try { r.HostIdentifier = Convert.FromHexString(effective); }
                                     catch { }
                                 }
                                 cachedHex = effective;

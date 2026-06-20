@@ -79,9 +79,6 @@ public sealed class TopologyCorrelator : IDisposable
 
         foreach (var receiver in announcement.Receivers)
         {
-            if (string.IsNullOrEmpty(receiver.BluetoothAddressHex)) continue;
-            var remoteBle = receiver.BluetoothAddressHex.ToLowerInvariant();
-
             foreach (var dev in receiver.OnlineDevices)
             {
                 if (string.IsNullOrEmpty(dev.WpidHex)) continue;
@@ -92,15 +89,40 @@ public sealed class TopologyCorrelator : IDisposable
                 if (!_pendingLost.TryGetValue(wpid, out var lostAt)) continue;
                 if (DateTimeOffset.UtcNow - lostAt > _window) { _pendingLost.TryRemove(wpid, out _); continue; }
 
+                // Device-side resolution of the target identifier. The
+                // announced device tells us its CurrentHost + its full
+                // HostBindings (read via feature 0x1815 on the source side).
+                // We pick the identifier the device is CURRENTLY using —
+                // that's the value the source receiver corresponds to. Fall
+                // back to the announcement's receiver-level identifier if
+                // device-side data isn't populated yet.
+                string? targetIdentifier = null;
+                if (dev.CurrentHost is { } cur)
+                {
+                    foreach (var b in dev.HostBindings)
+                    {
+                        if (b.HostIndex == cur && !string.IsNullOrEmpty(b.IdentifierHex))
+                        { targetIdentifier = b.IdentifierHex.ToLowerInvariant(); break; }
+                    }
+                }
+                targetIdentifier ??= receiver.HostIdentifierHex?.ToLowerInvariant();
+                if (string.IsNullOrEmpty(targetIdentifier))
+                {
+                    _logger.LogDebug(
+                        "Topology: wpid {Wpid} matched but neither device-side nor receiver-level identifier resolvable — skipping",
+                        wpid.ToString("X4"));
+                    continue;
+                }
+
                 // Match! Device that just left us has appeared on the remote
                 // machine's receiver. Fan out remaining local devices.
                 _pendingLost.TryRemove(wpid, out _);
 
                 _logger.LogInformation(
-                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} receiver BLE {Ble} — fanning out siblings",
-                    wpid.ToString("X4"), dev.Name, announcement.Hostname, remoteBle);
+                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} — target identifier {Id} — fanning out siblings",
+                    wpid.ToString("X4"), dev.Name, announcement.Hostname, targetIdentifier);
 
-                var count = _switcher.RequestTopologyFanOut(remoteBle, wpid);
+                var count = _switcher.RequestTopologyFanOut(targetIdentifier, wpid);
                 _logger.LogInformation("Topology fan-out completed: {Count} sibling(s) switched", count);
             }
         }

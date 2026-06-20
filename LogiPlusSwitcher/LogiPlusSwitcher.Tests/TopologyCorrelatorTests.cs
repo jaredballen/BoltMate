@@ -97,7 +97,7 @@ public class TopologyCorrelatorTests
                 new()
                 {
                     Serial = "REMOTE-SER",
-                    BluetoothAddressHex = Convert.ToHexString(BleB).ToLowerInvariant(),
+                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
                     OnlineDevices = new List<OnlineDeviceEntry>
                     {
                         new() { Slot = 1, WpidHex = "AAAA" }
@@ -127,7 +127,7 @@ public class TopologyCorrelatorTests
             {
                 new()
                 {
-                    BluetoothAddressHex = Convert.ToHexString(BleB).ToLowerInvariant(),
+                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
                     OnlineDevices = new List<OnlineDeviceEntry>
                     {
                         new() { Slot = 1, WpidHex = "AAAA" }
@@ -157,7 +157,7 @@ public class TopologyCorrelatorTests
             {
                 new()
                 {
-                    BluetoothAddressHex = Convert.ToHexString(BleB).ToLowerInvariant(),
+                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
                     OnlineDevices = new List<OnlineDeviceEntry>
                     {
                         new() { Slot = 1, WpidHex = "AAAA" }

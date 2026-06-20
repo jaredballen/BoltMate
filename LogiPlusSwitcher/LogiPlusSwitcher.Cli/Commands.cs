@@ -98,7 +98,7 @@ internal static class Commands
                 var details = await receiver.GetReceiverDetailsAsync(ct: ct);
                 Console.WriteLine($"  serial:  {details.Serial ?? "(unreadable)"}");
                 Console.WriteLine($"  fw:      {details.FirmwareVersionString}");
-                if (details.BluetoothAddressString is { } ble)
+                if (details.HostIdentifierString is { } ble)
                     Console.WriteLine($"  ble:     {ble}");
                 Console.WriteLine($"  slots:   {details.MaxDevices}");
             }
@@ -338,8 +338,8 @@ internal static class Commands
                     Wpid = d.Wpid,
                     Name = d.Name,
                     Serial = d.Serial,
-                    BluetoothAddress = d.BluetoothAddress is null ? null
-                        : string.Join(":", d.BluetoothAddress.Select(b => b.ToString("X2"))),
+                    HostIdentifier = d.HostIdentifier is null ? null
+                        : string.Join(":", d.HostIdentifier.Select(b => b.ToString("X2"))),
                     CurrentHost = d.LastKnownCurrentHost,
                 });
             }

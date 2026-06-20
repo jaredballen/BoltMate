@@ -35,7 +35,7 @@ public class UserAndTopologyFanOutTests
             Transport.AddReceiver(path, serial);
             Manager.Refresh();
             var receiver = Manager.Receivers.Lookup(path).Value;
-            if (bleAddress is not null) receiver.BluetoothAddress = bleAddress;
+            if (bleAddress is not null) receiver.HostIdentifier = bleAddress;
             return receiver;
         }
 

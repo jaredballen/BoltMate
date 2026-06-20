@@ -150,6 +150,15 @@ public sealed class UdpTopologyService : IDisposable
             .MergeMany(r => r.LinkEstablished)
             .Subscribe(d => TriggerImmediateBroadcast(d.DeviceIndex, "link-up")));
 
+        // Also re-broadcast after device metadata refresh (HostBindings,
+        // CurrentHost, name) so the per-device data in the announcement
+        // updates as soon as enrichment completes — critical when a device
+        // arrives and its HostBindings aren't read yet at link-UP time.
+        _disposables.Add(_manager.Receivers.Connect()
+            .MergeMany(r => r.Devices.Connect().WhereReasonsAre(DynamicData.ChangeReason.Refresh))
+            .Sample(TimeSpan.FromMilliseconds(250))    // coalesce enrichment bursts
+            .Subscribe(_ => TriggerImmediateBroadcast(0, "device-refresh")));
+
         _disposables.Add(Disposable.Create(() =>
         {
             try { _cts?.Cancel(); } catch { }
@@ -340,28 +349,45 @@ public sealed class UdpTopologyService : IDisposable
         {
             // Prefer the receiver's own identifier read (GetReceiverDetailsAsync
             // via RECEIVER_INFO 0xB5 sub-register 0x03). NB: we call the field
-            // "BluetoothAddress" historically but it is NOT a real BLE MAC —
+            // "HostIdentifier" historically but it is NOT a real BLE MAC —
             // it's Logitech's proprietary 2.4GHz pairing identifier (rename
             // tracked separately). If that read didn't succeed (timed out /
             // firmware refused / not called yet), fall back to the identifier
             // any connected device has stored for ITS current host slot — same
             // per-receiver value the peer side matches against via HostBindings.
-            var ble = receiver.BluetoothAddressKey ?? InferReceiverBleFromDevices(receiver);
+            var ble = receiver.HostIdentifierKey ?? InferReceiverBleFromDevices(receiver);
 
             var entry = new ReceiverAnnouncementEntry
             {
                 Serial = receiver.Info.Serial,
-                BluetoothAddressHex = ble,
+                HostIdentifierHex = ble,
             };
             foreach (var device in receiver.Devices.Items)
             {
                 if (!device.LinkUp) continue;
-                entry.OnlineDevices.Add(new OnlineDeviceEntry
+                var entryDevice = new OnlineDeviceEntry
                 {
                     Slot = device.DeviceIndex,
                     WpidHex = device.Wpid.ToString("X4"),
                     Name = device.DisplayName,
-                });
+                    CurrentHost = device.LastKnownCurrentHost,
+                };
+                // Ship the device's full per-host-slot identifiers. This is
+                // what lets the peer correlator route fan-out by matching
+                // identifiers between the moving device's CurrentHost and
+                // local siblings' HostBindings — no receiver-level identifier
+                // dependency.
+                foreach (var (hostIdx, binding) in device.HostBindings)
+                {
+                    entryDevice.HostBindings.Add(new DeviceHostBindingEntry
+                    {
+                        HostIndex = hostIdx,
+                        Paired = binding.Paired,
+                        IdentifierHex = binding.HostIdentifierKey,
+                        ReceiverName = binding.ReceiverName,
+                    });
+                }
+                entry.OnlineDevices.Add(entryDevice);
             }
             ann.Receivers.Add(entry);
         }
@@ -383,7 +409,7 @@ public sealed class UdpTopologyService : IDisposable
             if (!d.LinkUp) continue;
             if (d.LastKnownCurrentHost is not byte currentHost) continue;
             if (!d.HostBindings.TryGetValue(currentHost, out var binding)) continue;
-            if (binding.BluetoothAddressKey is { } ble) return ble;
+            if (binding.HostIdentifierKey is { } ble) return ble;
         }
         return null;
     }

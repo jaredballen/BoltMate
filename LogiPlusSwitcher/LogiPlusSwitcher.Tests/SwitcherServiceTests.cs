@@ -31,7 +31,7 @@ public class SwitcherServiceTests
             Manager.Refresh();
             var receiver = Manager.Receivers.Lookup(path).Value;
             if (bleAddress is not null)
-                receiver.BluetoothAddress = bleAddress;
+                receiver.HostIdentifier = bleAddress;
             return receiver;
         }
 

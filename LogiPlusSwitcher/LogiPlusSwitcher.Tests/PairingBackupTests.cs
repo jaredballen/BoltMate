@@ -28,7 +28,7 @@ public class PairingBackupTests
                             Wpid = 0xB034,
                             Name = "MX Master 3S",
                             Serial = "2235LZ53T6Q8",
-                            BluetoothAddress = "F2:FD:55:EB:01:03",
+                            HostIdentifier = "F2:FD:55:EB:01:03",
                             CurrentHost = 0,
                         },
                     },
@@ -52,7 +52,7 @@ public class PairingBackupTests
             Assert.Equal((byte)3, r.Slots[0].DeviceIndex);
             Assert.Equal((ushort)0xB034, r.Slots[0].Wpid);
             Assert.Equal("MX Master 3S", r.Slots[0].Name);
-            Assert.Equal("F2:FD:55:EB:01:03", r.Slots[0].BluetoothAddress);
+            Assert.Equal("F2:FD:55:EB:01:03", r.Slots[0].HostIdentifier);
         }
         finally
         {

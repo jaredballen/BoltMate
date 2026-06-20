@@ -60,7 +60,7 @@ public sealed class HostsInfoService
         var p = reply.Parameters.Span;
         // Defensive parse — different firmware may omit trailing bytes.
         if (p.Length < 2)
-            return new Bolt.HostBinding(hostIndex, Paired: false, BluetoothAddress: null, ReceiverName: null);
+            return new Bolt.HostBinding(hostIndex, Paired: false, HostIdentifier: null, ReceiverName: null);
 
         var status = p[1];
         var paired = (status & 0x01) != 0 || status == 0x02;
@@ -98,7 +98,7 @@ public sealed class HostsInfoService
             }
             catch (HidPpException)
             {
-                bindings.Add(new Bolt.HostBinding(h, Paired: false, BluetoothAddress: null, ReceiverName: null));
+                bindings.Add(new Bolt.HostBinding(h, Paired: false, HostIdentifier: null, ReceiverName: null));
             }
         }
         return bindings;

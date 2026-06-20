@@ -65,7 +65,7 @@ public sealed class BoltReceiver : IDisposable
     /// when <see cref="GetReceiverDetailsAsync"/> succeeds and exposes the
     /// address (best-effort). Null until then.
     /// </summary>
-    public byte[]? BluetoothAddress { get; set; }
+    public byte[]? HostIdentifier { get; set; }
 
     /// <summary>
     /// Most recent <see cref="ReceiverDetails"/> read from the receiver's
@@ -76,9 +76,9 @@ public sealed class BoltReceiver : IDisposable
     /// </summary>
     public ReceiverDetails? LastKnownDetails { get; private set; }
 
-    /// <summary>Stable lowercase hex string of <see cref="BluetoothAddress"/>, or null.</summary>
-    public string? BluetoothAddressKey =>
-        BluetoothAddress is null ? null : Convert.ToHexString(BluetoothAddress).ToLowerInvariant();
+    /// <summary>Stable lowercase hex string of <see cref="HostIdentifier"/>, or null.</summary>
+    public string? HostIdentifierKey =>
+        HostIdentifier is null ? null : Convert.ToHexString(HostIdentifier).ToLowerInvariant();
 
     public RootService Root { get; }
     public ChangeHostService ChangeHost { get; }
@@ -389,7 +389,7 @@ public sealed class BoltReceiver : IDisposable
             // extraction varies by firmware; we capture the most-likely span.
             var ble = new byte[6];
             p.Slice(4, 6).CopyTo(ble);
-            device.BluetoothAddress = ble;
+            device.HostIdentifier = ble;
         }
         if (p.Length >= 12)
         {
@@ -489,7 +489,7 @@ public sealed class BoltReceiver : IDisposable
         // Stash the BLE address on the receiver so SwitcherService can match
         // against devices' HostBindings without re-reading on every press.
         if (ble is not null)
-            BluetoothAddress = ble;
+            HostIdentifier = ble;
 
         var details = new ReceiverDetails(serial, fwMajor, fwMinor, fwBuild, maxDevices, ble);
         LastKnownDetails = details;

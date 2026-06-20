@@ -62,7 +62,7 @@ public sealed class PairedDevice
     {
         foreach (var (slot, binding) in HostBindings)
         {
-            if (binding.Paired && binding.BluetoothAddressKey == bluetoothAddressKey)
+            if (binding.Paired && binding.HostIdentifierKey == bluetoothAddressKey)
                 return slot;
         }
         return null;
@@ -88,7 +88,7 @@ public sealed class PairedDevice
     public HidPp.Features.DeviceFirmwareInfo? Firmware { get; set; }
 
     /// <summary>Device BLE address from <c>BOLT_PAIRING_INFORMATION</c> (MSB first).</summary>
-    public byte[]? BluetoothAddress { get; set; }
+    public byte[]? HostIdentifier { get; set; }
 
     /// <summary>Wireless protocol version field from <c>BOLT_PAIRING_INFORMATION</c>.</summary>
     public byte? ProtocolVersion { get; set; }

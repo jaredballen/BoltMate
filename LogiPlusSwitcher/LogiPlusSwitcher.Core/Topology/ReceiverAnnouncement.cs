@@ -53,7 +53,7 @@ public sealed class ReceiverAnnouncementEntry
     public string? Serial { get; set; }
 
     /// <summary>Receiver's own BLE address — lowercase hex, 12 chars. Used to match against device HostBindings.</summary>
-    public string? BluetoothAddressHex { get; set; }
+    public string? HostIdentifierHex { get; set; }
 
     /// <summary>One entry per currently-online paired device.</summary>
     public List<OnlineDeviceEntry> OnlineDevices { get; set; } = new();
@@ -66,6 +66,31 @@ public sealed class OnlineDeviceEntry
     public string? WpidHex { get; set; }
     /// <summary>Friendly name if known.</summary>
     public string? Name { get; set; }
+
+    /// <summary>
+    /// Which of the device's own host slots it is currently using
+    /// (zero-indexed). Read via HID++ 2.0 feature 0x1815 fn 0.
+    /// </summary>
+    public byte? CurrentHost { get; set; }
+
+    /// <summary>
+    /// The device's per-host-slot pairing identifiers (read via feature
+    /// 0x1815 fn 1). The peer correlator uses these — specifically the
+    /// entry whose <see cref="DeviceHostBindingEntry.HostIndex"/> matches
+    /// <see cref="CurrentHost"/> — to match against local siblings'
+    /// HostBindings, no receiver-level identifier required.
+    /// </summary>
+    public List<DeviceHostBindingEntry> HostBindings { get; set; } = new();
+}
+
+public sealed class DeviceHostBindingEntry
+{
+    public byte HostIndex { get; set; }
+    public bool Paired { get; set; }
+    /// <summary>The 6-byte per-pairing identifier, lowercase hex. Null if unpaired.</summary>
+    public string? IdentifierHex { get; set; }
+    /// <summary>Friendly host name as stored on the device (Logi+ assigns), if known.</summary>
+    public string? ReceiverName { get; set; }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = false, GenerationMode = JsonSourceGenerationMode.Default)]

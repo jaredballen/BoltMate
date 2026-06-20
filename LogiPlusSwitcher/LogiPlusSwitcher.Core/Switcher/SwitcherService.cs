@@ -63,7 +63,7 @@ public sealed class SwitcherService : IDisposable
     /// Topology-aware fan-out by receiver BLE target. Used by global hotkeys
     /// (no originator) and the UDP topology correlator (originator = the
     /// device that just left this machine). For each local sibling, finds the
-    /// slot whose <see cref="HostBinding.BluetoothAddress"/> matches the
+    /// slot whose <see cref="HostBinding.HostIdentifier"/> matches the
     /// target BLE and writes <c>CHANGE_HOST(matching_slot)</c> — which may be
     /// a different slot index per device.
     /// </summary>
@@ -140,7 +140,7 @@ public sealed class SwitcherService : IDisposable
         var targetBleKey = originDevice is not null
                            && originDevice.HostBindings.TryGetValue(originHostIndex, out var binding)
                            && binding.Paired
-            ? binding.BluetoothAddressKey
+            ? binding.HostIdentifierKey
             : null;
 
         if (targetBleKey is null)

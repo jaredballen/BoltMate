@@ -85,9 +85,9 @@ public sealed class HostBindingPersistence : IDisposable
             foreach (var (hostIdx, persisted) in slotMap)
             {
                 byte[]? ble = null;
-                if (!string.IsNullOrEmpty(persisted.BluetoothAddressHex))
+                if (!string.IsNullOrEmpty(persisted.HostIdentifierHex))
                 {
-                    try { ble = Convert.FromHexString(persisted.BluetoothAddressHex); }
+                    try { ble = Convert.FromHexString(persisted.HostIdentifierHex); }
                     catch { /* skip bad data */ }
                 }
                 dict[hostIdx] = new HostBinding(hostIdx, persisted.Paired, ble, persisted.ReceiverName);
@@ -130,9 +130,9 @@ public sealed class HostBindingPersistence : IDisposable
                     slotMap[h] = new PersistedHostBinding
                     {
                         Paired = binding.Paired,
-                        BluetoothAddressHex = binding.BluetoothAddress is null
+                        HostIdentifierHex = binding.HostIdentifier is null
                             ? null
-                            : Convert.ToHexString(binding.BluetoothAddress),
+                            : Convert.ToHexString(binding.HostIdentifier),
                         ReceiverName = binding.ReceiverName,
                     };
                 }

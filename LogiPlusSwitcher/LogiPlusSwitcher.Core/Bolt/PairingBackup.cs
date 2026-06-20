@@ -44,7 +44,7 @@ public sealed class SlotBackup
     public ushort Wpid { get; set; }
     public string? Name { get; set; }
     public string? Serial { get; set; }
-    public string? BluetoothAddress { get; set; }
+    public string? HostIdentifier { get; set; }
     public byte? CurrentHost { get; set; }
 }
 
