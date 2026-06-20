@@ -37,6 +37,18 @@ public sealed class AppSettings
     public Dictionary<string, Dictionary<byte, Dictionary<byte, PersistedHostBinding>>> CachedHostBindings { get; set; }
         = new();
 
+    /// <summary>
+    /// Cached receiver-level identifier (the 6-byte value read from
+    /// RECEIVER_INFO 0x03 — the receiver's per-installation pairing id).
+    /// Keyed by receiver HID path. Lets us populate
+    /// <see cref="Bolt.BoltReceiver.BluetoothAddress"/> immediately on
+    /// startup before <see cref="Bolt.BoltReceiver.GetReceiverDetailsAsync"/>
+    /// completes — critical for cross-machine topology announcements when a
+    /// device first arrives on a host before any other device has enriched
+    /// to provide an inference target.
+    /// </summary>
+    public Dictionary<string, string> CachedReceiverIdentifiers { get; set; } = new();
+
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 

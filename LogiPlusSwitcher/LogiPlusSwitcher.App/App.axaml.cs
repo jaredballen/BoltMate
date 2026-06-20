@@ -92,6 +92,68 @@ public partial class App : Application
                                           new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
         _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
 
+        // Hydrate cached receiver identifiers on attach + persist updates
+        // after GetReceiverDetailsAsync succeeds. Without this, a freshly
+        // launched app on a host that hasn't read its receiver-level
+        // identifier yet (or where the read fails) can't include a usable
+        // BluetoothAddressHex in topology announcements, breaking cross-
+        // machine MATCH for devices arriving on this host.
+        _disposables.Add(_manager.Receivers.Connect()
+            .Subscribe(changes =>
+            {
+                foreach (var change in changes)
+                {
+                    if (change.Reason != DynamicData.ChangeReason.Add) continue;
+                    var r = change.Current;
+                    if (_settings.CachedReceiverIdentifiers.TryGetValue(r.Info.Path, out var cachedHex)
+                        && !string.IsNullOrEmpty(cachedHex))
+                    {
+                        try { r.BluetoothAddress = Convert.FromHexString(cachedHex); }
+                        catch { /* malformed cache — ignore */ }
+                    }
+                    // Periodically sample the receiver's effective identifier
+                    // and persist it. "Effective" = receiver-level read OR
+                    // the value any connected device has stored for its
+                    // current host slot (same per-pairing identifier from a
+                    // different read path). Re-poll every few seconds for ~30s
+                    // so we catch slow-arriving HostBindings reads on Win.
+                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    {
+                        for (var i = 0; i < 10; i++)
+                        {
+                            await System.Threading.Tasks.Task.Delay(3000);
+                            string? effective = r.BluetoothAddressKey;
+                            if (effective is null)
+                            {
+                                foreach (var d in r.Devices.Items)
+                                {
+                                    if (!d.LinkUp) continue;
+                                    if (d.LastKnownCurrentHost is not byte cur) continue;
+                                    if (d.HostBindings.TryGetValue(cur, out var binding)
+                                        && binding.BluetoothAddressKey is { } v)
+                                    { effective = v; break; }
+                                }
+                            }
+                            if (effective is not null && effective != cachedHex)
+                            {
+                                _settings.CachedReceiverIdentifiers[r.Info.Path] = effective;
+                                try { _settings.Save(); } catch { }
+                                // Also pin onto receiver itself for immediate use by the
+                                // announcement builder, in case GetReceiverDetailsAsync
+                                // never actually returned a value.
+                                if (r.BluetoothAddressKey is null)
+                                {
+                                    try { r.BluetoothAddress = Convert.FromHexString(effective); }
+                                    catch { }
+                                }
+                                cachedHex = effective;
+                                break;
+                            }
+                        }
+                    });
+                }
+            }));
+
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
 

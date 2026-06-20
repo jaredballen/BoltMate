@@ -68,7 +68,12 @@ public sealed class HostBindingPersistence : IDisposable
 
     private void Hydrate(BoltReceiver receiver)
     {
-        if (!_settings.CachedHostBindings.TryGetValue(receiver.Info.Serial ?? "", out var perDevice))
+        // Key on serial when present; fall back to HID path. Native Win HID
+        // descriptors don't always expose a serial string (we see empty here)
+        // so without a path-key fallback the Win-side cache silently never
+        // hydrates or persists.
+        var key = !string.IsNullOrEmpty(receiver.Info.Serial) ? receiver.Info.Serial : receiver.Info.Path;
+        if (!_settings.CachedHostBindings.TryGetValue(key, out var perDevice))
             return;
 
         foreach (var (slotIdx, slotMap) in perDevice)
@@ -111,8 +116,9 @@ public sealed class HostBindingPersistence : IDisposable
         var snapshot = new Dictionary<string, Dictionary<byte, Dictionary<byte, PersistedHostBinding>>>();
         foreach (var receiver in _manager.Receivers.Items)
         {
-            var serial = receiver.Info.Serial;
-            if (string.IsNullOrEmpty(serial)) continue;
+            // Match Hydrate(): prefer Serial when present, fall back to Path.
+            var key = !string.IsNullOrEmpty(receiver.Info.Serial) ? receiver.Info.Serial : receiver.Info.Path;
+            if (string.IsNullOrEmpty(key)) continue;
 
             var perDevice = new Dictionary<byte, Dictionary<byte, PersistedHostBinding>>();
             foreach (var device in receiver.Devices.Items)
@@ -134,7 +140,7 @@ public sealed class HostBindingPersistence : IDisposable
                     perDevice[device.DeviceIndex] = slotMap;
             }
             if (perDevice.Count > 0)
-                snapshot[serial] = perDevice;
+                snapshot[key] = perDevice;
         }
 
         _settings.CachedHostBindings = snapshot;
