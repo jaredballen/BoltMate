@@ -173,37 +173,6 @@ public class SwitcherServiceTests
     }
 
     [Fact]
-    public void Non_participating_origin_is_ignored()
-    {
-        using var f = new Fixture();
-        var receiver = f.AddReceiver();
-        receiver.IsParticipating = false;
-
-        f.SeedDevice(receiver, 1, bindings: [(0, BleA), (1, BleB)]);
-        f.SeedDevice(receiver, 2, bindings: [(0, BleA), (1, BleB)]);
-
-        f.InjectHostSwitchPress(receiver, originatingSlot: 1, targetHost: 1);
-
-        Assert.Empty(f.FanOuts);
-    }
-
-    [Fact]
-    public void Non_participating_sibling_receiver_is_skipped()
-    {
-        using var f = new Fixture();
-        var receiverA = f.AddReceiver("/test/bolt-A", "SER-A");
-        var receiverB = f.AddReceiver("/test/bolt-B", "SER-B");
-        receiverB.IsParticipating = false; // Free tier — secondary excluded.
-
-        f.SeedDevice(receiverA, 1, bindings: [(0, BleA), (1, BleC)]);
-        f.SeedDevice(receiverB, 2, bindings: [(0, BleB), (1, BleC)]);
-
-        f.InjectHostSwitchPress(receiverA, originatingSlot: 1, targetHost: 1);
-
-        Assert.Empty(f.FanOuts);
-    }
-
-    [Fact]
     public void Offline_devices_are_skipped()
     {
         using var f = new Fixture();

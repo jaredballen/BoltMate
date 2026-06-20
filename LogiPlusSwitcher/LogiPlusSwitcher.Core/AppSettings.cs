@@ -19,16 +19,6 @@ public sealed class AppSettings
     /// <summary>Per-receiver overrides keyed by receiver serial.</summary>
     public Dictionary<string, ReceiverSettings> Receivers { get; set; } = new();
 
-    /// <summary>License key for Pro features (null = free tier).</summary>
-    public string? LicenseKey { get; set; }
-
-    /// <summary>
-    /// Serial of the receiver designated as "primary" on the Free tier. When
-    /// the user has multiple receivers attached and is not Pro, only this
-    /// one participates in switch fan-out. Null = no primary chosen yet.
-    /// </summary>
-    public string? PrimaryReceiverSerial { get; set; }
-
     /// <summary>
     /// Persisted host-binding cache — keyed by receiver serial, then device
     /// index, then host slot. Lets us populate the topology view immediately
@@ -95,9 +85,6 @@ public sealed class ReceiverSettings
 
     /// <summary>Override host names just for this receiver (null = use global).</summary>
     public string[]? HostNames { get; set; }
-
-    /// <summary>Slots that participate in fan-out. Null = all link-up slots.</summary>
-    public byte[]? ParticipatingSlots { get; set; }
 }
 
 /// <summary>JSON-serializable mirror of <see cref="Bolt.HostBinding"/> for persistence.</summary>

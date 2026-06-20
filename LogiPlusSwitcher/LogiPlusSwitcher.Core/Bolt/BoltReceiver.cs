@@ -34,33 +34,6 @@ public sealed class BoltReceiver : IDisposable
     public BoltReceiverInfo Info { get; }
 
     /// <summary>
-    /// Whether this receiver participates in switch fan-out. Toggled by the
-    /// App layer based on license / primary-receiver policy. Core never
-    /// reads license state directly — it just respects this flag.
-    /// </summary>
-    /// <remarks>
-    /// Defaults to true. Set to false to exclude this receiver from
-    /// <see cref="Switcher.SwitcherService"/> routing while still allowing
-    /// enumeration / metadata reads / explicit per-device CHANGE_HOST calls.
-    /// </remarks>
-    public bool IsParticipating
-    {
-        get => _isParticipating;
-        set
-        {
-            if (_isParticipating == value) return;
-            _isParticipating = value;
-            _logger.LogInformation("Receiver {Serial} IsParticipating={Value}", Info.Serial, value);
-            _participationChanged.OnNext(value);
-        }
-    }
-    private bool _isParticipating = true;
-    private readonly Subject<bool> _participationChanged = new();
-
-    /// <summary>Hot stream of <see cref="IsParticipating"/> changes.</summary>
-    public IObservable<bool> ParticipationChanges => _participationChanged.AsObservable();
-
-    /// <summary>
     /// BLE address of this receiver as read from its own flash. Populated
     /// when <see cref="GetReceiverDetailsAsync"/> succeeds and exposes the
     /// address (best-effort). Null until then.
@@ -146,7 +119,6 @@ public sealed class BoltReceiver : IDisposable
         _disposables.Add(_rawFrames);
         _disposables.Add(_linkEstablished);
         _disposables.Add(_linkLost);
-        _disposables.Add(_participationChanged);
         _disposables.Add(_client);
         _disposables.Add(_connection);
     }

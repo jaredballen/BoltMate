@@ -10,7 +10,6 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
 using DynamicData;
-using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.App.Updates;
 using Microsoft.Extensions.Logging.Abstractions;
 using LogiPlusSwitcher.Core;
@@ -19,14 +18,12 @@ using LogiPlusSwitcher.Core.Bolt;
 namespace LogiPlusSwitcher.App;
 
 /// <summary>
-/// Settings UX: per-receiver participation + "Set as primary" controls,
-/// a cross-receiver topology matrix, and a license key entry tab.
+/// Settings UX: receivers + paired devices, a cross-receiver topology
+/// matrix, and live diagnostics.
 /// </summary>
 public partial class SettingsWindow : Window
 {
     private readonly ReceiverManager? _manager;
-    private readonly ReceiverPolicyService? _policy;
-    private readonly ILicenseService? _license;
     private readonly AppSettings? _settings;
     private readonly ObservableCollection<ReceiverRow> _rows = new();
     private readonly ObservableCollection<TopologyRow> _topology = new();
@@ -50,21 +47,15 @@ public partial class SettingsWindow : Window
 
     public SettingsWindow(
         ReceiverManager manager,
-        ReceiverPolicyService policy,
-        ILicenseService license,
         AppSettings settings) : this()
     {
         _manager = manager;
-        _policy = policy;
-        _license = license;
         _settings = settings;
 
         var list = this.FindControl<ItemsControl>("ReceiverList");
         if (list is not null) list.ItemsSource = _rows;
         var topo = this.FindControl<ItemsControl>("TopologyList");
         if (topo is not null) topo.ItemsSource = _topology;
-        var keyBox = this.FindControl<TextBox>("LicenseKeyBox");
-        if (keyBox is not null) keyBox.Text = settings.LicenseKey ?? "";
 
         _updates = new UpdateService(settings, NullLogger<UpdateService>.Instance);
 
@@ -301,16 +292,8 @@ public partial class SettingsWindow : Window
 
         var receivers = _manager.Receivers.Items.ToList();
         if (status is not null)
-            status.Text = $"{receivers.Count} receiver{(receivers.Count == 1 ? "" : "s")} attached. " +
-                          (_license?.IsPro == true ? "Pro tier — all receivers participate." : "Free tier.");
+            status.Text = $"{receivers.Count} receiver{(receivers.Count == 1 ? "" : "s")} attached.";
 
-        var licenseLine = this.FindControl<TextBlock>("LicenseStatusLine");
-        if (licenseLine is not null)
-            licenseLine.Text = _license?.IsPro == true
-                ? "Pro features unlocked. Thanks for supporting development."
-                : "Free tier. Enter a license key below to enable Pro features.";
-
-        var multipleReceivers = receivers.Count > 1;
         foreach (var receiver in receivers)
         {
             var slots = receiver.Devices.Items
@@ -327,31 +310,16 @@ public partial class SettingsWindow : Window
                 })
                 .ToList();
 
-            var (statusLabel, statusBrush, showSetPrimary) = ResolveStatus(receiver, multipleReceivers);
-
             _rows.Add(new ReceiverRow
             {
                 Serial = receiver.Info.Serial,
                 Header = receiver.Info.ProductString,
                 SubLine = $"{(string.IsNullOrEmpty(receiver.Info.Serial) ? "no serial" : receiver.Info.Serial)} · path: {Shorten(receiver.Info.Path)}",
-                StatusLabel = statusLabel,
-                StatusBrush = new SolidColorBrush(statusBrush),
-                ShowSetPrimary = showSetPrimary,
                 Slots = slots,
             });
         }
 
         BuildTopology(receivers);
-    }
-
-    private (string Label, Color Brush, bool ShowSetPrimary) ResolveStatus(BoltReceiver receiver, bool multipleAttached)
-    {
-        var isPrimary = _settings?.PrimaryReceiverSerial == receiver.Info.Serial;
-        if (receiver.IsParticipating)
-            return ("ACTIVE", Color.FromRgb(56, 142, 60), false);
-        if (multipleAttached && _license?.IsPro == false)
-            return ("STANDBY (Pro)", Color.FromRgb(120, 100, 30), !isPrimary);
-        return ("OFF", Color.FromRgb(100, 100, 100), false);
     }
 
     private void BuildTopology(List<BoltReceiver> receivers)
@@ -411,28 +379,6 @@ public partial class SettingsWindow : Window
     private void OnRefresh(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Populate();
 
     private void OnClose(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Close();
-
-    private void OnSetPrimary(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is string serial && _policy is not null)
-        {
-            _policy.SetPrimary(serial);
-            Populate();
-        }
-    }
-
-    private void OnApplyLicense(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        var keyBox = this.FindControl<TextBox>("LicenseKeyBox");
-        if (_settings is null || keyBox is null) return;
-
-        var key = (keyBox.Text ?? "").Trim();
-        _settings.LicenseKey = string.IsNullOrEmpty(key) ? null : key;
-        _settings.Save();
-        // Real validation lives in task #35. For now this is a no-op — the
-        // DevAlwaysProLicenseService doesn't read the key.
-        Populate();
-    }
 
     public Action? HostNamesChanged { get; set; }
 
@@ -593,9 +539,6 @@ public partial class SettingsWindow : Window
         public string Serial { get; set; } = "";
         public string Header { get; set; } = "";
         public string SubLine { get; set; } = "";
-        public string StatusLabel { get; set; } = "";
-        public IBrush StatusBrush { get; set; } = Brushes.Gray;
-        public bool ShowSetPrimary { get; set; }
         public List<SlotRow> Slots { get; set; } = new();
     }
 
@@ -709,8 +652,6 @@ public partial class SettingsWindow : Window
         sb.AppendLine("────────");
         if (_settings is not null)
         {
-            sb.AppendLine($"  License key set: {(!string.IsNullOrEmpty(_settings.LicenseKey) ? "yes" : "no")}");
-            sb.AppendLine($"  Primary receiver: {_settings.PrimaryReceiverSerial ?? "(none)"}");
             sb.AppendLine($"  Auto-update: {_settings.AutoCheckForUpdates} (every {_settings.UpdateCheckIntervalHours}h)");
             sb.AppendLine($"  Telemetry enabled: {_settings.TelemetryEnabled}");
         }
@@ -726,10 +667,9 @@ public partial class SettingsWindow : Window
             : "fw (not read)";
         var serial = !string.IsNullOrEmpty(r.Info.Serial) ? r.Info.Serial
                     : details?.Serial ?? "(no serial)";
-        var part = r.IsParticipating ? "participating" : "STANDBY";
         var ble = r.HostIdentifierKey ?? "(no ble)";
 
-        sb.AppendLine($"  ▼ {r.Info.ProductString}  [{part}]");
+        sb.AppendLine($"  ▼ {r.Info.ProductString}");
         sb.AppendLine($"      serial : {serial}");
         sb.AppendLine($"      {fw}");
         sb.AppendLine($"      ble    : {ble}");

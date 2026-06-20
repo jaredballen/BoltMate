@@ -85,11 +85,6 @@ public sealed class SwitcherService : IDisposable
             remoteReceiverHostId, originatingDeviceWpid?.ToString("X4") ?? "(none)", source, receiverCount);
         foreach (var receiver in _manager.Receivers.Items)
         {
-            if (!receiver.IsParticipating)
-            {
-                _logger.LogInformation("FanOut: receiver {Serial} NOT participating — skipping", receiver.Info.Serial);
-                continue;
-            }
             var deviceCount = receiver.Devices.Items.Count();
             _logger.LogInformation("FanOut: scanning receiver {Serial} ({N} devices)", receiver.Info.Serial, deviceCount);
             foreach (var device in receiver.Devices.Items)
@@ -191,11 +186,6 @@ public sealed class SwitcherService : IDisposable
 
     private void OnHostSwitchPressed(BoltReceiver origin, DivertedButtonsNotification press)
     {
-        if (!origin.IsParticipating)
-        {
-            _logger.LogInformation("Ignoring Easy-Switch press on non-participating receiver {Serial}", origin.Info.Serial);
-            return;
-        }
         if (press.TargetHost is not int target) return;
         var targetHostIndex = (byte)target;
         FanOut(origin, press.DeviceIndex, targetHostIndex, FanOutSource.EasySwitchPress);
@@ -203,7 +193,6 @@ public sealed class SwitcherService : IDisposable
 
     private void OnFlowHostSwitchDetected(BoltReceiver origin, ChangeHostWriteSnoop snoop)
     {
-        if (!origin.IsParticipating) return;
         FanOut(origin, snoop.DeviceIndex, snoop.TargetHost, FanOutSource.FlowSnoop);
     }
 
@@ -231,7 +220,6 @@ public sealed class SwitcherService : IDisposable
 
         foreach (var receiver in _manager.Receivers.Items)
         {
-            if (!receiver.IsParticipating) continue;
             foreach (var device in receiver.Devices.Items)
             {
                 if (ReferenceEquals(receiver, origin) && device.DeviceIndex == originatingSlot)
@@ -270,7 +258,6 @@ public sealed class SwitcherService : IDisposable
     {
         foreach (var receiver in _manager.Receivers.Items)
         {
-            if (!receiver.IsParticipating) continue;
             foreach (var device in receiver.Devices.Items)
             {
                 if (ReferenceEquals(receiver, origin) && device.DeviceIndex == originatingSlot)

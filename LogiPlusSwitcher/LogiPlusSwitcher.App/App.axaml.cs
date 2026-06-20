@@ -6,7 +6,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
-using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.App.Updates;
 using Avalonia.Threading;
 using LogiPlusSwitcher.Core;
@@ -25,13 +24,11 @@ public partial class App : Application
     private ReceiverManager? _manager;
     private SwitcherService? _switcher;
     private TrayMenuController? _trayController;
-    private ReceiverPolicyService? _policy;
     private UpdateService? _updates;
     private UdpTopologyService? _topology;
     private MdnsTcpChannel? _mdnsTcp;
     private TopologyCorrelator? _correlator;
     private AppSettings _settings = new();
-    private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
 
     public override void Initialize()
@@ -154,14 +151,6 @@ public partial class App : Application
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
 
-        // Tier policy: drives BoltReceiver.IsParticipating based on
-        // license + primary-receiver setting + attached set.
-        _policy = new ReceiverPolicyService(_manager, _license, _settings,
-            _loggerFactory.CreateLogger<ReceiverPolicyService>());
-        _disposables.Add(_policy);
-        _disposables.Add(_policy.MultiReceiverPromptRequired
-            .Subscribe(_ => Dispatcher.UIThread.Post(ShowMultiReceiverPrompt)));
-
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Topology-aware: routes by matching BLE address
         // through each device's HostBindings.
@@ -192,7 +181,7 @@ public partial class App : Application
         var trays = TrayIcon.GetIcons(this);
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
         {
-            _trayController = new TrayMenuController(menu, _manager, _license,
+            _trayController = new TrayMenuController(menu, _manager,
                 _loggerFactory.CreateLogger<TrayMenuController>(), _settings)
             {
                 OnSettingsClicked = OpenSettings,
@@ -275,7 +264,7 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        if (_manager is null || _policy is null) return;
+        if (_manager is null) return;
 
         if (_settingsWindow is not null && _settingsWindow.IsVisible)
         {
@@ -287,7 +276,7 @@ public partial class App : Application
         // who Cmd-Tab can find us. Restore accessory mode on close.
         MacActivationPolicy.ShowDockIcon();
 
-        _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings)
+        _settingsWindow = new SettingsWindow(_manager, _settings)
         {
             HostNamesChanged = () => _trayController?.RefreshHostLabels(),
             TopologyChanged = ApplyTopologySettings,
@@ -356,17 +345,4 @@ public partial class App : Application
         _aboutDialog.Show();
     }
 
-    private bool _multiReceiverPromptShown;
-    private void ShowMultiReceiverPrompt()
-    {
-        if (_multiReceiverPromptShown) return;
-        if (_manager is null) return;
-
-        _multiReceiverPromptShown = true;
-        var prompt = new MultiReceiverPrompt(_manager, _policy!);
-        prompt.Closed += (_, _) => _multiReceiverPromptShown = false;
-        MacActivationPolicy.ShowDockIcon();
-        prompt.Closed += (_, _) => MacActivationPolicy.HideDockIcon();
-        prompt.Show();
-    }
 }

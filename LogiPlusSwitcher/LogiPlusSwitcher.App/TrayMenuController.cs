@@ -7,7 +7,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using DynamicData;
-using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using Microsoft.Extensions.Logging;
@@ -24,7 +23,6 @@ public sealed class TrayMenuController : IDisposable
 {
     private readonly NativeMenu _menu;
     private readonly ReceiverManager _manager;
-    private readonly ILicenseService _license;
     private readonly AppSettings? _settings;
     private readonly ILogger<TrayMenuController> _logger;
     private readonly CompositeDisposable _disposables = new();
@@ -43,13 +41,11 @@ public sealed class TrayMenuController : IDisposable
     public TrayMenuController(
         NativeMenu menu,
         ReceiverManager manager,
-        ILicenseService license,
         ILogger<TrayMenuController> logger,
         AppSettings? settings = null)
     {
         _menu = menu;
         _manager = manager;
-        _license = license;
         _logger = logger;
         _settings = settings;
 
@@ -153,9 +149,6 @@ public sealed class TrayMenuController : IDisposable
                 }
                 UpdateCountItem();
             })));
-
-        _disposables.Add(_license.IsProChanges
-            .Subscribe(_ => Dispatcher.UIThread.Post(RefreshAllProGating)));
     }
 
     private void AddReceiverSection(BoltReceiver receiver)
@@ -163,7 +156,7 @@ public sealed class TrayMenuController : IDisposable
         if (_sections.ContainsKey(receiver.Info.Path))
             return;
 
-        var section = new ReceiverSection(receiver, _license, _logger);
+        var section = new ReceiverSection(receiver, _logger);
         _sections[receiver.Info.Path] = section;
 
         // Insert section items immediately before _dynamicSectionEnd.
@@ -184,12 +177,6 @@ public sealed class TrayMenuController : IDisposable
             _menu.Items.Remove(item);
         section.Dispose();
         UpdateCountItem();
-    }
-
-    private void RefreshAllProGating()
-    {
-        foreach (var section in _sections.Values)
-            section.RefreshProGating();
     }
 
     private void UpdateCountItem()
@@ -217,7 +204,6 @@ public sealed class TrayMenuController : IDisposable
     private sealed class ReceiverSection : IDisposable
     {
         private readonly BoltReceiver _receiver;
-        private readonly ILicenseService _license;
         private readonly ILogger _logger;
         private readonly CompositeDisposable _subDisposables = new();
         private readonly Dictionary<byte, NativeMenuItem> _slotItems = new();
@@ -228,20 +214,14 @@ public sealed class TrayMenuController : IDisposable
         public NativeMenuItem[] RootItems { get; }
         public int DeviceCount => _slotItems.Count;
 
-        public ReceiverSection(BoltReceiver receiver, ILicenseService license, ILogger logger)
+        public ReceiverSection(BoltReceiver receiver, ILogger logger)
         {
             _receiver = receiver;
-            _license = license;
             _logger = logger;
 
             _headerItem = new NativeMenuItem(FormatReceiverHeader(receiver)) { IsEnabled = false };
-            // Re-label when the receiver's participation changes (e.g. user
-            // picks a different primary in Free mode).
-            _subDisposables.Add(receiver.ParticipationChanges.Subscribe(_ =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    _headerItem.Header = FormatReceiverHeader(_receiver))));
 
-            _clearAllItem = new NativeMenuItem("Clear all pairings… (Pro)");
+            _clearAllItem = new NativeMenuItem("Clear all pairings…");
             _clearAllItem.Click += async (_, _) =>
             {
                 _logger.LogInformation("User picked Clear all pairings on {Serial}", _receiver.Info.Serial);
@@ -256,8 +236,6 @@ public sealed class TrayMenuController : IDisposable
                 _clearAllItem,
                 _trailingSeparator,
             ];
-
-            RefreshProGating();
         }
 
         public void WireDeviceSubscription(CompositeDisposable parentDisposables)
@@ -286,23 +264,6 @@ public sealed class TrayMenuController : IDisposable
         }
 
         public void Dispose() => _subDisposables.Dispose();
-
-        public void RefreshProGating()
-        {
-            _clearAllItem.IsVisible = _license.IsPro;
-            foreach (var slot in _slotItems.Values)
-                RefreshSlotProGating(slot);
-        }
-
-        private void RefreshSlotProGating(NativeMenuItem slotItem)
-        {
-            if (slotItem.Menu is null) return;
-            foreach (var subItem in slotItem.Menu.Items.OfType<NativeMenuItem>())
-            {
-                if (subItem.Header?.Contains("(Pro)", StringComparison.Ordinal) == true)
-                    subItem.IsVisible = _license.IsPro;
-            }
-        }
 
         private void AddSlot(PairedDevice device)
         {
@@ -358,7 +319,7 @@ public sealed class TrayMenuController : IDisposable
 
             sub.Items.Add(new NativeMenuItemSeparator());
 
-            var unpair = new NativeMenuItem("Unpair… (Pro)");
+            var unpair = new NativeMenuItem("Unpair…");
             unpair.Click += async (_, _) =>
             {
                 _logger.LogInformation("User unpaired slot {Slot}", device.DeviceIndex);
@@ -367,7 +328,6 @@ public sealed class TrayMenuController : IDisposable
             sub.Items.Add(unpair);
 
             item.Menu = sub;
-            RefreshSlotProGating(item);
             return item;
         }
 
@@ -382,12 +342,9 @@ public sealed class TrayMenuController : IDisposable
 
         private static string FormatReceiverHeader(BoltReceiver receiver)
         {
-            var baseLabel = string.IsNullOrEmpty(receiver.Info.Serial)
+            return string.IsNullOrEmpty(receiver.Info.Serial)
                 ? receiver.Info.ProductString
                 : $"{receiver.Info.ProductString} — {receiver.Info.Serial}";
-            return receiver.IsParticipating
-                ? baseLabel
-                : $"{baseLabel}  (standby — Pro)";
         }
 
         private void InsertSlotItemInOrder(NativeMenuItem item)

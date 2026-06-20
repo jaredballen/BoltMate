@@ -113,20 +113,6 @@ public class UserAndTopologyFanOutTests
     }
 
     [Fact]
-    public void UserTopologyFanOut_skips_non_participating_receiver()
-    {
-        using var f = new Fixture();
-        var r = f.AddReceiver();
-        r.IsParticipating = false;
-        f.SeedDevice(r, 1, wpid: 0xAAAA, bindings: [(1, BleB)]);
-
-        var targetHostId = Convert.ToHexString(BleB).ToLowerInvariant();
-        var count = f.Switcher.RequestTopologyFanOut(targetHostId, null, FanOutSource.UserRequested);
-        Assert.Equal(0, count);
-        Assert.Empty(f.FanOuts);
-    }
-
-    [Fact]
     public void UserTopologyFanOut_skips_offline_devices()
     {
         using var f = new Fixture();
