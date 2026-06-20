@@ -95,20 +95,48 @@ public sealed class TopologyCorrelator : IDisposable
                 if (!_pendingLost.TryGetValue(wpid, out var lostAt)) continue;
                 if (DateTimeOffset.UtcNow - lostAt > _window) { _pendingLost.TryRemove(wpid, out _); continue; }
 
-                // Device-side resolution of the target identifier. The
-                // announced device tells us its CurrentHost + its full
-                // HostBindings (read via feature 0x1815 on the source side).
-                // We pick the identifier the device is CURRENTLY using —
-                // that's the value the source receiver corresponds to. Fall
-                // back to the announcement's receiver-level identifier if
-                // device-side data isn't populated yet.
+                // Device-side resolution of the target identifier. Each
+                // receiver writes its own identifier into the device's slot
+                // table at pairing time — so the IDENTIFIER VALUES STORED ON
+                // A DEVICE DIFFER PER RECEIVER (i.e. mouse paired separately
+                // from keyboard ends up with different per-host values even
+                // though they sit on the same physical Mac+Win receivers).
+                //
+                // To get an identifier siblings will recognize, we use the
+                // LOCAL originator's view: the device that just left us is
+                // still cached in this BoltReceiver with its HostBindings
+                // populated. Index those bindings by the REMOTE-announced
+                // CurrentHost — that's the destination slot the originator
+                // moved to, and our local read of that slot's identifier is
+                // the value our siblings have for the same destination
+                // (because we wrote it into them at OUR pairing time).
                 string? targetIdentifier = null;
                 if (dev.CurrentHost is { } cur)
                 {
-                    foreach (var b in dev.HostBindings)
+                    // Find local originator across attached receivers.
+                    PairedDevice? localOrig = null;
+                    foreach (var rcv in _manager.Receivers.Items)
                     {
-                        if (b.HostIndex == cur && !string.IsNullOrEmpty(b.IdentifierHex))
-                        { targetIdentifier = b.IdentifierHex.ToLowerInvariant(); break; }
+                        foreach (var d in rcv.Devices.Items)
+                            if (d.Wpid == wpid) { localOrig = d; break; }
+                        if (localOrig is not null) break;
+                    }
+                    if (localOrig is not null &&
+                        localOrig.HostBindings.TryGetValue(cur, out var localBinding) &&
+                        localBinding.HostIdentifier is { Length: 6 } id)
+                    {
+                        targetIdentifier = Convert.ToHexString(id).ToLowerInvariant();
+                    }
+
+                    // Fall back to the remote announcement's view if local
+                    // originator HostBindings aren't populated yet.
+                    if (string.IsNullOrEmpty(targetIdentifier))
+                    {
+                        foreach (var b in dev.HostBindings)
+                        {
+                            if (b.HostIndex == cur && !string.IsNullOrEmpty(b.IdentifierHex))
+                            { targetIdentifier = b.IdentifierHex.ToLowerInvariant(); break; }
+                        }
                     }
                 }
                 targetIdentifier ??= receiver.HostIdentifierHex?.ToLowerInvariant();
