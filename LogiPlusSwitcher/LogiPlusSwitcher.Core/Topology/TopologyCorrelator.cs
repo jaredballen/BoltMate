@@ -113,14 +113,25 @@ public sealed class TopologyCorrelator : IDisposable
                 string? targetIdentifier = null;
                 if (dev.CurrentHost is { } cur)
                 {
-                    // Find local originator across attached receivers.
+                    // Find local originator across attached receivers. Re-pair
+                    // operations leave stale wpid entries on the receiver
+                    // (slots where the device was previously paired but never
+                    // unpaired cleanly). Those entries lack populated
+                    // HostBindings and would short-circuit our lookup. Prefer
+                    // an entry that has bindings; fall back to any if none do.
                     PairedDevice? localOrig = null;
+                    PairedDevice? localOrigFallback = null;
                     foreach (var rcv in _manager.Receivers.Items)
                     {
                         foreach (var d in rcv.Devices.Items)
-                            if (d.Wpid == wpid) { localOrig = d; break; }
+                        {
+                            if (d.Wpid != wpid) continue;
+                            localOrigFallback ??= d;
+                            if (d.HostBindings.Count > 0) { localOrig = d; break; }
+                        }
                         if (localOrig is not null) break;
                     }
+                    localOrig ??= localOrigFallback;
                     if (localOrig is not null &&
                         localOrig.HostBindings.TryGetValue(cur, out var localBinding) &&
                         localBinding.HostIdentifier is { Length: 6 } id)
