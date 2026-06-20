@@ -95,6 +95,17 @@ public sealed class TopologyCorrelator : IDisposable
                 if (!_pendingLost.TryGetValue(wpid, out var lostAt)) continue;
                 if (DateTimeOffset.UtcNow - lostAt > _window) { _pendingLost.TryRemove(wpid, out _); continue; }
 
+                // Cross-receiver matching is layered:
+                //   1) Per-pairing identifier (works when sibling pairings
+                //      share the destination's per-pair token — i.e. all
+                //      devices paired in the same Logi+ session).
+                //   2) Receiver friendly name (Logi+ writes the OS hostname
+                //      into each device's host slot at pairing — stable
+                //      across re-pair sessions because the hostname doesn't
+                //      change). Used as fallback when (1) misses.
+                // We collect BOTH from the local originator so the fan-out
+                // can use whichever matches each sibling.
+                string? destinationReceiverName = null;
                 // Device-side resolution of the target identifier. Each
                 // receiver writes its own identifier into the device's slot
                 // table at pairing time — so the IDENTIFIER VALUES STORED ON
@@ -133,21 +144,22 @@ public sealed class TopologyCorrelator : IDisposable
                     }
                     localOrig ??= localOrigFallback;
                     if (localOrig is not null &&
-                        localOrig.HostBindings.TryGetValue(cur, out var localBinding) &&
-                        localBinding.HostIdentifier is { Length: 6 } id)
+                        localOrig.HostBindings.TryGetValue(cur, out var localBinding))
                     {
-                        targetIdentifier = Convert.ToHexString(id).ToLowerInvariant();
+                        if (localBinding.HostIdentifier is { Length: 6 } id)
+                            targetIdentifier = Convert.ToHexString(id).ToLowerInvariant();
+                        destinationReceiverName ??= localBinding.ReceiverName;
                     }
 
                     // Fall back to the remote announcement's view if local
                     // originator HostBindings aren't populated yet.
-                    if (string.IsNullOrEmpty(targetIdentifier))
+                    foreach (var b in dev.HostBindings)
                     {
-                        foreach (var b in dev.HostBindings)
-                        {
-                            if (b.HostIndex == cur && !string.IsNullOrEmpty(b.IdentifierHex))
-                            { targetIdentifier = b.IdentifierHex.ToLowerInvariant(); break; }
-                        }
+                        if (b.HostIndex != cur) continue;
+                        if (string.IsNullOrEmpty(targetIdentifier) && !string.IsNullOrEmpty(b.IdentifierHex))
+                            targetIdentifier = b.IdentifierHex.ToLowerInvariant();
+                        destinationReceiverName ??= b.ReceiverName;
+                        break;
                     }
                 }
                 targetIdentifier ??= receiver.HostIdentifierHex?.ToLowerInvariant();
@@ -165,10 +177,10 @@ public sealed class TopologyCorrelator : IDisposable
                 _pendingLost.TryRemove(wpid, out _);
 
                 _logger.LogInformation(
-                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} — target identifier {Id} — fanning out siblings",
-                    wpid.ToString("X4"), dev.Name, announcement.Hostname, targetIdentifier);
+                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} — target identifier {Id}, name fallback '{HostName}' — fanning out siblings",
+                    wpid.ToString("X4"), dev.Name, announcement.Hostname, targetIdentifier, destinationReceiverName ?? "(none)");
 
-                var count = _switcher.RequestTopologyFanOut(targetIdentifier, wpid);
+                var count = _switcher.RequestTopologyFanOut(targetIdentifier, wpid, FanOutSource.RemoteTopology, destinationReceiverName);
                 _logger.LogInformation("Topology fan-out completed: {Count} sibling(s) switched", count);
             }
         }

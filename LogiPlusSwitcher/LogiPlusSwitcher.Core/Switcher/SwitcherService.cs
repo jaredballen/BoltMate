@@ -76,7 +76,7 @@ public sealed class SwitcherService : IDisposable
     /// pass null.</param>
     /// <param name="source">Tag so subscribers know which path fired.</param>
     /// <returns>Number of siblings fanned out.</returns>
-    public int RequestTopologyFanOut(string remoteReceiverHostId, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology)
+    public int RequestTopologyFanOut(string remoteReceiverHostId, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology, string? destinationReceiverName = null)
     {
         var count = 0;
         var receiverCount = _manager.Receivers.Items.Count();
@@ -113,15 +113,26 @@ public sealed class SwitcherService : IDisposable
                 }
 
                 var matchingSlot = device.FindHostSlotForHostId(remoteReceiverHostId);
+                var matchedBy = "id";
+                if (matchingSlot is null && !string.IsNullOrWhiteSpace(destinationReceiverName))
+                {
+                    matchingSlot = device.FindHostSlotByReceiverName(destinationReceiverName!);
+                    if (matchingSlot is not null) matchedBy = "name";
+                }
                 if (matchingSlot is not byte slot)
                 {
                     var bindingsDump = string.Join(", ", device.HostBindings.Select(kv =>
-                        $"h{kv.Key}={(kv.Value.Paired ? kv.Value.HostIdentifierKey ?? "(null)" : "unpaired")}"));
+                        $"h{kv.Key}={(kv.Value.Paired ? $"{kv.Value.HostIdentifierKey ?? "(null)"}|{kv.Value.ReceiverName ?? "(no name)"}" : "unpaired")}"));
                     _logger.LogWarning(
-                        "FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} no binding to target {Target} — bindings: [{Dump}] — skipping",
-                        device.DeviceIndex, device.DisplayName, device.Wpid, remoteReceiverHostId, bindingsDump);
+                        "FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} no binding to target {Target} (name fallback {NameTarget}) — bindings: [{Dump}] — skipping",
+                        device.DeviceIndex, device.DisplayName, device.Wpid, remoteReceiverHostId,
+                        destinationReceiverName ?? "(none)", bindingsDump);
                     continue;
                 }
+                if (matchedBy == "name")
+                    _logger.LogInformation(
+                        "FanOut: slot {Slot} ({Name}) matched by host-name fallback '{HostName}' (identifier {Target} not in bindings)",
+                        device.DeviceIndex, device.DisplayName, destinationReceiverName, remoteReceiverHostId);
 
                 if (receiver.TrySwitchHost(device.DeviceIndex, slot))
                 {

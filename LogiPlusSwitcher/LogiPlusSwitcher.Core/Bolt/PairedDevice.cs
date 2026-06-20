@@ -69,6 +69,27 @@ public sealed class PairedDevice
         return null;
     }
 
+    /// <summary>
+    /// Stable fallback to <see cref="FindHostSlotForHostId"/>. The per-pairing
+    /// host identifier rotates when a device is re-paired — siblings end up
+    /// with different identifier values for the same destination receiver
+    /// across pairing sessions. The host's friendly name (Logi Options+ sets
+    /// it to the OS hostname) stays the same across re-pairs, so it's a
+    /// reliable identity when the identifier match misses.
+    /// </summary>
+    public byte? FindHostSlotByReceiverName(string receiverName)
+    {
+        if (string.IsNullOrWhiteSpace(receiverName)) return null;
+        foreach (var (slot, binding) in HostBindings)
+        {
+            if (binding.Paired &&
+                !string.IsNullOrWhiteSpace(binding.ReceiverName) &&
+                string.Equals(binding.ReceiverName, receiverName, StringComparison.OrdinalIgnoreCase))
+                return slot;
+        }
+        return null;
+    }
+
     /// <summary>Most recently observed battery state.</summary>
     public HidPp.Features.BatteryStatus? LastKnownBattery { get; set; }
 
