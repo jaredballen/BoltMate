@@ -90,12 +90,22 @@
     <Exec Command="mkdir -p &quot;$(_AppMacOS)&quot; &quot;$(_AppResources)&quot;" />
 
     <ItemGroup>
-      <_PublishedFiles Include="$(PublishDir)**\*" Exclude="$(PublishDir)Assets\**\*;$(PublishDir)*.icns" />
-      <_IconFile Include="$(PublishDir)Assets\app-icon.icns" />
+      <!-- Use forward-slash wildcards: MSBuild's globber treats backslash as
+           a literal character on Unix, so '**\*' silently matches nothing on
+           Mac and the bundle ends up empty. Same for Exclude. -->
+      <_PublishedFiles Include="$(PublishDir)**/*" Exclude="$(PublishDir)Assets/**/*;$(PublishDir)*.icns" />
+      <_IconFile Include="$(PublishDir)Assets/app-icon.icns" />
       <_IconFile Include="$(PublishDir)app-icon.icns" />
     </ItemGroup>
-    <Copy SourceFiles="@(_PublishedFiles)" DestinationFolder="$(_AppMacOS)" SkipUnchangedFiles="true" />
+    <!-- Preserve subdirectory structure under MacOS/ via RecursiveDir. A
+         plain DestinationFolder flattens everything which loses any nested
+         runtimes/ or native subdirs the publish step may stage. -->
+    <Copy SourceFiles="@(_PublishedFiles)"
+          DestinationFiles="@(_PublishedFiles->'$(_AppMacOS)/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_IconFile)" DestinationFolder="$(_AppResources)" SkipUnchangedFiles="true" Condition="Exists('%(_IconFile.Identity)')" />
+
+    <Message Importance="high" Text="StageMacAppBundle: copied @(_PublishedFiles->Count()) file(s) into $(_AppMacOS)" />
 
     <WriteLinesToFile
         File="$(_AppContents)/Info.plist"
