@@ -75,6 +75,12 @@ public sealed class TopologyCorrelator : IDisposable
 
     private void OnAnnouncement(ReceiverAnnouncement announcement)
     {
+        // Always log inbound — diagnostics-grade visibility into why a
+        // pending-lost wpid does or doesn't match.
+        _logger.LogInformation(
+            "Topology: rx announcement from {Machine} (seq {Seq}, {Receivers} receivers, pendingLost={Pending})",
+            announcement.Hostname, announcement.Seq, announcement.Receivers.Count, _pendingLost.Count);
+
         if (_pendingLost.IsEmpty) return;
 
         foreach (var receiver in announcement.Receivers)
@@ -108,9 +114,10 @@ public sealed class TopologyCorrelator : IDisposable
                 targetIdentifier ??= receiver.HostIdentifierHex?.ToLowerInvariant();
                 if (string.IsNullOrEmpty(targetIdentifier))
                 {
-                    _logger.LogDebug(
-                        "Topology: wpid {Wpid} matched but neither device-side nor receiver-level identifier resolvable — skipping",
-                        wpid.ToString("X4"));
+                    _logger.LogWarning(
+                        "Topology: wpid {Wpid} matched in announcement from {Machine} but no target identifier resolvable (device.CurrentHost={Ch}, device.HostBindings.Count={Bc}, receiver.HostIdentifierHex={Ri}) — fan-out skipped",
+                        wpid.ToString("X4"), announcement.Hostname,
+                        dev.CurrentHost, dev.HostBindings.Count, receiver.HostIdentifierHex);
                     continue;
                 }
 

@@ -105,11 +105,36 @@ public sealed class SwitcherService : IDisposable
                         OriginatingReceiver: receiver,
                         OriginatingSlot: 0));
                     count++;
+
+                    // Verify-and-retry. CHANGE_HOST is fire-and-forget — the
+                    // firmware silently ignores writes to slots not paired
+                    // to a reachable host, and we've observed cases where the
+                    // first write doesn't take. If the device is still LinkUp
+                    // ~1s later, it never left — try again up to 2 more times.
+                    var rcvr = receiver; var dev = device; var tgt = slot;
+                    _ = Task.Run(async () =>
+                    {
+                        for (var attempt = 1; attempt <= 2; attempt++)
+                        {
+                            await Task.Delay(1200).ConfigureAwait(false);
+                            if (!dev.LinkUp) return; // success — device disconnected
+                            _logger.LogWarning(
+                                "CHANGE_HOST appears to have been ignored — device {Slot} ({Name}) still online {Ms}ms after write; retry #{N}",
+                                dev.DeviceIndex, dev.DisplayName, 1200 * attempt, attempt);
+                            try { rcvr.TrySwitchHost(dev.DeviceIndex, tgt); } catch { }
+                        }
+                        if (dev.LinkUp)
+                        {
+                            _logger.LogWarning(
+                                "CHANGE_HOST gave up — device {Slot} ({Name}) still online after 3 attempts. Likely firmware-rejected (slot {Tgt} unpaired or unreachable).",
+                                dev.DeviceIndex, dev.DisplayName, tgt);
+                        }
+                    });
                 }
             }
         }
         _logger.LogInformation(
-            "Topology fan-out (source={Source}): target BLE {Ble}, originator wpid={Wpid}, {Count} device(s) switched",
+            "Topology fan-out (source={Source}): target identifier {Id}, originator wpid={Wpid}, {Count} device(s) switched",
             source, remoteReceiverBleKey,
             originatingDeviceWpid?.ToString("X4") ?? "(none)",
             count);
