@@ -338,10 +338,20 @@ public sealed class UdpTopologyService : IDisposable
             ann.Acks.Add(new PeerAck { MachineId = peerId, LastSeq = lastSeq });
         foreach (var receiver in _manager.Receivers.Items)
         {
+            // Prefer the receiver's own identifier read (GetReceiverDetailsAsync
+            // via RECEIVER_INFO 0xB5 sub-register 0x03). NB: we call the field
+            // "BluetoothAddress" historically but it is NOT a real BLE MAC —
+            // it's Logitech's proprietary 2.4GHz pairing identifier (rename
+            // tracked separately). If that read didn't succeed (timed out /
+            // firmware refused / not called yet), fall back to the identifier
+            // any connected device has stored for ITS current host slot — same
+            // per-receiver value the peer side matches against via HostBindings.
+            var ble = receiver.BluetoothAddressKey ?? InferReceiverBleFromDevices(receiver);
+
             var entry = new ReceiverAnnouncementEntry
             {
                 Serial = receiver.Info.Serial,
-                BluetoothAddressHex = receiver.BluetoothAddressKey,
+                BluetoothAddressHex = ble,
             };
             foreach (var device in receiver.Devices.Items)
             {
@@ -356,6 +366,26 @@ public sealed class UdpTopologyService : IDisposable
             ann.Receivers.Add(entry);
         }
         return ann;
+    }
+
+    /// <summary>
+    /// Returns the receiver's per-pairing identifier as seen from a connected
+    /// device's perspective. Each device's <c>HostBindings[currentHost]</c>
+    /// records the very same byte sequence the receiver-side
+    /// <c>RECEIVER_INFO</c> read produces — but it's accessible per-device
+    /// even when the receiver-level read failed. Returns the first match
+    /// across all online devices.
+    /// </summary>
+    private static string? InferReceiverBleFromDevices(Bolt.BoltReceiver receiver)
+    {
+        foreach (var d in receiver.Devices.Items)
+        {
+            if (!d.LinkUp) continue;
+            if (d.LastKnownCurrentHost is not byte currentHost) continue;
+            if (!d.HostBindings.TryGetValue(currentHost, out var binding)) continue;
+            if (binding.BluetoothAddressKey is { } ble) return ble;
+        }
+        return null;
     }
 
     /// <summary>Per-interface broadcast endpoints + the multicast group endpoint.</summary>
