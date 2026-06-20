@@ -5,8 +5,10 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using DynamicData;
 using BoltMate.App.Updates;
+using BoltMate.App.Welcome;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Switcher;
@@ -30,6 +32,18 @@ public partial class App : Application
     private TopologyCorrelator? _correlator;
     private AppSettings _settings = new();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private PermissionStatusService? _permissions;
+
+    // Tracks whether we have already nagged the user with a notification
+    // during THIS run. Re-fires after a relaunch; we deliberately don't
+    // persist this so the user gets a fresh prompt every session if the
+    // permission stays denied.
+    private bool _notificationDeliveredThisSession;
+
+    // Owned by App so the tray "Fix permissions…" item + the local
+    // notification click handler can reopen it on demand even after
+    // first run. Created lazily.
+    private WelcomeWindow? _welcomeWindow;
 
     public override void Initialize()
     {
@@ -78,6 +92,61 @@ public partial class App : Application
 
         _settings = AppSettings.Load();
         _settings.Topology.Enabled = true;
+
+        // ====================================================================
+        // First-run gate
+        // ====================================================================
+        //
+        // If the user has never seen the welcome wizard, run it BEFORE any HID
+        // transport / topology service is started. Two reasons:
+        //   1. We want the Local Network + Input Monitoring TCC prompts to be
+        //      explicitly tied to a primer screen, NOT fire unannounced from
+        //      a background HID probe.
+        //   2. The HID transport on macOS goes through IOKit and reading
+        //      anything will immediately trigger the Input Monitoring prompt,
+        //      defeating the priming UX.
+        if (!_settings.HasShownWelcome)
+        {
+            ShowWelcomeAndDeferStartup(log);
+            return;
+        }
+
+        // Subsequent launches: run permission check on a background task and
+        // continue startup. If anything is denied, the tray badge + menu +
+        // local notification surface it without blocking startup.
+        ContinueBootstrap(log);
+    }
+
+    // ====================================================================
+    // First-run welcome → bootstrap chain
+    // ====================================================================
+
+    private void ShowWelcomeAndDeferStartup(ILogger log)
+    {
+        log.LogInformation("First-run welcome wizard");
+        // Dock icon visible for the duration of the wizard so users can
+        // Cmd-Tab into it.
+        MacActivationPolicy.ShowDockIcon();
+
+        _welcomeWindow = new WelcomeWindow(_settings);
+        _welcomeWindow.WelcomeCompleted += () =>
+        {
+            // After the wizard finishes, run normal bootstrap THEN open the
+            // Settings window to the Status tab. The Settings window is
+            // pre-warmed inside ContinueBootstrap so OpenSettings is instant.
+            Dispatcher.UIThread.Post(() =>
+            {
+                ContinueBootstrap(log);
+                MacActivationPolicy.HideDockIcon();
+                OpenSettings(SettingsWindow.TabStatus);
+            });
+        };
+        _welcomeWindow.Show();
+        _welcomeWindow.Activate();
+    }
+
+    private void ContinueBootstrap(ILogger log)
+    {
         // Composition root for the HID transport.
         // macOS: IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
         //        breaks device firmware buttons — see project_mac_hid_open_breaks_device
@@ -192,6 +261,7 @@ public partial class App : Application
                 OnStatusClicked = () => OpenSettings(SettingsWindow.TabStatus),
                 OnAboutClicked = () => OpenSettings(SettingsWindow.TabAbout),
                 OnLicenseClicked = () => OpenSettings(SettingsWindow.TabLicense),
+                OnFixPermissionsClicked = OpenWelcomeToFirstUngranted,
             };
             _disposables.Add(_trayController);
 
@@ -241,9 +311,71 @@ public partial class App : Application
         {
             desktopLife.Exit += (_, _) => _settingsWindow?.Hibernate();
         }
+
+        // ====================================================================
+        // Permission watchdog — runs continuously, drives tray badge + alert
+        // notification on subsequent launches.
+        // ====================================================================
+        StartPermissionWatchdog(log);
     }
 
     private SettingsWindow? _settingsWindow;
+
+    private void StartPermissionWatchdog(ILogger log)
+    {
+        _permissions = new PermissionStatusService();
+        _disposables.Add(_permissions);
+        _permissions.Start();
+
+        _disposables.Add(_permissions.Observe()
+            .Subscribe(s => Dispatcher.UIThread.Post(() => OnPermissionStatusChanged(s, log))));
+    }
+
+    private void OnPermissionStatusChanged(PermissionStatus s, ILogger log)
+    {
+        _trayStatus?.SetPermissionStatus(s.Overall);
+        _trayController?.SetPermissionStatus(s.Overall);
+
+        if (s.Overall == OverallStatus.AnyDenied && !_notificationDeliveredThisSession)
+        {
+            _notificationDeliveredThisSession = true;
+            var posted = LocalNotifications.TryPost(
+                "BoltMate needs permissions",
+                "Click to fix");
+            if (posted)
+                log.LogInformation("Permission alert notification delivered");
+            else
+                log.LogDebug("Permission alert notification not posted (platform fallback to tray-only)");
+        }
+    }
+
+    /// <summary>
+    /// Opens the WelcomeWindow positioned at the first permission that is
+    /// currently denied (or unknown if no Denied exists). Used by the tray
+    /// "Fix permissions…" item and the notification click.
+    /// </summary>
+    private void OpenWelcomeToFirstUngranted()
+    {
+        var snap = _permissions?.Current ?? default;
+        string primerId = WelcomeWindow.PermissionNetwork;
+        if (snap.Network == PermissionState.Denied || snap.Network == PermissionState.Unknown)
+            primerId = WelcomeWindow.PermissionNetwork;
+        else if (snap.InputMonitoring == PermissionState.Denied || snap.InputMonitoring == PermissionState.Unknown)
+            primerId = WelcomeWindow.PermissionInputMonitoring;
+
+        if (_welcomeWindow is null || !_welcomeWindow.IsVisible)
+        {
+            _welcomeWindow = new WelcomeWindow(_settings);
+            // Don't flip HasShownWelcome here — this is a "fix" run, not a
+            // first run. Just open at the primer and let the user trigger /
+            // skip as they wish. We DO NOT subscribe to WelcomeCompleted
+            // because bootstrap is already done.
+        }
+        MacActivationPolicy.ShowDockIcon();
+        _welcomeWindow.OpenToPrimer(primerId);
+        _welcomeWindow.Show();
+        _welcomeWindow.Activate();
+    }
 
     /// <summary>
     /// Starts or stops the UDP topology services to match
