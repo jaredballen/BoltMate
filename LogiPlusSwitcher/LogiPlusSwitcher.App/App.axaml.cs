@@ -7,7 +7,6 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
 using LogiPlusSwitcher.App.Updates;
-using Avalonia.Threading;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Switcher;
@@ -74,6 +73,7 @@ public partial class App : Application
         log.LogInformation("LogiPlusSwitcher.App starting (Avalonia 12)");
 
         _settings = AppSettings.Load();
+        _settings.Topology.Enabled = true;
         // Composition root for the HID transport.
         // macOS: IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
         //        breaks device firmware buttons — see project_mac_hid_open_breaks_device
@@ -185,9 +185,9 @@ public partial class App : Application
             _trayController = new TrayMenuController(menu, _manager,
                 _loggerFactory.CreateLogger<TrayMenuController>())
             {
-                OnStatusClicked = OpenSettings,
-                OnSettingsClicked = OpenSettings,
-                OnAboutClicked = ShowAbout,
+                OnStatusClicked = () => OpenSettings(SettingsWindow.TabStatus),
+                OnAboutClicked = () => OpenSettings(SettingsWindow.TabAbout),
+                OnLicenseClicked = () => OpenSettings(SettingsWindow.TabLicense),
             };
             _disposables.Add(_trayController);
 
@@ -271,12 +271,13 @@ public partial class App : Application
         _disposables.Add(_correlator);
     }
 
-    private void OpenSettings()
+    private void OpenSettings(string? initialTab = null)
     {
         if (_manager is null) return;
 
         if (_settingsWindow is not null && _settingsWindow.IsVisible)
         {
+            if (initialTab is not null) _settingsWindow.OpenTo(initialTab);
             _settingsWindow.Activate();
             return;
         }
@@ -305,53 +306,8 @@ public partial class App : Application
             _settingsWindow = null;
             MacActivationPolicy.HideDockIcon();
         };
+        if (initialTab is not null) _settingsWindow.OpenTo(initialTab);
         _settingsWindow.Show();
-    }
-
-    private Dialogs.AboutDialog? _aboutDialog;
-    private async System.Threading.Tasks.Task CheckForUpdatesNowAsync()
-    {
-        if (_updates is null) return;
-        try
-        {
-            var info = await _updates.CheckAsync();
-            var header = info is null ? "No updates available" : "Update available";
-            var body = info is null
-                ? $"You're up to date on {_updates.CurrentVersion}."
-                : $"Update {info.Version} is available.\n\n{info.DownloadUrl}";
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                MacActivationPolicy.ShowDockIcon();
-                var alert = new Dialogs.AlertWindow(header, body);
-                alert.Closed += (_, _) =>
-                {
-                    if (_settingsWindow is null && _aboutDialog is null) MacActivationPolicy.HideDockIcon();
-                };
-                alert.Show();
-            });
-        }
-        catch
-        {
-            // best effort — UpdateService stub never throws today
-        }
-    }
-
-    private void ShowAbout()
-    {
-        if (_aboutDialog is not null && _aboutDialog.IsVisible)
-        {
-            _aboutDialog.Activate();
-            return;
-        }
-        MacActivationPolicy.ShowDockIcon();
-        _aboutDialog = new Dialogs.AboutDialog();
-        _aboutDialog.Closed += (_, _) =>
-        {
-            _aboutDialog = null;
-            // Only hide the dock icon if no other window kept it visible.
-            if (_settingsWindow is null) MacActivationPolicy.HideDockIcon();
-        };
-        _aboutDialog.Show();
     }
 
 }
