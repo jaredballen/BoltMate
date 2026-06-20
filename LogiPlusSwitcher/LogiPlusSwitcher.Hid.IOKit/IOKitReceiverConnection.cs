@@ -54,14 +54,19 @@ internal sealed class IOKitReceiverConnection : IReceiverConnection
         var bytes = frame.ToBytes();
         if (bytes.Length < 2) throw new InvalidOperationException("Frame too short");
 
-        // IOHIDDeviceSetReport takes the payload EXCLUDING the report id byte,
-        // and the report id is passed as a separate parameter.
+        // libhidapi convention (mac/hid.c set_report) for IOHIDDeviceSetReport
+        // with NUMBERED reports (data[0] != 0):
+        //   - report_id param  = data[0]
+        //   - data pointer     = FULL buffer INCLUDING the report id byte
+        //   - length           = full length (NOT length - 1)
+        // We were stripping the report id byte and passing length-1, which
+        // kIOReturn'd 0xE0005000 (Unsupported). Match libhidapi exactly.
         var reportId = bytes[0];
-        var payloadLength = bytes.Length - 1;
-        var ptr = Marshal.AllocHGlobal(payloadLength);
+        var totalLength = bytes.Length;
+        var ptr = Marshal.AllocHGlobal(totalLength);
         try
         {
-            Marshal.Copy(bytes, 1, ptr, payloadLength);
+            Marshal.Copy(bytes, 0, ptr, totalLength);
             lock (_gate)
             {
                 var result = IOKitInterop.IOHIDDeviceSetReport(
@@ -69,10 +74,10 @@ internal sealed class IOKitReceiverConnection : IReceiverConnection
                     IOKitInterop.ReportTypeOutput,
                     (IntPtr)reportId,
                     ptr,
-                    (IntPtr)payloadLength);
+                    (IntPtr)totalLength);
                 if (result != IOKitInterop.Success)
                     _logger.LogWarning("IOHIDDeviceSetReport returned 0x{Code:X8} (report 0x{Rid:X2}, {Len}B)",
-                        result, reportId, payloadLength);
+                        result, reportId, totalLength);
             }
         }
         finally { Marshal.FreeHGlobal(ptr); }
@@ -157,14 +162,15 @@ internal sealed class IOKitReceiverConnection : IReceiverConnection
             if (len <= 0 || len > InboundBufferSize)
                 return;
 
-            // Reconstruct a full report buffer with the report id prefix so
-            // HidPpFrame.TryParse — which expects bytes[0] = reportId — works
-            // unchanged.
-            var full = new byte[len + 1];
-            full[0] = (byte)reportId;
-            Marshal.Copy(report, full, 1, len);
+            // Apple's IOHIDReportCallback delivers the report buffer with the
+            // report ID byte ALREADY at position 0 — same convention as
+            // libhidapi's hid_read. Don't prepend; copy as-is. (Earlier code
+            // prepended reportId, doubling it and breaking HidPpFrame.TryParse
+            // which then read DeviceIndex from a duplicated report-id byte.)
+            var buf = new byte[len];
+            Marshal.Copy(report, buf, 0, len);
 
-            var frame = HidPpFrame.TryParse(full);
+            var frame = HidPpFrame.TryParse(buf);
             if (frame is { } f)
                 _frames.OnNext(f);
         }
