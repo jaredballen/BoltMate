@@ -9,7 +9,7 @@ on:
 
 # Self-hosted Mac + Win runners are assumed to be registered with the canonical
 # labels GitHub assigns automatically (self-hosted + macOS / Windows + X64 / ARM64).
-# A `logiplus` label can be added on the runner to scope this workflow to the
+# A `boltmate` label can be added on the runner to scope this workflow to the
 # right machine if multiple self-hosted runners exist in the org.
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, macOS]
     defaults:
       run:
-        working-directory: LogiPlusSwitcher
+        working-directory: BoltMate
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +54,7 @@ jobs:
     runs-on: [self-hosted, Windows]
     defaults:
       run:
-        working-directory: LogiPlusSwitcher
+        working-directory: BoltMate
         shell: pwsh
     steps:
       - uses: actions/checkout@v4

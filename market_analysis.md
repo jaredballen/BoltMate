@@ -1,12 +1,12 @@
-# LogiPlusXSwitcher: Market Feasibility Analysis & Go-To-Market Plan
+# BoltMate: Market Feasibility Analysis & Go-To-Market Plan
 
-This document outlines the market viability of **LogiPlusXSwitcher**, analyzes the competitive landscape (both commercial and open-source), examines the primary failure modes of Logitech's official software, identifies technical gaps in our current architecture, and proposes a zero-budget go-to-market strategy.
+This document outlines the market viability of **BoltMate**, analyzes the competitive landscape (both commercial and open-source), examines the primary failure modes of Logitech's official software, identifies technical gaps in our current architecture, and proposes a zero-budget go-to-market strategy.
 
 ---
 
 ## 1. Market Feasibility & Pain Points
 
-The target audience for LogiPlusXSwitcher consists of power users, developers, sysadmins, and creative professionals who work with multiple computers (e.g., a personal Mac and a corporate Windows laptop) and use Logitech's premium MX-series or ergonomics peripherals.
+The target audience for BoltMate consists of power users, developers, sysadmins, and creative professionals who work with multiple computers (e.g., a personal Mac and a corporate Windows laptop) and use Logitech's premium MX-series or ergonomics peripherals.
 
 Logitech Options+ is notorious for several major issues, creating a strong market pull for a lightweight, reliable companion tool:
 
@@ -35,26 +35,26 @@ Logitech Options+ is notorious for several major issues, creating a strong marke
 | **CleverSwitch** (Open Source) | macOS, Windows, Linux | Python background daemon sniffing and writing to receivers | Free (MIT) | Free, lightweight, cross-platform, supports custom hook scripts | CLI-only (complex configuration), requires Python runtime, lacks GUI tray, does not support receiver admin |
 | **Solaar** (Open Source) | Linux only | Python utility communicating directly via `/dev/hidraw` | Free (GPLv2) | Powerful receiver administration, pairing, device settings control | Linux-only, heavy GTK interface, complex setup for non-technical users |
 | **Software KVMs** (Deskflow / Synergy / Mouse Without Borders) | Cross-platform | Network-based cursor and keyboard event forwarding | Free to $59 | Works with any hardware, clipboard sharing | Network latency, jitter, blocked by corporate VPNs/firewalls, requires a powered-on "server" machine |
-| **LogiPlusXSwitcher** (Ours) | macOS / Windows | .NET 9 native tray app sniffing Options+ writes and fanning out via Bolt management interfaces | Freemium ($0 / Pro tier) | Coexists with Options+, GUI tray interface, bidirectional fan-out, multi-receiver support, local backup/restore | No Bluetooth-only support, macOS Input Monitoring permission required, Bolt-only (no Unifying) |
+| **BoltMate** (Ours) | macOS / Windows | .NET 9 native tray app sniffing Options+ writes and fanning out via Bolt management interfaces | Freemium ($0 / Pro tier) | Coexists with Options+, GUI tray interface, bidirectional fan-out, multi-receiver support, local backup/restore | No Bluetooth-only support, macOS Input Monitoring permission required, Bolt-only (no Unifying) |
 
 ---
 
 ## 3. Product Gaps & Technical Considerations
 
-While LogiPlusXSwitcher has a strong foundation, we must address several gaps and prioritize user experience polish before bringing it to market:
+While BoltMate has a strong foundation, we must address several gaps and prioritize user experience polish before bringing it to market:
 
 ### ⚠️ Critical Technical Gaps & Roadmap Priorities
 
 > [!WARNING]
 > **1. Bluetooth-Only Connection Limitation (Crucial Roadmap Target)**
-> LogiPlusXSwitcher communicates directly with the Logitech Bolt USB receiver (VID `0x046D`, PID `0xC548`). Many laptop users (especially macOS users lacking USB-A ports) connect their keyboard and mouse directly via Bluetooth. 
+> BoltMate communicates directly with the Logitech Bolt USB receiver (VID `0x046D`, PID `0xC548`). Many laptop users (especially macOS users lacking USB-A ports) connect their keyboard and mouse directly via Bluetooth. 
 > * **Impact:** The app will not detect or switch devices connected purely via Bluetooth. 
 > * **High Priority Target:** In our roadmap, we must actively prioritize research into supporting Bluetooth-connected devices (via raw HID++ over OS-level Bluetooth sockets). For the initial v1 launch, we must clearly document this requirement to save support overhead, but adding native Bluetooth support is the single greatest opportunity to unlock the mainstream consumer market.
 
 > [!IMPORTANT]
 > **2. Unifying Receiver Support (Legacy Devices)**
 > A massive install base of Logitech users still relies on older Unifying receivers (VID `0x046D`, PID `0xC52B`) for devices like the standard MX Keys, MX Master 3 (non-S), and K780.
-> * **Impact:** LogiPlusXSwitcher currently ignores Unifying receivers.
+> * **Impact:** BoltMate currently ignores Unifying receivers.
 > * **High Priority Target:** Adding Unifying receiver compatibility (detecting VID `0xC52B` and parsing HID++ 1.0 register maps) should be prioritized for a fast follow-on release. Supporting Unifying will double our addressable market of power users who haven't upgraded their entire desk setups to Bolt.
 
 > [!CAUTION]
@@ -91,7 +91,7 @@ graph TD
     CDN -->|Render HTML/CSS| LandingPage[Static Landing Page]
     LandingPage -->|Download links| GHReleases
     
-    App[LogiPlusX App] -->|Activate Pro License| LS[Lemon Squeezy API - Revenue Share Only]
+    App[BoltMate App] -->|Activate Pro License| LS[Lemon Squeezy API - Revenue Share Only]
     LS -->|Webhook| Webhook[Vercel Serverless Function - Free]
     Webhook -->|Return JWT| App
 ```
@@ -117,10 +117,10 @@ graph TD
 
 5. **Activation Verification Server: Vercel Serverless / Cloudflare Workers**
    - **Cost:** $0 (Vercel offers 100k requests/day free; Cloudflare Workers offers 100k requests/day free).
-   - **Usage:** A simple Node.js or C# WebAssembly serverless function that listens for Lemon Squeezy purchase webhooks, verifies keys, and signs the JWT returned to the `LogiPlusSwitcher.Licensing` client.
+   - **Usage:** A simple Node.js or C# WebAssembly serverless function that listens for Lemon Squeezy purchase webhooks, verifies keys, and signs the JWT returned to the `BoltMate.Licensing` client.
 
 6. **Custom Domain (Optional but Recommended)**
-   - **Cost:** ~$10–$12 / year (e.g., `logiplusx.com` or `boltswitcher.app` from Namecheap, Cloudflare, or Porkbun). This is the only hard cost required to build trust.
+   - **Cost:** ~$10–$12 / year (e.g., `boltmatex.com` or `boltswitcher.app` from Namecheap, Cloudflare, or Porkbun). This is the only hard cost required to build trust.
 
 ---
 
@@ -137,7 +137,7 @@ Reddit is the single best source of high-intent traffic for utility tools. Monit
   - *"How do I make my Logitech mouse follow my keyboard switch?"*
   - *"Logitech Options+ high memory leak alternative"*
   - *"Logi Flow not working over VPN/firewall"*
-* Write detailed replies explaining *why* Options+ fails (network dependence, memory overhead) and offer LogiPlusXSwitcher as a lightweight, secure companion that runs offline.
+* Write detailed replies explaining *why* Options+ fails (network dependence, memory overhead) and offer BoltMate as a lightweight, secure companion that runs offline.
 
 #### 2. Hacker News: "Show HN"
 The Hacker News audience is composed of developers and system administrators who appreciate lightweight, single-purpose system utilities.
@@ -156,8 +156,8 @@ Developers find tools directly through GitHub searches.
 
 #### 4. Package Manager Distribution (Free & High Trust)
 Integrating into system package managers builds trust and automates updates:
-* **macOS:** Submit a formula to **Homebrew Cask** (`brew install --cask logiplusx-switcher`).
-* **Windows:** Submit a manifest to **Windows Package Manager (Winget)** (`winget install logiplusx`).
+* **macOS:** Submit a formula to **Homebrew Cask** (`brew install --cask boltmatex-switcher`).
+* **Windows:** Submit a manifest to **Windows Package Manager (Winget)** (`winget install boltmatex`).
 * This eliminates Gatekeeper / SmartScreen friction for technical users, as package managers run their own hash verifications.
 
 ---

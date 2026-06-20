@@ -1,0 +1,37 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctrl="using:Avalonia.Controls"
+             xmlns:sty="using:FluentAvalonia.Styling"
+             x:Class="BoltMate.App.App"
+             RequestedThemeVariant="Default">
+
+    <!--
+        FluentAvaloniaTheme must be FIRST in Application.Styles — it ships its
+        own Fluent control templates and resource dictionaries. Avalonia's
+        stock FluentTheme stays as a fallback for any controls not themed by
+        FluentAvalonia (the load order matters; later entries can layer on
+        top). PreferSystemTheme follows the OS light/dark setting.
+    -->
+    <Application.Styles>
+        <sty:FluentAvaloniaTheme PreferSystemTheme="True" PreferUserAccentColor="True" />
+        <FluentTheme />
+    </Application.Styles>
+
+    <!--
+        Menu items are populated programmatically by TrayMenuController so they
+        can react to the IObservableCache<BoltReceiver, string> + the
+        per-receiver IObservableCache<PairedDevice, byte>. The XAML defines
+        only the shell + icon + tooltip.
+    -->
+    <TrayIcon.Icons>
+        <TrayIcons>
+            <TrayIcon ToolTipText="BoltMate"
+                      ctrl:MacOSProperties.IsTemplateIcon="True"
+                      Icon="avares://BoltMate.App/Assets/tray-icon-light.png">
+                <TrayIcon.Menu>
+                    <NativeMenu />
+                </TrayIcon.Menu>
+            </TrayIcon>
+        </TrayIcons>
+    </TrayIcon.Icons>
+</Application>

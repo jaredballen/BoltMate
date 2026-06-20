@@ -1,0 +1,18 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "LicenseApi__Issuer": "https://license.boltmate.example",
+    "LicenseApi__KeyVaultUri": "https://PLACEHOLDER.vault.azure.net/",
+    "LicenseApi__SigningKeyName": "license-signing-key",
+    "LicenseApi__CosmosEndpoint": "https://PLACEHOLDER.documents.azure.com:443/",
+    "LicenseApi__CosmosDatabase": "boltmate",
+    "LicenseApi__EntraTenantId": "PLACEHOLDER-tenant-guid",
+    "LicenseApi__EntraClientId": "PLACEHOLDER-client-guid",
+    "LicenseApi__StripeWebhookSecret": "whsec_PLACEHOLDER",
+    "LicenseApi__StripeSecretKey": "sk_test_PLACEHOLDER",
+    "LicenseApi__SupportEmailTo": "support@boltmate.example",
+    "LicenseApi__ResendApiKey": "re_PLACEHOLDER"
+  }
+}

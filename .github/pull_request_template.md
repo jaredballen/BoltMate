@@ -14,7 +14,7 @@
 - [ ] Windows (Bolt receiver attached)
 - [ ] No hardware available — relied on unit tests only
 
-If you exercised real hardware, paste the relevant `logiplus` output.
+If you exercised real hardware, paste the relevant `boltmate` output.
 
 ## Tests
 

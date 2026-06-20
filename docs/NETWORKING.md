@@ -1,7 +1,7 @@
-# LogiPlusSwitcher — Network behaviour
+# BoltMate — Network behaviour
 
 This document covers, in full detail, every network operation
-LogiPlusSwitcher performs. Power users can use it to write firewall rules;
+BoltMate performs. Power users can use it to write firewall rules;
 sceptical users can use it to verify the app isn't doing anything nefarious.
 
 **TL;DR**:
@@ -13,7 +13,7 @@ sceptical users can use it to verify the app isn't doing anything nefarious.
   history, or anything from your other applications.
 - Every network feature can be disabled in Settings → Network.
 - The full source for this is at
-  [`LogiPlusSwitcher.Core/Topology/`](../LogiPlusSwitcher/LogiPlusSwitcher.Core/Topology/).
+  [`BoltMate.Core/Topology/`](../BoltMate/BoltMate.Core/Topology/).
 
 ---
 
@@ -29,7 +29,7 @@ keyboard disappeared.
 To make the rest of your devices follow that switch (a mouse, headset,
 etc.), the Mac-side app needs to know "the keyboard just appeared on the
 Win VM". The only way to know that without proprietary 2.4GHz radio access
-(which we cannot have) is for the Win VM's instance of LogiPlusSwitcher to
+(which we cannot have) is for the Win VM's instance of BoltMate to
 **announce on the LAN** that a device with WPID 0xB378 just came online
 there. The Mac-side instance hears that announcement and can then move the
 remaining devices.
@@ -41,7 +41,7 @@ That's the entire network story. **No other feature uses the network.**
 ## Configuration knobs
 
 All persisted in your `settings.json` (path varies by OS — see
-[`AppPaths.cs`](../LogiPlusSwitcher/LogiPlusSwitcher.Core/AppPaths.cs)):
+[`AppPaths.cs`](../BoltMate/BoltMate.Core/AppPaths.cs)):
 
 | Field | Default | What it controls |
 |---|---|---|
@@ -97,7 +97,7 @@ spacing. All repeats carry the same `Seq`; peers dedup by `(MachineId, Seq)`.
 ```
 
 **Every field is observable in the source:** see
-[`ReceiverAnnouncement.cs`](../LogiPlusSwitcher/LogiPlusSwitcher.Core/Topology/ReceiverAnnouncement.cs).
+[`ReceiverAnnouncement.cs`](../BoltMate/BoltMate.Core/Topology/ReceiverAnnouncement.cs).
 
 #### What this payload reveals about you
 
@@ -138,12 +138,12 @@ multicast traffic destined to that port.
 
 ```powershell
 # Allow inbound (so we hear peers)
-New-NetFirewallRule -DisplayName "LogiPlusSwitcher topology in" `
+New-NetFirewallRule -DisplayName "BoltMate topology in" `
     -Direction Inbound -Protocol UDP -LocalPort 41420 `
     -Action Allow -Profile Private
 
 # Allow outbound (so we send announcements)
-New-NetFirewallRule -DisplayName "LogiPlusSwitcher topology out" `
+New-NetFirewallRule -DisplayName "BoltMate topology out" `
     -Direction Outbound -Protocol UDP -RemotePort 41420 `
     -Action Allow -Profile Private
 ```
@@ -155,7 +155,7 @@ either change the profile or omit `-Profile Private`.
 ### macOS
 
 macOS firewall (`Settings → Network → Firewall`) by default allows
-outbound traffic and prompts on first inbound. When LogiPlusSwitcher first
+outbound traffic and prompts on first inbound. When BoltMate first
 listens on port 41420, you'll get a one-time prompt to allow incoming
 connections. Click **Allow**.
 
@@ -176,11 +176,11 @@ drop them.
 
 ## How to verify what we're actually sending
 
-LogiPlusSwitcher writes a log file at:
-- macOS: `~/Library/Logs/LogiPlusSwitcher/logiplus-app-YYYYMMDD.log`
-- Windows: `%LOCALAPPDATA%\LogiPlusSwitcher\Logs\logiplus-app-YYYYMMDD.log`
+BoltMate writes a log file at:
+- macOS: `~/Library/Logs/BoltMate/boltmate-app-YYYYMMDD.log`
+- Windows: `%LOCALAPPDATA%\BoltMate\Logs\boltmate-app-YYYYMMDD.log`
 
-Look for lines tagged `LogiPlusSwitcher.Core.Topology.UdpTopologyService` —
+Look for lines tagged `BoltMate.Core.Topology.UdpTopologyService` —
 they show every send attempt and every received announcement.
 
 To see the actual wire data with a packet capture tool:
@@ -231,12 +231,12 @@ If you want to be doubly sure: quit the app entirely, edit your
 
 When `Topology.UseMdnsTcp = true` (default), the app additionally:
 
-- **Publishes an mDNS service** `_logiplus._udp.local` with TXT records:
+- **Publishes an mDNS service** `_boltmate._udp.local` with TXT records:
   - `machineId=<uuid>`
   - `udpPort=<41420 or override>`
   - `v=1`
   Uses standard mDNS UDP **5353** on the link-local multicast group
-  **224.0.0.251**. Bonjour-compatible — visible in `dns-sd -B _logiplus._udp`
+  **224.0.0.251**. Bonjour-compatible — visible in `dns-sd -B _boltmate._udp`
   on macOS / `avahi-browse` on Linux.
 
 - **Discovers peers' service records** via mDNS browsing.
@@ -258,7 +258,7 @@ channel duplicates are silently absorbed.
 - Windows: `dnscache` service handles mDNS responses. New inbound TCP rule
   required for 41421:
   ```powershell
-  New-NetFirewallRule -DisplayName "LogiPlusSwitcher mDNS+TCP" `
+  New-NetFirewallRule -DisplayName "BoltMate mDNS+TCP" `
       -Direction Inbound -Protocol TCP -LocalPort 41421 `
       -Action Allow -Profile Private
   ```

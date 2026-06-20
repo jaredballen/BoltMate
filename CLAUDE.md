@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not a competitor. It detects host-switch events on a shared Logitech Bolt receiver and fans the switch out to all other paired devices on every machine in the sync group, so the whole peripheral set follows the user between hosts together.
+BoltMate is a **companion** to Logi Options+ — not a replacement, not a competitor. It detects host-switch events on a shared Logitech Bolt receiver and fans the switch out to all other paired devices on every machine in the sync group, so the whole peripheral set follows the user between hosts together.
 
 **Scope is intentionally narrow.** Anything Logi Options+ already does (pairing, unpairing, renaming, per-host friendly-name editing, hotkey binding) is out of scope. We only do the cross-device + cross-machine fan-out that Flow can't.
 
@@ -34,8 +34,8 @@ LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not 
 ## Solution layout
 
 ```
-LogiPlusSwitcher/
-├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface
+BoltMate/
+├── BoltMate.Core/        # protocol + Bolt model + Rx surface
 │   ├── HidPp/                     # frames, request/reply client, HidPp10 register helpers
 │   │   ├── Features/              # 0x0001 IRoot, 0x0003 DeviceInfo, 0x0005 DeviceName,
 │   │   │                          # 0x0007 DeviceFriendlyName, 0x1004 UnifiedBattery,
@@ -47,16 +47,16 @@ LogiPlusSwitcher/
 │   ├── Topology/                  # UDP/mDNS+TCP cross-machine sync, correlator
 │   ├── AppPaths.cs                # per-platform on-disk locations
 │   └── AppSettings.cs             # JSON config schema
-├── LogiPlusSwitcher.Cli/         # headless service / diagnostic CLI (`logiplus` binary)
-├── LogiPlusSwitcher.App/         # Avalonia 12 tray app
-│   ├── Assets/                    # tray-icon.png (+@2x), app-icon-512.png, LogiPlusSwitcher.icns
+├── BoltMate.Cli/         # headless service / diagnostic CLI (`boltmate` binary)
+├── BoltMate.App/         # Avalonia 12 tray app
+│   ├── Assets/                    # tray-icon.png (+@2x), app-icon-512.png, BoltMate.icns
 │   ├── App.axaml(.cs)             # tray shell + bootstrap
 │   ├── TrayMenuController.cs      # dynamic menu bound to manager.Receivers cache
 │   ├── DeviceEnricher.cs          # background metadata reads on link-up
 │   ├── SettingsWindow.axaml(.cs)  # receivers list, topology matrix, Status tab, Network tab
 │   ├── MacActivationPolicy.cs     # NSApp setActivationPolicy P/Invoke (Dock show/hide)
 │   └── AppLoggerSetup.cs          # Serilog logger factory (mirrors CLI's setup)
-└── LogiPlusSwitcher.Tests/       # xUnit (90+ tests), FakeReceiverConnection/Transport doubles
+└── BoltMate.Tests/       # xUnit (90+ tests), FakeReceiverConnection/Transport doubles
 ```
 
 `Directory.Build.targets` stages libhidapi alongside every project's output and publish bundle, and wraps publish output in a macOS `.app` bundle for the App project.
@@ -80,7 +80,7 @@ Falls back to legacy "same host index for every sibling" routing when the origin
 
 `HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. Persisted to disk in `AppSettings.CachedHostBindings` for offline-device bindings to survive restarts.
 
-## App layer composition (LogiPlusSwitcher.App)
+## App layer composition (BoltMate.App)
 
 - `App.axaml.cs` — bootstrap: settings load, transport, manager, switcher, enricher, topology service, tray controller.
 - `DeviceEnricher` — background metadata reads on link-up: feature discovery + name/serial/battery/host bindings.
@@ -90,29 +90,29 @@ Falls back to legacy "same host index for every sibling" routing when the origin
 
 ## Build / run
 
-From `LogiPlusSwitcher/` (the solution directory):
+From `BoltMate/` (the solution directory):
 
 ```sh
 dotnet restore
 dotnet build
 dotnet test
-dotnet run --project LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj -- monitor
+dotnet run --project BoltMate.Cli/BoltMate.Cli.csproj -- monitor
 ```
 
 Useful CLI invocations:
 
 ```
-logiplus list                            # receivers + paired devices
-logiplus monitor [--diag] [--verbose]    # listen + fan out (hot-plug aware)
-logiplus switch <host>                   # switch ALL paired devices, host 0..2
-logiplus device <slot> switch <host>     # switch one slot
-logiplus diag                            # monitor + raw frame dump
-logiplus service install|uninstall|status # macOS launchd / Windows Task Scheduler autostart
+boltmate list                            # receivers + paired devices
+boltmate monitor [--diag] [--verbose]    # listen + fan out (hot-plug aware)
+boltmate switch <host>                   # switch ALL paired devices, host 0..2
+boltmate device <slot> switch <host>     # switch one slot
+boltmate diag                            # monitor + raw frame dump
+boltmate service install|uninstall|status # macOS launchd / Windows Task Scheduler autostart
 ```
 
 ## Cross-platform dev pipe
 
-- **Windows VM**: `ssh logiplus-win` (Parallels Win 11 arm64). dotnet 9 + git + libhidapi x64 pre-installed. Repo lives at `C:\dev\LogiPlusXSwitcher`. See reference memory for full setup details.
+- **Windows VM**: `ssh boltmate-win` (Parallels Win 11 arm64). dotnet 9 + git + libhidapi x64 pre-installed. Repo lives at `C:\dev\LogiPlusXSwitcher`. See reference memory for full setup details.
 - **GitHub Actions**: `.github/workflows/ci.yml` runs on self-hosted Mac + Windows runners (labels `self-hosted` + `macOS`/`Windows`). `release.yml` builds self-contained binaries on tag `v*` and uploads to a draft GitHub Release.
 
 ## HID++ protocol cheat sheet

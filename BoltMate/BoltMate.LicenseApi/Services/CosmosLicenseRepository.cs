@@ -1,0 +1,64 @@
+using System.Collections.Generic;
+using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
+using BoltMate.LicenseApi.Configuration;
+using BoltMate.LicenseApi.Models;
+using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Options;
+
+namespace BoltMate.LicenseApi.Services;
+
+internal sealed class CosmosLicenseRepository : ILicenseRepository
+{
+    private readonly Container _container;
+
+    public CosmosLicenseRepository(CosmosClient cosmos, IOptions<LicenseApiOptions> options)
+    {
+        var opts = options.Value;
+        _container = cosmos.GetContainer(opts.CosmosDatabase, opts.LicensesContainer);
+    }
+
+    public async Task<LicenseRecord?> GetByEmailAsync(string email, CancellationToken ct = default)
+    {
+        var list = await ListByEmailAsync(email, ct).ConfigureAwait(false);
+        return list.Count == 0 ? null : list[0];
+    }
+
+    public async Task<IReadOnlyList<LicenseRecord>> ListByEmailAsync(string email, CancellationToken ct = default)
+    {
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.partitionKey = @pk AND c.status = 'active'")
+            .WithParameter("@pk", email.ToLowerInvariant());
+
+        var iterator = _container.GetItemQueryIterator<LicenseRecord>(query);
+        var results = new List<LicenseRecord>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync(ct).ConfigureAwait(false);
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    public Task UpsertAsync(LicenseRecord record, CancellationToken ct = default)
+    {
+        record.PartitionKey = record.Email.ToLowerInvariant();
+        return _container.UpsertItemAsync(record, new PartitionKey(record.PartitionKey), cancellationToken: ct);
+    }
+
+    public async Task BindOAuthSubjectAsync(string licenseId, string email, string oauthSubject, CancellationToken ct = default)
+    {
+        var pk = email.ToLowerInvariant();
+        try
+        {
+            var resp = await _container.ReadItemAsync<LicenseRecord>(licenseId, new PartitionKey(pk), cancellationToken: ct).ConfigureAwait(false);
+            var record = resp.Resource;
+            if (record.OAuthSubject == oauthSubject) return;
+            record.OAuthSubject = oauthSubject;
+            await _container.ReplaceItemAsync(record, licenseId, new PartitionKey(pk), cancellationToken: ct).ConfigureAwait(false);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+        }
+    }
+}

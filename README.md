@@ -1,8 +1,8 @@
-# LogiPlusSwitcher
+# BoltMate
 
 A **companion** to Logi Options+ — not a replacement, not a competitor.
 
-When you switch your keyboard, mouse, headset, or other Bolt-paired Logitech device to another host (via the Easy-Switch button, the device's channel button, or Mouse Flow), LogiPlusSwitcher detects the event and fans the host change out to every other device paired to the same Bolt receiver. The whole peripheral set follows you between computers together.
+When you switch your keyboard, mouse, headset, or other Bolt-paired Logitech device to another host (via the Easy-Switch button, the device's channel button, or Mouse Flow), BoltMate detects the event and fans the host change out to every other device paired to the same Bolt receiver. The whole peripheral set follows you between computers together.
 
 **Why this exists.** Logi Flow only triggers a multi-device follow when the mouse cursor crosses a screen edge. If you tap Easy-Switch on the keyboard, the mouse doesn't follow. Flow's edge-detect is also flaky in practice. This app closes that gap.
 
@@ -17,7 +17,7 @@ When you switch your keyboard, mouse, headset, or other Bolt-paired Logitech dev
 - **Unified fan-out switching** — any Easy-Switch press, mouse Flow event, or in-app hotkey makes every other paired device follow to the same host.
 - **Tap-to-identify** — flash a slot's controls for 5 seconds to confirm which physical device is which.
 - **Backup pairings to JSON** — capture your receiver tables for support flows or future restore.
-- **Diagnostic bundle** — `logiplus diagnose` zips pairings + recent logs + system info for support.
+- **Diagnostic bundle** — `boltmate diagnose` zips pairings + recent logs + system info for support.
 
 ### Pro tier (write-to-receiver-flash)
 
@@ -36,7 +36,7 @@ Tier enforcement happens at the App layer; Core has no `if (paid)` branches — 
 | Easy-Switch button on keyboard | HID++ feature `0x1B04` — divert CIDs `0x00D1/D2/D3`, listen for `divertedButtonsEvent` (target host arrives before disconnect) |
 | Easy-Switch on mouse / headset / other Logi+ device | Same mechanism |
 | Mouse Flow (cursor crosses screen edge) | Snoop Logi+'s own `0x1814 SetCurrentHost` writes on the management interface |
-| In-app hotkey | `logiplus switch <host>` |
+| In-app hotkey | `boltmate switch <host>` |
 
 ## Requirements
 
@@ -48,7 +48,7 @@ Tier enforcement happens at the App layer; Core has no `if (paid)` branches — 
 ## Build
 
 ```sh
-cd LogiPlusSwitcher
+cd BoltMate
 dotnet restore
 dotnet build
 dotnet test
@@ -57,24 +57,24 @@ dotnet test
 ## Run (dev)
 
 ```sh
-dotnet run --project LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj -- <command>
+dotnet run --project BoltMate.Cli/BoltMate.Cli.csproj -- <command>
 ```
 
 Commands:
 
 ```
-logiplus list                            # receivers + paired devices + live identity
-logiplus monitor [--diag] [--verbose]    # listen + fan out (hot-plug aware)
-logiplus switch <host>                   # switch ALL paired devices to host 0..2
-logiplus device <slot> switch <host>     # switch one slot
-logiplus device <slot> unpair            # destructive — removes the pairing
-logiplus device <slot> rename <name>     # currently firmware-blocked; see issue #32
-logiplus receiver clear [--yes]          # destructive — unpair every device on receiver 0
-logiplus backup [path]                   # write all pairings as JSON
-logiplus diagnose [path]                 # zip pairings + logs + system info for support
-logiplus diag                            # monitor + raw frame dump
-logiplus service install|uninstall|status # launchd / Task Scheduler autostart
-logiplus help
+boltmate list                            # receivers + paired devices + live identity
+boltmate monitor [--diag] [--verbose]    # listen + fan out (hot-plug aware)
+boltmate switch <host>                   # switch ALL paired devices to host 0..2
+boltmate device <slot> switch <host>     # switch one slot
+boltmate device <slot> unpair            # destructive — removes the pairing
+boltmate device <slot> rename <name>     # currently firmware-blocked; see issue #32
+boltmate receiver clear [--yes]          # destructive — unpair every device on receiver 0
+boltmate backup [path]                   # write all pairings as JSON
+boltmate diagnose [path]                 # zip pairings + logs + system info for support
+boltmate diag                            # monitor + raw frame dump
+boltmate service install|uninstall|status # launchd / Task Scheduler autostart
+boltmate help
 ```
 
 The `monitor` command survives unplug/replug and handles multiple receivers in parallel.
@@ -83,36 +83,36 @@ The `monitor` command survives unplug/replug and handles multiple receivers in p
 
 ```sh
 # macOS Apple Silicon
-dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
+dotnet publish BoltMate.Cli/BoltMate.Cli.csproj \
   -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true
 
 # macOS Intel
-dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
+dotnet publish BoltMate.Cli/BoltMate.Cli.csproj \
   -c Release -r osx-x64 --self-contained -p:PublishSingleFile=true
 
 # Windows x64 (also runs under arm64 emulation on Win-on-ARM)
-dotnet publish LogiPlusSwitcher.Cli/LogiPlusSwitcher.Cli.csproj \
+dotnet publish BoltMate.Cli/BoltMate.Cli.csproj \
   -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 ```
 
-Output: `LogiPlusSwitcher.Cli/bin/Release/net9.0/<rid>/publish/` contains a single `logiplus` binary (.NET runtime bundled) plus `libhidapi.dylib` / `hidapi.dll`.
+Output: `BoltMate.Cli/bin/Release/net9.0/<rid>/publish/` contains a single `boltmate` binary (.NET runtime bundled) plus `libhidapi.dylib` / `hidapi.dll`.
 
 CI for self-hosted Mac + Windows runners is in `.github/workflows/ci.yml`; releases via tag push trigger `release.yml`.
 
 ## Solution layout
 
 ```
-LogiPlusSwitcher/
-├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface
+BoltMate/
+├── BoltMate.Core/        # protocol + Bolt model + Rx surface
 │   ├── Hid/                       # transport (libhidapi) + connection
 │   ├── HidPp/                     # frame primitives, request/reply client
 │   │   ├── Features/              # one service per HID++ 2.0 feature ID
 │   │   └── Notifications/         # parsers for 0x41, divertedButtonsEvent, Flow snoop
 │   ├── Bolt/                      # BoltReceiver, ReceiverManager, PairedDevice, PairingBackup
 │   └── Switcher/                  # SwitcherService (fan-out orchestrator)
-├── LogiPlusSwitcher.Cli/         # headless service / diagnostic CLI
-├── LogiPlusSwitcher.App/         # Avalonia 12 tray scaffold (phase 2)
-└── LogiPlusSwitcher.Tests/       # xUnit + fakes
+├── BoltMate.Cli/         # headless service / diagnostic CLI
+├── BoltMate.App/         # Avalonia 12 tray scaffold (phase 2)
+└── BoltMate.Tests/       # xUnit + fakes
 ```
 
 ## Protocol references
