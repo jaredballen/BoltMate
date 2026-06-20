@@ -97,5 +97,6 @@ public sealed class DeviceHostBindingEntry
 [JsonSerializable(typeof(ReceiverAnnouncement))]
 [JsonSerializable(typeof(ReceiverAnnouncementEntry))]
 [JsonSerializable(typeof(OnlineDeviceEntry))]
+[JsonSerializable(typeof(DeviceHostBindingEntry))]
 [JsonSerializable(typeof(PeerAck))]
 internal partial class ReceiverAnnouncementContext : JsonSerializerContext { }
