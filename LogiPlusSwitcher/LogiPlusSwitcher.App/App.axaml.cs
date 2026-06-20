@@ -44,6 +44,30 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        try
+        {
+            OnFrameworkInitializationCompletedCore();
+        }
+        catch (Exception ex)
+        {
+            // Last-resort log to the user-visible logs dir so silent
+            // startup crashes are diagnosable from the field.
+            try
+            {
+                var dir = AppPaths.LogsDirectory;
+                System.IO.Directory.CreateDirectory(dir);
+                var path = System.IO.Path.Combine(dir, $"logiplus-crash-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+                System.IO.File.WriteAllText(path,
+                    $"LogiPlusSwitcher.App startup crash @ {DateTime.UtcNow:O}\n\n{ex}\n");
+            }
+            catch { /* swallow — best effort */ }
+            throw;
+        }
+        base.OnFrameworkInitializationCompleted();
+    }
+
+    private void OnFrameworkInitializationCompletedCore()
+    {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -138,8 +162,6 @@ public partial class App : Application
         {
             log.LogWarning("TrayIcon not found at framework init; dynamic menu wiring skipped");
         }
-
-        base.OnFrameworkInitializationCompleted();
     }
 
     private SettingsWindow? _settingsWindow;

@@ -207,7 +207,13 @@ public sealed class TopologySettings
     /// also delivered over TCP to every discovered peer. Lets the app keep
     /// working when Wi-Fi APs filter broadcast/multicast.
     /// </summary>
-    public bool UseMdnsTcp { get; set; } = true;
+    /// <remarks>
+    /// Default false — opt-in. Some Windows configurations (Bonjour service
+    /// already running, locked-down dnscache) refuse the mDNS UDP 5353 bind;
+    /// the channel survives that but adds startup latency we'd rather avoid
+    /// for users on a vanilla machine.
+    /// </remarks>
+    public bool UseMdnsTcp { get; set; } = false;
 
     /// <summary>TCP port the mDNS+TCP channel listens on (and advertises via mDNS TXT).</summary>
     public int TcpPort { get; set; } = 41421;

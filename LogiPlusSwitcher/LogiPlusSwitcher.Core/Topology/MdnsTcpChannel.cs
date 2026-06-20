@@ -63,6 +63,21 @@ public sealed class MdnsTcpChannel : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(MdnsTcpChannel));
         if (_listener is not null) return;
 
+        // Wrap EVERYTHING — any unexpected throw from Makaretu.Dns (e.g.
+        // UDP 5353 bind contention on Windows when Bonjour service is
+        // already running) must not take down the host app process.
+        try
+        {
+            StartCore();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MdnsTcp.Start failed catastrophically — channel disabled this session");
+        }
+    }
+
+    private void StartCore()
+    {
         // 1. TCP listener — peers will connect to us once they've discovered
         //    us via mDNS. We accept and read length-prefixed JSON.
         try
@@ -72,7 +87,7 @@ public sealed class MdnsTcpChannel : IDisposable
             _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
             _logger.LogInformation("MdnsTcp: listening on TCP port {Port}", _settings.TcpPort);
         }
-        catch (SocketException ex)
+        catch (Exception ex)
         {
             _logger.LogError(ex, "MdnsTcp: TCP bind on port {Port} failed; mDNS+TCP transport disabled this session",
                 _settings.TcpPort);
@@ -80,13 +95,22 @@ public sealed class MdnsTcpChannel : IDisposable
             return;
         }
 
-        // 2. mDNS publisher + browser. Makaretu.Dns.Multicast handles
-        //    Bonjour-compatible service announcements + browsing.
+        // 2. mDNS publisher + browser. Each sub-step wrapped — different
+        //    failure modes on different platforms (Win Bonjour conflict on
+        //    UDP 5353, macOS Privacy & Security prompts, Linux Avahi absent).
         try
         {
             _multicast = new MulticastService();
-            _serviceDiscovery = new ServiceDiscovery(_multicast);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "MdnsTcp: MulticastService init failed; mDNS disabled, TCP listener still up");
+            return;
+        }
 
+        try
+        {
+            _serviceDiscovery = new ServiceDiscovery(_multicast);
             var service = new ServiceProfile(
                 instanceName: _machineId,
                 serviceName: NormaliseServiceName(_settings.MdnsServiceType),
@@ -95,12 +119,9 @@ public sealed class MdnsTcpChannel : IDisposable
             service.AddProperty("udpPort", _settings.Port.ToString());
             service.AddProperty("v", "1");
             _serviceDiscovery.Advertise(service);
-
             _serviceDiscovery.ServiceDiscovered += OnServiceDiscovered;
             _serviceDiscovery.ServiceInstanceDiscovered += OnInstanceDiscovered;
-
             _multicast.Start();
-            // Query immediately so we don't wait the full TTL.
             _serviceDiscovery.QueryServiceInstances(NormaliseServiceName(_settings.MdnsServiceType));
 
             _logger.LogInformation("MdnsTcp: mDNS publisher started ({Service}, instance {Instance}, TCP {Port})",
@@ -108,7 +129,7 @@ public sealed class MdnsTcpChannel : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MdnsTcp: mDNS init failed; TCP listener still active for peers that find us another way");
+            _logger.LogWarning(ex, "MdnsTcp: mDNS publish/browse init failed; TCP listener still active for peers that find us another way");
         }
 
         // 3. Mirror UDP outgoing announcements onto every TCP peer.
