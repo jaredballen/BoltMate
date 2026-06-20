@@ -212,6 +212,17 @@ public sealed class BoltReceiver : IDisposable
         device.UnifiedBatteryIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.UnifiedBattery, ct).ConfigureAwait(false))?.Index;
         device.DeviceFriendlyNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceFriendlyName, ct).ConfigureAwait(false))?.Index;
 
+        _logger.LogInformation(
+            "Slot {Slot} feature indices: 1B04={Reprog} 1814={Ch} 1815={HI} 0003={DI} 0005={DN} 1004={Bat} 0007={FN}",
+            deviceIndex,
+            device.ReprogControlsIndex?.ToString("X2") ?? "-",
+            device.ChangeHostIndex?.ToString("X2") ?? "-",
+            device.HostsInfoIndex?.ToString("X2") ?? "-",
+            device.DeviceInfoIndex?.ToString("X2") ?? "-",
+            device.DeviceNameIndex?.ToString("X2") ?? "-",
+            device.UnifiedBatteryIndex?.ToString("X2") ?? "-",
+            device.DeviceFriendlyNameIndex?.ToString("X2") ?? "-");
+
         RefreshSlot(deviceIndex);
     }
 
