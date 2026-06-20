@@ -56,6 +56,7 @@ public sealed class UdpTopologyService : IDisposable
     private IPAddress? _multicastAddress;
     private long _nextSeq;                 // monotonic sequence counter
     private long _burstUntilTicks;         // DateTime.UtcNow.Ticks; <= now means not bursting
+    private readonly ManualResetEventSlim _kickBroadcast = new(false);  // wakes the broadcast loop early
     private bool _disposed;
 
     /// <summary>Hot stream of remote-only announcements (own machineId + duplicate seqs filtered).</summary>
@@ -137,18 +138,17 @@ public sealed class UdpTopologyService : IDisposable
 
         _cts = new CancellationTokenSource();
 
-        // Burst trigger: when any local device's link drops, schedule a tighter
-        // cadence for BurstDurationMs. Peers correlate within their own window
-        // — extra announcements here directly raise the hit rate.
+        // Burst + kick triggers: any local link-state change is important
+        // enough to broadcast about NOW. Local link-LOST → our correlator is
+        // about to start watching; tight cadence helps. Local link-UP → some
+        // peer's correlator is watching for THIS device; we need to tell
+        // them ASAP. Both fire an immediate kick PLUS a burst window.
         _disposables.Add(_manager.Receivers.Connect()
             .MergeMany(r => r.LinkLost)
-            .Subscribe(d =>
-            {
-                Interlocked.Exchange(ref _burstUntilTicks,
-                    DateTime.UtcNow.AddMilliseconds(_settings.BurstDurationMs).Ticks);
-                _logger.LogDebug("Topology: entering burst window for {Ms}ms after slot {Slot} link-lost",
-                    _settings.BurstDurationMs, d.DeviceIndex);
-            }));
+            .Subscribe(d => TriggerImmediateBroadcast(d.DeviceIndex, "link-lost")));
+        _disposables.Add(_manager.Receivers.Connect()
+            .MergeMany(r => r.LinkEstablished)
+            .Subscribe(d => TriggerImmediateBroadcast(d.DeviceIndex, "link-up")));
 
         _disposables.Add(Disposable.Create(() =>
         {
@@ -172,6 +172,23 @@ public sealed class UdpTopologyService : IDisposable
         _disposables.Dispose();
         _socket?.Dispose();
         _cts?.Dispose();
+        _kickBroadcast.Dispose();
+    }
+
+    /// <summary>
+    /// Schedules a burst window + wakes the broadcast loop NOW so the next
+    /// announcement lands within milliseconds rather than waiting for the
+    /// regular tick. Critical for cross-machine correlation — a peer's
+    /// correlator only watches for 3s after a link event, so we need to
+    /// reach them inside that window when something happens locally.
+    /// </summary>
+    private void TriggerImmediateBroadcast(byte slot, string cause)
+    {
+        Interlocked.Exchange(ref _burstUntilTicks,
+            DateTime.UtcNow.AddMilliseconds(_settings.BurstDurationMs).Ticks);
+        _logger.LogDebug("Topology: kicking immediate broadcast (slot {Slot} {Cause}); burst for {Ms}ms",
+            slot, cause, _settings.BurstDurationMs);
+        _kickBroadcast.Set();
     }
 
     private async Task BroadcastLoopAsync(CancellationToken ct)
@@ -215,10 +232,18 @@ public sealed class UdpTopologyService : IDisposable
             }
 
             // Cadence: tighter while inside a burst window, otherwise normal.
+            // BUT — wake immediately if a local link event fires (kick event),
+            // even mid-sleep. That gets our news to peers' correlators inside
+            // their 3s watch window when they need to know NOW.
             var burstUntil = new DateTime(Interlocked.Read(ref _burstUntilTicks), DateTimeKind.Utc);
             var bursting = DateTime.UtcNow < burstUntil;
             var sleepMs = bursting ? _settings.BurstIntervalMs : _settings.BroadcastIntervalSeconds * 1000;
-            try { await Task.Delay(Math.Max(50, sleepMs), ct).ConfigureAwait(false); }
+            try
+            {
+                // Wait either for the sleep to elapse OR for a kick.
+                var waited = await Task.Run(() => _kickBroadcast.Wait(Math.Max(50, sleepMs), ct), ct).ConfigureAwait(false);
+                if (waited) _kickBroadcast.Reset();
+            }
             catch (OperationCanceledException) { return; }
         }
     }

@@ -112,10 +112,13 @@ public sealed class HostsInfoService
     {
         // fn 0x30 getHostFriendlyName(hostIndex, charIndex) returns a chunk and
         // signals end-of-string via the chunk length and embedded NULs.
-        var assembled = new StringBuilder();
+        // Logi Options+ stores the hostname as UTF-8 (so a macOS hostname like
+        // "Jared's M4 MacBook Pro" with a curly apostrophe U+2019 occupies 3
+        // bytes E2 80 99). Accumulate raw bytes first, decode at end.
+        var bytes = new List<byte>(64);
         byte charOffset = 0;
 
-        while (charOffset < 64) // safety cap; names rarely exceed 32 chars
+        while (charOffset < 64) // safety cap; names rarely exceed 32 bytes
         {
             ReadOnlyMemory<byte> request = new byte[] { hostIndex, charOffset };
             var reply = await _client.RequestAsync(
@@ -127,7 +130,7 @@ public sealed class HostsInfoService
                 cancellationToken: ct).ConfigureAwait(false);
 
             var p = reply.Parameters.Span;
-            // Reply layout: [hostIndex, charIndex, ...up to 14 chars]
+            // Reply layout: [hostIndex, charIndex, ...up to 14 bytes]
             var chunk = p[2..];
 
             var endReached = false;
@@ -138,7 +141,7 @@ public sealed class HostsInfoService
                     endReached = true;
                     break;
                 }
-                assembled.Append((char)c);
+                bytes.Add(c);
                 charOffset++;
             }
 
@@ -146,7 +149,17 @@ public sealed class HostsInfoService
                 break;
         }
 
-        return assembled.ToString();
+        // Decode as UTF-8. Fall back to Latin-1 (lossless byte→char) if the
+        // bytes aren't valid UTF-8 — keeps existing ASCII names working
+        // and avoids replacing partial sequences with U+FFFD.
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes.ToArray());
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.Latin1.GetString(bytes.ToArray());
+        }
     }
 }
 
