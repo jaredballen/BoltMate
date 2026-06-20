@@ -13,14 +13,22 @@ namespace LogiPlusSwitcher.App;
 /// </summary>
 internal static class AppLoggerSetup
 {
-    public static ILoggerFactory Create(LogLevel minimum = LogLevel.Information)
+    public static ILoggerFactory Create(LogLevel? minimum = null)
     {
+        // Default level resolution: env var override first (LOGIPLUS_LOG_LEVEL=Debug),
+        // then the caller-supplied value, then Information.
+        var envOverride = Environment.GetEnvironmentVariable("LOGIPLUS_LOG_LEVEL");
+        var effective =
+            (envOverride is not null && Enum.TryParse<LogLevel>(envOverride, ignoreCase: true, out var parsed))
+                ? parsed
+                : minimum ?? LogLevel.Information;
+        minimum = effective;
         var logsDir = ResolveLogsDirectory();
         Directory.CreateDirectory(logsDir);
         var logFile = Path.Combine(logsDir, "logiplus-app-.log");
 
         var serilog = new LoggerConfiguration()
-            .MinimumLevel.Is(ToSerilog(minimum))
+            .MinimumLevel.Is(ToSerilog(minimum!.Value))
             .Enrich.FromLogContext()
             .WriteTo.File(
                 path: logFile,
