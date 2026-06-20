@@ -55,12 +55,16 @@ public partial class App : Application
 
         _settings = AppSettings.Load();
         // Composition root for the HID transport.
-        // macOS uses IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
-        // breaks device firmware buttons — see project_mac_hid_open_breaks_device
-        // memory). Win/Linux use the libhidapi-backed transport.
-        IReceiverTransport transport = OperatingSystem.IsMacOS()
-            ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(_loggerFactory)
-            : new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
+        // macOS: IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
+        //        breaks device firmware buttons — see project_mac_hid_open_breaks_device
+        //        memory).
+        // Windows: native Win32 HID via setupapi + hid.dll (eliminates HidApi.Net
+        //          long-report write failures and arm64-vs-x64 emulation issues).
+        // Linux: HidApi.Net (libhidapi on Linux works fine with our usage).
+        IReceiverTransport transport =
+            OperatingSystem.IsMacOS()   ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(_loggerFactory) :
+            OperatingSystem.IsWindows() ? new LogiPlusSwitcher.Hid.Win.WinReceiverTransport(_loggerFactory) :
+                                          new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
         _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
 
         _disposables.Add(_manager);

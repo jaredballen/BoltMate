@@ -7,12 +7,12 @@ args = args.Where(a => a is not ("--verbose" or "-v")).ToArray();
 
 using var loggerFactory = LoggerSetup.Create(verbose ? LogLevel.Debug : LogLevel.Information);
 
-// Composition root for the HID transport. macOS uses IOKit-direct (libhidapi
-// 0.15.0 ignores shared-access flag); Win/Linux use the libhidapi-backed
-// transport.
-IReceiverTransport transport = OperatingSystem.IsMacOS()
-    ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(loggerFactory)
-    : new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(loggerFactory);
+// Composition root for the HID transport. macOS = IOKit-direct, Windows =
+// native Win32 HID (setupapi + hid.dll), Linux = HidApi.Net (libhidapi).
+IReceiverTransport transport =
+    OperatingSystem.IsMacOS()   ? new LogiPlusSwitcher.Hid.IOKit.IOKitReceiverTransport(loggerFactory) :
+    OperatingSystem.IsWindows() ? new LogiPlusSwitcher.Hid.Win.WinReceiverTransport(loggerFactory) :
+                                  new LogiPlusSwitcher.Hid.HidApi.HidApiReceiverTransport(loggerFactory);
 Commands.LoggerFactory = loggerFactory;
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>

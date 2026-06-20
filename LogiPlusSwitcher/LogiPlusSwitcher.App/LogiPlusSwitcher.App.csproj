@@ -32,6 +32,7 @@
     <ProjectReference Include="..\LogiPlusSwitcher.Hid.Abstractions\LogiPlusSwitcher.Hid.Abstractions.csproj" />
     <ProjectReference Include="..\LogiPlusSwitcher.Hid.IOKit\LogiPlusSwitcher.Hid.IOKit.csproj" />
     <ProjectReference Include="..\LogiPlusSwitcher.Hid.HidApi\LogiPlusSwitcher.Hid.HidApi.csproj" />
+    <ProjectReference Include="..\LogiPlusSwitcher.Hid.Win\LogiPlusSwitcher.Hid.Win.csproj" />
   </ItemGroup>
 
   <ItemGroup>

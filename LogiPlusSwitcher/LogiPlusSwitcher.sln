@@ -14,6 +14,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LogiPlusSwitcher.Hid.IOKit"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LogiPlusSwitcher.Hid.HidApi", "LogiPlusSwitcher.Hid.HidApi\LogiPlusSwitcher.Hid.HidApi.csproj", "{89733DC6-DE98-44DD-86A7-B93AE97210C6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LogiPlusSwitcher.Hid.Win", "LogiPlusSwitcher.Hid.Win\LogiPlusSwitcher.Hid.Win.csproj", "{E2B1715C-5AA3-4624-9FC0-71E13635509C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -108,6 +110,18 @@ Global
 		{89733DC6-DE98-44DD-86A7-B93AE97210C6}.Release|x64.Build.0 = Release|Any CPU
 		{89733DC6-DE98-44DD-86A7-B93AE97210C6}.Release|x86.ActiveCfg = Release|Any CPU
 		{89733DC6-DE98-44DD-86A7-B93AE97210C6}.Release|x86.Build.0 = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|x64.Build.0 = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Debug|x86.Build.0 = Debug|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|x64.ActiveCfg = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|x64.Build.0 = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|x86.ActiveCfg = Release|Any CPU
+		{E2B1715C-5AA3-4624-9FC0-71E13635509C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
