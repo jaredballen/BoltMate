@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reactive.Disposables;
 using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
@@ -83,45 +84,6 @@ public sealed class DeviceEnricher : IDisposable
             var device = receiver.TryGetDevice(deviceIndex);
             if (device is null) return;
 
-            // DIAGNOSTIC — log the current divert state of every CID so we can
-            // diff against pre/post-App-launch snapshots. Tracked under #47/#48.
-            _logger.LogInformation("[DIAG-SNAPSHOT] BEGIN slot {Slot}", deviceIndex);
-            try
-            {
-                var notifFlags = await receiver.ReadShortReceiverRegisterAsync(0x00);
-                _logger.LogInformation("[DIAG-SNAPSHOT] receiver notification register: bytes=[{Bytes}]",
-                    Convert.ToHexString(notifFlags));
-                if (device.ReprogControlsIndex is { } reprogIdx)
-                {
-                    _logger.LogInformation("[DIAG-SNAPSHOT] reprogIndex resolved = 0x{Idx:X2}", reprogIdx);
-                    var controls = await receiver.ReprogControls.ListControlsAsync(deviceIndex, reprogIdx);
-                    _logger.LogInformation("[DIAG-SNAPSHOT] ListControls returned {Count} CIDs", controls.Count);
-                    foreach (var c in controls)
-                    {
-                        try
-                        {
-                            var st = await receiver.ReprogControls.GetCidReportingAsync(deviceIndex, reprogIdx, c.ControlId);
-                            _logger.LogInformation(
-                                "[DIAG-SNAPSHOT] slot {Slot} cid 0x{Cid:X4} flags={Flags} bfield=0x{Bfield:X2} divert={Div} persist={Per} remap=0x{Remap:X4}",
-                                deviceIndex, c.ControlId, c.Flags, st.Bfield, st.DivertSet, st.PersistDivertSet, st.RemapControlId);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning("[DIAG-SNAPSHOT] slot {Slot} cid 0x{Cid:X4} read failed: {Err}", deviceIndex, c.ControlId, ex.Message);
-                        }
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("[DIAG-SNAPSHOT] slot {Slot} has no ReprogControlsIndex — skipping CID dump", deviceIndex);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[DIAG-SNAPSHOT] dump failed for slot {Slot}", deviceIndex);
-            }
-            _logger.LogInformation("[DIAG-SNAPSHOT] END slot {Slot}", deviceIndex);
-
             // Device-side name (feature 0x0005) — more accurate than register read.
             if (device.DeviceNameIndex is { } dnIdx)
             {
@@ -160,6 +122,28 @@ public sealed class DeviceEnricher : IDisposable
                 {
                     device.LastKnownBattery = b;
                     receiver.RefreshSlot(deviceIndex);
+                }
+            }
+
+            // Divert host-switch buttons so we observe presses BEFORE the
+            // device-internal switch executes. Without this, the device just
+            // switches itself and we never see the press. SwitcherService
+            // listens on HostSwitchPresses and fans out to siblings.
+            if (device.ReprogControlsIndex is not null)
+            {
+                try
+                {
+                    var diverted = await receiver.DivertHostSwitchCidsAsync(deviceIndex);
+                    if (diverted.Count > 0)
+                        _logger.LogInformation("Diverted host-switch CIDs on slot {Slot}: [{Cids}]",
+                            deviceIndex, string.Join(", ", diverted.Select(c => $"0x{c:X4}")));
+                    else
+                        _logger.LogInformation("Slot {Slot} exposes no divertable host-switch CIDs (cycle-button device, see #14)",
+                            deviceIndex);
+                }
+                catch (HidPpException ex)
+                {
+                    _logger.LogWarning("Divert host-switch failed on slot {Slot}: {Err}", deviceIndex, ex.Message);
                 }
             }
 
