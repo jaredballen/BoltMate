@@ -21,6 +21,14 @@ public sealed class ReceiverAnnouncement
     /// <summary>ISO-8601 UTC timestamp the announcement was emitted.</summary>
     public string Timestamp { get; set; } = "";
 
+    /// <summary>
+    /// Monotonically increasing per-machine sequence number. Used by the
+    /// receiver-side dedup to suppress N× repeats of the same announcement
+    /// (we send each announcement multiple times in case any single UDP
+    /// packet is dropped).
+    /// </summary>
+    public ulong Seq { get; set; }
+
     /// <summary>One entry per attached Bolt receiver on this host.</summary>
     public List<ReceiverAnnouncementEntry> Receivers { get; set; } = new();
 }

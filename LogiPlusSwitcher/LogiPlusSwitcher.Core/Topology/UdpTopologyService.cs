@@ -1,11 +1,12 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
-using System.Text;
 using System.Text.Json;
+using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,17 +14,20 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace LogiPlusSwitcher.Core.Topology;
 
 /// <summary>
-/// LAN-only UDP broadcast + listen. Sends <see cref="ReceiverAnnouncement"/>
-/// payloads describing the local <see cref="ReceiverManager"/> state every
-/// <see cref="TopologySettings.BroadcastIntervalSeconds"/>, and surfaces
-/// inbound announcements from peers on <see cref="Announcements"/>.
+/// LAN-only UDP broadcast + multicast announcement channel. Each announcement
+/// carries a monotonic <see cref="ReceiverAnnouncement.Seq"/>; the same
+/// announcement is sent N× back-to-back (<see cref="TopologySettings.RepeatCount"/>)
+/// so a single dropped packet doesn't lose the message. Receivers dedup by
+/// (machineId, seq).
 /// </summary>
 /// <remarks>
-/// Network design: bind a single UDP socket to <see cref="IPAddress.Any"/> +
-/// the configured port. Send to <see cref="IPAddress.Broadcast"/> on each
-/// active broadcast-capable interface. The single bind serves both directions —
-/// peers' messages come back via the same socket. Loopback messages (our own
-/// machineId) are filtered out before reaching subscribers.
+/// Cadence is dynamic. Normal interval is
+/// <see cref="TopologySettings.BroadcastIntervalSeconds"/> (default 2s). When a
+/// local device link-lost fires, we enter a burst window
+/// (<see cref="TopologySettings.BurstDurationMs"/>, default 3s) where the
+/// interval tightens to <see cref="TopologySettings.BurstIntervalMs"/> (200ms).
+/// Peers' correlators are actively watching during exactly this window, so the
+/// tighter cadence increases the chance our announcement lands.
 /// </remarks>
 public sealed class UdpTopologyService : IDisposable
 {
@@ -34,15 +38,33 @@ public sealed class UdpTopologyService : IDisposable
     private readonly ILogger<UdpTopologyService> _logger;
     private readonly Subject<ReceiverAnnouncement> _announcements = new();
     private readonly CompositeDisposable _disposables = new();
+    // Per-peer last-seen sequence; suppresses N× repeats + late re-orderings.
+    private readonly ConcurrentDictionary<string, ulong> _lastSeenSeq = new();
+    // Per-peer observability: count of unique announcements + detected gaps in
+    // their sequence numbers + wall-clock last-seen. Exposed to UI / diagnostics.
+    private readonly ConcurrentDictionary<string, PeerStats> _peerStats = new();
+    // Send-side counters — increments for every attempt; errors are SocketExceptions.
+    private long _sendAttempts;
+    private long _sendErrors;
     private UdpClient? _socket;
     private CancellationTokenSource? _cts;
+    private IPAddress? _multicastAddress;
+    private long _nextSeq;                 // monotonic sequence counter
+    private long _burstUntilTicks;         // DateTime.UtcNow.Ticks; <= now means not bursting
     private bool _disposed;
 
-    /// <summary>Hot stream of remote-only announcements (own machineId filtered out).</summary>
+    /// <summary>Hot stream of remote-only announcements (own machineId + duplicate seqs filtered).</summary>
     public IObservable<ReceiverAnnouncement> Announcements => _announcements.AsObservable();
 
     /// <summary>Stable machine id for this host. Echoed in every outgoing announcement.</summary>
     public string MachineId => _machineId;
+
+    /// <summary>Send-side counters: total attempts, total errors (SocketException etc).</summary>
+    public (long Attempts, long Errors) SendStats =>
+        (Interlocked.Read(ref _sendAttempts), Interlocked.Read(ref _sendErrors));
+
+    /// <summary>Snapshot of per-peer observability for the diagnostics UI.</summary>
+    public IReadOnlyCollection<PeerStats> PeerSnapshot => _peerStats.Values.ToArray();
 
     public UdpTopologyService(
         ReceiverManager manager,
@@ -70,6 +92,19 @@ public sealed class UdpTopologyService : IDisposable
             _socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             _socket.Client.Bind(new IPEndPoint(IPAddress.Any, _settings.Port));
             _socket.EnableBroadcast = true;
+
+            if (_settings.UseMulticast && IPAddress.TryParse(_settings.MulticastGroup, out var mcast))
+            {
+                _multicastAddress = mcast;
+                try
+                {
+                    _socket.JoinMulticastGroup(mcast);
+                }
+                catch (SocketException ex)
+                {
+                    _logger.LogWarning(ex, "JoinMulticastGroup({Group}) failed; multicast send only", mcast);
+                }
+            }
         }
         catch (SocketException ex)
         {
@@ -80,6 +115,20 @@ public sealed class UdpTopologyService : IDisposable
         }
 
         _cts = new CancellationTokenSource();
+
+        // Burst trigger: when any local device's link drops, schedule a tighter
+        // cadence for BurstDurationMs. Peers correlate within their own window
+        // — extra announcements here directly raise the hit rate.
+        _disposables.Add(_manager.Receivers.Connect()
+            .MergeMany(r => r.LinkLost)
+            .Subscribe(d =>
+            {
+                Interlocked.Exchange(ref _burstUntilTicks,
+                    DateTime.UtcNow.AddMilliseconds(_settings.BurstDurationMs).Ticks);
+                _logger.LogDebug("Topology: entering burst window for {Ms}ms after slot {Slot} link-lost",
+                    _settings.BurstDurationMs, d.DeviceIndex);
+            }));
+
         _disposables.Add(Disposable.Create(() =>
         {
             try { _cts?.Cancel(); } catch { }
@@ -90,8 +139,9 @@ public sealed class UdpTopologyService : IDisposable
         _ = Task.Run(() => BroadcastLoopAsync(_cts.Token));
 
         _logger.LogInformation(
-            "UDP topology started: port {Port}, machineId {MachineId}, hostname {Hostname}",
-            _settings.Port, _machineId, _hostname);
+            "UDP topology started: port {Port}, machineId {MachineId}, hostname {Hostname}, multicast={Mcast}, repeat={Repeat}",
+            _settings.Port, _machineId, _hostname,
+            _multicastAddress?.ToString() ?? "(off)", _settings.RepeatCount);
     }
 
     public void Dispose()
@@ -105,23 +155,35 @@ public sealed class UdpTopologyService : IDisposable
 
     private async Task BroadcastLoopAsync(CancellationToken ct)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.BroadcastIntervalSeconds));
         while (!ct.IsCancellationRequested && _socket is not null)
         {
             try
             {
-                var payload = BuildAnnouncement();
+                var seq = (ulong)Interlocked.Increment(ref _nextSeq);
+                var payload = BuildAnnouncement(seq);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
-                foreach (var endpoint in BroadcastEndpoints())
+                var endpoints = AllEndpoints();
+
+                // N× repeats — same Seq each time. Peers dedup.
+                for (var rep = 0; rep < Math.Max(1, _settings.RepeatCount); rep++)
                 {
-                    try
+                    foreach (var endpoint in endpoints)
                     {
-                        await _socket.SendAsync(bytes, endpoint, ct).ConfigureAwait(false);
+                        Interlocked.Increment(ref _sendAttempts);
+                        try
+                        {
+                            await _socket.SendAsync(bytes, endpoint, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+                        {
+                            Interlocked.Increment(ref _sendErrors);
+                            _logger.LogDebug(ex, "Topology send to {Endpoint} failed", endpoint);
+                        }
                     }
-                    catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+                    if (rep < _settings.RepeatCount - 1 && _settings.RepeatGapMs > 0)
                     {
-                        // Single endpoint failed — log and continue with the others
-                        _logger.LogDebug(ex, "Topology broadcast to {Endpoint} failed", endpoint);
+                        try { await Task.Delay(_settings.RepeatGapMs, ct).ConfigureAwait(false); }
+                        catch (OperationCanceledException) { return; }
                     }
                 }
             }
@@ -130,7 +192,11 @@ public sealed class UdpTopologyService : IDisposable
                 _logger.LogWarning(ex, "Topology broadcast tick failed");
             }
 
-            try { await Task.Delay(interval, ct).ConfigureAwait(false); }
+            // Cadence: tighter while inside a burst window, otherwise normal.
+            var burstUntil = new DateTime(Interlocked.Read(ref _burstUntilTicks), DateTimeKind.Utc);
+            var bursting = DateTime.UtcNow < burstUntil;
+            var sleepMs = bursting ? _settings.BurstIntervalMs : _settings.BroadcastIntervalSeconds * 1000;
+            try { await Task.Delay(Math.Max(50, sleepMs), ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
         }
     }
@@ -144,14 +210,8 @@ public sealed class UdpTopologyService : IDisposable
             {
                 result = await _socket.ReceiveAsync(ct).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
+            catch (OperationCanceledException) { return; }
+            catch (ObjectDisposedException) { return; }
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "Topology recv failed; will retry");
@@ -162,23 +222,53 @@ public sealed class UdpTopologyService : IDisposable
             {
                 var announcement = JsonSerializer.Deserialize(result.Buffer, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                 if (announcement is null) continue;
-                if (announcement.MachineId == _machineId) continue; // our own packet bouncing back
+                if (announcement.MachineId == _machineId) continue; // own packet bouncing back
+
+                // Dedup: ignore any seq <= last-seen for this peer.
+                var key = announcement.MachineId;
+                if (_lastSeenSeq.TryGetValue(key, out var lastSeq) && announcement.Seq <= lastSeq)
+                {
+                    // Duplicate (one of the N× repeats) — bump dedup counter.
+                    if (_peerStats.TryGetValue(key, out var dupStats))
+                    {
+                        Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
+                        dupStats.LastSeenUtc = DateTime.UtcNow;
+                    }
+                    continue;
+                }
+
+                // Fresh announcement: detect gap (= packet loss) vs last seq we saw.
+                _lastSeenSeq[key] = announcement.Seq;
+                var stats = _peerStats.GetOrAdd(key, k => new PeerStats { MachineId = k });
+                stats.Hostname = announcement.Hostname;
+                stats.LastSeenUtc = DateTime.UtcNow;
+                stats.LastSeq = announcement.Seq;
+                if (lastSeq > 0 && announcement.Seq > lastSeq + 1)
+                {
+                    var missed = announcement.Seq - lastSeq - 1;
+                    Interlocked.Add(ref stats.MissedFromPeer, (long)missed);
+                    _logger.LogDebug("Topology: gap from peer {Machine} — missed {N} announcement(s) ({Last} -> {Now})",
+                        key, missed, lastSeq, announcement.Seq);
+                }
+                Interlocked.Increment(ref stats.UniqueReceived);
+
                 _announcements.OnNext(announcement);
             }
             catch (JsonException)
             {
-                // Foreign UDP traffic on the same port — ignore quietly
+                // Foreign UDP traffic on the same port — ignore quietly.
             }
         }
     }
 
-    private ReceiverAnnouncement BuildAnnouncement()
+    private ReceiverAnnouncement BuildAnnouncement(ulong seq)
     {
         var ann = new ReceiverAnnouncement
         {
             MachineId = _machineId,
             Hostname = _hostname,
             Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+            Seq = seq,
         };
         foreach (var receiver in _manager.Receivers.Items)
         {
@@ -202,7 +292,8 @@ public sealed class UdpTopologyService : IDisposable
         return ann;
     }
 
-    private IEnumerable<IPEndPoint> BroadcastEndpoints()
+    /// <summary>Per-interface broadcast endpoints + the multicast group endpoint.</summary>
+    private IEnumerable<IPEndPoint> AllEndpoints()
     {
         var port = _settings.Port;
         var found = new List<IPEndPoint>();
@@ -229,6 +320,10 @@ public sealed class UdpTopologyService : IDisposable
 
         if (found.Count == 0)
             found.Add(new IPEndPoint(IPAddress.Broadcast, port));
+
+        if (_multicastAddress is not null)
+            found.Add(new IPEndPoint(_multicastAddress, port));
+
         return found;
     }
 
@@ -248,3 +343,26 @@ public sealed class UdpTopologyService : IDisposable
         catch { return "unknown"; }
     }
 }
+
+/// <summary>
+/// Observability snapshot per remote machine — what we've heard from them,
+/// how much we missed in flight, when they last spoke. Surfaced in the
+/// Settings -> Network diagnostics panel and useful for spotting flaky links.
+/// </summary>
+public sealed class PeerStats
+{
+    public string MachineId { get; set; } = "";
+    public string? Hostname { get; set; }
+    public DateTime LastSeenUtc { get; set; }
+    public ulong LastSeq { get; set; }
+
+    /// <summary>Count of unique announcements received (deduped repeats not counted).</summary>
+    public long UniqueReceived;
+
+    /// <summary>How many of THEIR announcements we missed (detected via Seq gaps).</summary>
+    public long MissedFromPeer;
+
+    /// <summary>How many duplicate packets (their N× repeats) we suppressed.</summary>
+    public long DuplicatesSuppressed;
+}
+

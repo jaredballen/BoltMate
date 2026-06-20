@@ -169,6 +169,37 @@ public sealed class TopologySettings
 
     /// <summary>Stable machine id (UUID). Auto-generated on first save.</summary>
     public string? MachineId { get; set; }
+
+    /// <summary>
+    /// How many times each announcement is sent back-to-back. Cheap insurance
+    /// against single dropped UDP packets — receivers dedup by (machineId, Seq).
+    /// </summary>
+    public int RepeatCount { get; set; } = 3;
+
+    /// <summary>Gap between repeats in milliseconds.</summary>
+    public int RepeatGapMs { get; set; } = 25;
+
+    /// <summary>
+    /// When local DJ_PAIRING link-lost fires for any device, we tighten the
+    /// broadcast cadence to <see cref="BurstIntervalMs"/> for <see cref="BurstDurationMs"/>
+    /// — peers' correlators are actively watching during this window, so we
+    /// give them more chances to hear from us.
+    /// </summary>
+    public int BurstDurationMs { get; set; } = 3000;
+
+    /// <summary>Cadence during a burst window. 200ms is 10× faster than normal.</summary>
+    public int BurstIntervalMs { get; set; } = 200;
+
+    /// <summary>
+    /// Multicast group joined in addition to LAN broadcast. <c>239.x.x.x</c> is
+    /// the admin-scoped IPv4 multicast block — won't leak past the LAN. Some
+    /// APs filter broadcast more aggressively than multicast (others the
+    /// reverse), so we send both.
+    /// </summary>
+    public string MulticastGroup { get; set; } = "239.255.41.42";
+
+    /// <summary>Send announcements on multicast in addition to LAN broadcast.</summary>
+    public bool UseMulticast { get; set; } = true;
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]
