@@ -7,13 +7,19 @@ using Microsoft.Win32.SafeHandles;
 namespace LogiPlusSwitcher.Hid.Win;
 
 /// <summary>
-/// Native Win32 HID transport — uses <c>setupapi.dll</c> for enumeration and
+/// Native Win32 HID transport. Uses <c>setupapi.dll</c> for enumeration and
 /// <c>hid.dll</c> + <c>CreateFile</c>/<c>ReadFile</c>/<c>WriteFile</c> for I/O.
-/// No native DLL dependency (Windows ships hid.dll + setupapi.dll
-/// universally). Drops the HidApi.Net + bundled hidapi.dll path that
-/// suffered task-#31 long-report write failures and arm64-vs-x64
-/// emulation woes.
+/// No bundled native dependency (Windows ships hid.dll + setupapi.dll
+/// universally). Drops HidApi.Net + bundled hidapi.dll.
 /// </summary>
+/// <remarks>
+/// Bolt receiver topology on Windows: the management interface enumerates
+/// as TWO HID collections under the same physical interface (MI_02):
+/// <c>0xFF00/0x0001</c> (Col01) carries 7-byte SHORT HID++ reports (0x10),
+/// <c>0xFF00/0x0002</c> (Col02) carries 20-byte LONG HID++ reports (0x11).
+/// macOS/Linux see this as one interface; Windows splits it. We open BOTH
+/// collections, merge the read streams, and route writes by report ID.
+/// </remarks>
 public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
 {
     private readonly ILoggerFactory _loggerFactory;
@@ -29,11 +35,6 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
         _logger.LogInformation("Win HID transport initialised (native setupapi + hid.dll)");
     }
 
-    /// <summary>
-    /// Enumerates HID devices via SetupAPI, filters to the Bolt receiver's
-    /// management interface (VID 0x046D, PID 0xC548, usage page 0xFF00,
-    /// usage 0x0001).
-    /// </summary>
     public IReadOnlyList<BoltReceiverInfo> Enumerate()
     {
         var hidGuid = NativeMethods.GuidDevInterfaceHid;
@@ -47,7 +48,16 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
             return Array.Empty<BoltReceiverInfo>();
         }
 
-        var results = new List<BoltReceiverInfo>();
+        // Group management-interface collections by their physical-device
+        // instance id so we can pair col01 (short reports) with col02 (long
+        // reports) belonging to the SAME receiver. Path format:
+        //   \\?\HID#VID_046D&PID_C548&MI_02&Col01#8&3ee8091&0&0000#{4d1e55b2-...}
+        // The "8&3ee8091&0" segment is the receiver's instance id — shared
+        // across both collections of that receiver. We key by that.
+        var byInstance = new Dictionary<string, ReceiverPaths>(StringComparer.OrdinalIgnoreCase);
+        string? lastProduct = null, lastManufacturer = null, lastSerial = null;
+        ushort lastVersion = 0;
+
         try
         {
             var idx = 0u;
@@ -64,53 +74,62 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
                 var devicePath = GetDeviceInterfaceDetail(deviceInfoSet, ref ifaceData);
                 if (devicePath is null) continue;
 
-                // Open with neither GENERIC_READ nor GENERIC_WRITE so we can
-                // query attributes without claiming exclusive use — some HID
-                // drivers reject CreateFile with write access just for
-                // metadata reads. CreateFile with desiredAccess=0 is allowed.
-                using var probeHandle = NativeMethods.CreateFileW(
+                using var probe = NativeMethods.CreateFileW(
                     devicePath, 0,
                     NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE,
                     IntPtr.Zero, NativeMethods.OPEN_EXISTING, 0, IntPtr.Zero);
-                if (probeHandle.IsInvalid)
-                    continue;
+                if (probe.IsInvalid) continue;
 
                 var attrs = new NativeMethods.HIDD_ATTRIBUTES { Size = (uint)Marshal.SizeOf<NativeMethods.HIDD_ATTRIBUTES>() };
-                if (!NativeMethods.HidD_GetAttributes(probeHandle, ref attrs)) continue;
+                if (!NativeMethods.HidD_GetAttributes(probe, ref attrs)) continue;
                 if (attrs.VendorID != BoltConstants.LogitechVendorId) continue;
                 if (attrs.ProductID != BoltConstants.BoltReceiverProductId) continue;
 
-                // Filter to the management interface by top-level collection
-                // usage page / usage. The Bolt enumerates multiple HID
-                // collections (keyboard, mouse, digitizer, management); we
-                // only want 0xFF00 / 0x0001.
-                if (!NativeMethods.HidD_GetPreparsedData(probeHandle, out var preparsed)) continue;
+                if (!NativeMethods.HidD_GetPreparsedData(probe, out var preparsed)) continue;
                 ushort usagePage, usage, inputLen;
                 try
                 {
                     var caps = new NativeMethods.HIDP_CAPS();
-                    var status = NativeMethods.HidP_GetCaps(preparsed, ref caps);
-                    if (status != unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS)) continue;
+                    if (NativeMethods.HidP_GetCaps(preparsed, ref caps) != unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS))
+                        continue;
                     usagePage = caps.UsagePage;
                     usage = caps.Usage;
                     inputLen = caps.InputReportByteLength;
                 }
                 finally { NativeMethods.HidD_FreePreparsedData(preparsed); }
 
-                // TEMP: log every Bolt-matching collection we see so we can map
-                // which collection carries short vs long HID++ reports.
-                _logger.LogInformation(
-                    "Bolt collection probed: usagePage=0x{Up:X4} usage=0x{Use:X4} inputReportLen={Len} path={Path}",
-                    usagePage, usage, inputLen, devicePath);
-
+                // Only management-interface collections (0xFF00).
                 if (usagePage != BoltConstants.ManagementUsagePage) continue;
-                if (usage != BoltConstants.ManagementUsage) continue;
 
-                var product = ReadHidString(probeHandle, NativeMethods.HidD_GetProductString) ?? "Bolt Receiver";
-                var manufacturer = ReadHidString(probeHandle, NativeMethods.HidD_GetManufacturerString) ?? "Logitech";
-                var serial = ReadHidString(probeHandle, NativeMethods.HidD_GetSerialNumberString) ?? "";
+                // Strip the per-collection Col0X suffix to get the receiver's
+                // physical instance id. Path lowercased for stable dict key.
+                var instanceId = ExtractInstanceId(devicePath);
+                if (instanceId is null) continue;
 
-                results.Add(new BoltReceiverInfo(devicePath, serial, product, manufacturer, attrs.VersionNumber));
+                if (!byInstance.TryGetValue(instanceId, out var paths))
+                {
+                    paths = new ReceiverPaths();
+                    byInstance[instanceId] = paths;
+
+                    // Read metadata once per receiver (it's identical across
+                    // its collections).
+                    lastProduct = ReadHidString(probe, NativeMethods.HidD_GetProductString) ?? "Bolt Receiver";
+                    lastManufacturer = ReadHidString(probe, NativeMethods.HidD_GetManufacturerString) ?? "Logitech";
+                    lastSerial = ReadHidString(probe, NativeMethods.HidD_GetSerialNumberString) ?? "";
+                    lastVersion = attrs.VersionNumber;
+                    paths.Product = lastProduct;
+                    paths.Manufacturer = lastManufacturer;
+                    paths.Serial = lastSerial;
+                    paths.Version = lastVersion;
+                }
+
+                if (usage == BoltConstants.ManagementUsage) // 0x0001 — short reports
+                    paths.ShortPath = devicePath;
+                else if (usage == 0x0002)                   // long reports
+                    paths.LongPath = devicePath;
+
+                _logger.LogDebug("Bolt collection: usage 0x{Up:X4}/0x{Use:X4} inputLen={Len} path={Path}",
+                    usagePage, usage, inputLen, devicePath);
             }
         }
         finally
@@ -118,64 +137,112 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
             NativeMethods.SetupDiDestroyDeviceInfoList(deviceInfoSet);
         }
 
+        var results = new List<BoltReceiverInfo>();
+        foreach (var (instance, paths) in byInstance)
+        {
+            if (paths.ShortPath is null)
+            {
+                _logger.LogWarning("Bolt receiver {Inst} missing 0xFF00/0x0001 short-report collection — skipping",
+                    instance);
+                continue;
+            }
+            if (paths.LongPath is null)
+            {
+                _logger.LogWarning("Bolt receiver {Inst} missing 0xFF00/0x0002 long-report collection — short HID++ only",
+                    instance);
+            }
+
+            // Combined path encoding: "<short>||<long-or-empty>".
+            var combinedPath = paths.ShortPath + "||" + (paths.LongPath ?? "");
+            results.Add(new BoltReceiverInfo(combinedPath,
+                paths.Serial ?? "", paths.Product ?? "Bolt Receiver",
+                paths.Manufacturer ?? "Logitech", paths.Version));
+        }
+
         return results;
     }
 
     public IReceiverConnection Open(BoltReceiverInfo info)
     {
-        var handle = NativeMethods.CreateFileW(
-            info.Path,
+        var parts = info.Path.Split("||", 2);
+        var shortPath = parts[0];
+        var longPath = parts.Length == 2 && !string.IsNullOrEmpty(parts[1]) ? parts[1] : null;
+
+        var shortHandle = NativeMethods.CreateFileW(shortPath,
             NativeMethods.GENERIC_READ | NativeMethods.GENERIC_WRITE,
             NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE,
-            IntPtr.Zero,
-            NativeMethods.OPEN_EXISTING,
-            NativeMethods.FILE_FLAG_OVERLAPPED,
-            IntPtr.Zero);
-
-        if (handle.IsInvalid)
+            IntPtr.Zero, NativeMethods.OPEN_EXISTING, NativeMethods.FILE_FLAG_OVERLAPPED, IntPtr.Zero);
+        if (shortHandle.IsInvalid)
         {
             var err = Marshal.GetLastWin32Error();
-            handle.Dispose();
-            throw new InvalidOperationException($"CreateFile on {info.Path} failed: 0x{err:X}");
+            shortHandle.Dispose();
+            throw new InvalidOperationException($"CreateFile on short-report collection {shortPath} failed: 0x{err:X}");
         }
 
-        // Read-buffer sizing: the Bolt management interface declares the
-        // SHORT report (7 bytes) but the receiver actually delivers BOTH 0x10
-        // short and 0x11 long (20 bytes) reports on the same interface, plus
-        // 0x20 DJ reports. The descriptor's InputReportByteLength only
-        // reflects the maximum length the descriptor explicitly enumerates;
-        // we've observed it returning 7 even though 20-byte 0x11 reports
-        // arrive in the wild. To be safe — and match the IOKit transport's
-        // pre-sized buffer — we always allocate 64 bytes for reads. Windows'
-        // HID class driver delivers whatever size the actual report is and
-        // sets bytesRead accordingly.
-        ushort declaredInputReportLength = 0;
-        if (NativeMethods.HidD_GetPreparsedData(handle, out var preparsed))
+        SafeFileHandle? longHandle = null;
+        if (longPath is not null)
         {
-            try
+            longHandle = NativeMethods.CreateFileW(longPath,
+                NativeMethods.GENERIC_READ | NativeMethods.GENERIC_WRITE,
+                NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE,
+                IntPtr.Zero, NativeMethods.OPEN_EXISTING, NativeMethods.FILE_FLAG_OVERLAPPED, IntPtr.Zero);
+            if (longHandle.IsInvalid)
             {
-                var caps = new NativeMethods.HIDP_CAPS();
-                if (NativeMethods.HidP_GetCaps(preparsed, ref caps) == unchecked((int)NativeMethods.HIDP_STATUS_SUCCESS))
-                    declaredInputReportLength = caps.InputReportByteLength;
+                _logger.LogWarning("CreateFile on long-report collection {Path} failed: 0x{Err:X} — long HID++ disabled",
+                    longPath, Marshal.GetLastWin32Error());
+                longHandle.Dispose();
+                longHandle = null;
             }
-            finally { NativeMethods.HidD_FreePreparsedData(preparsed); }
         }
-        const ushort safeReadBuffer = 64;
-        var inputReportLength = (ushort)Math.Max(declaredInputReportLength, safeReadBuffer);
 
-        _logger.LogInformation("Opened receiver {Product} via native Win HID (declared input report = {Declared}, read buffer = {Buf})",
-            info.ProductString, declaredInputReportLength, inputReportLength);
-        return new WinReceiverConnection(handle, info.Path, inputReportLength,
+        _logger.LogInformation("Opened receiver {Product} (short collection {Short}, long collection {Long})",
+            info.ProductString, "ok",
+            longHandle is null ? "missing" : "ok");
+
+        return new WinReceiverConnection(shortHandle, longHandle, info.Path,
             _loggerFactory.CreateLogger<WinReceiverConnection>());
     }
 
-    public void Dispose() { /* no global state to release */ }
+    public void Dispose() { /* no global state */ }
 
     // ---------------------------------------------------------------
 
+    private sealed class ReceiverPaths
+    {
+        public string? ShortPath; // 0xFF00/0x0001 — 7-byte input, report id 0x10
+        public string? LongPath;  // 0xFF00/0x0002 — 20-byte input, report id 0x11
+        public string? Product;
+        public string? Manufacturer;
+        public string? Serial;
+        public ushort Version;
+    }
+
+    /// <summary>Extracts the receiver's physical-device instance id from a HID path.</summary>
+    /// <remarks>
+    /// Sample path:
+    ///   \\?\HID#VID_046D&PID_C548&MI_02&Col01#8&3ee8091&0&0000#{guid}
+    /// We want "8&3ee8091&0" — the segment after the second '#'. Per-collection
+    /// trailing "&NNNN" varies (0000 for col01, 0001 for col02) but the
+    /// prefix matches.
+    /// </remarks>
+    private static string? ExtractInstanceId(string path)
+    {
+        var lower = path.ToLowerInvariant();
+        var firstHash = lower.IndexOf('#');
+        if (firstHash < 0) return null;
+        var secondHash = lower.IndexOf('#', firstHash + 1);
+        if (secondHash < 0) return null;
+        var thirdHash = lower.IndexOf('#', secondHash + 1);
+        if (thirdHash < 0) return null;
+        var instance = lower.Substring(secondHash + 1, thirdHash - secondHash - 1);
+        // Strip the trailing "&NNNN" (per-collection counter).
+        var lastAmp = instance.LastIndexOf('&');
+        if (lastAmp > 0) instance = instance.Substring(0, lastAmp);
+        return instance;
+    }
+
     private static string? GetDeviceInterfaceDetail(IntPtr deviceInfoSet, ref NativeMethods.SP_DEVICE_INTERFACE_DATA ifaceData)
     {
-        // First call: size discovery.
         NativeMethods.SetupDiGetDeviceInterfaceDetail(deviceInfoSet, ref ifaceData,
             IntPtr.Zero, 0, out var required, IntPtr.Zero);
         if (required == 0) return null;
@@ -183,17 +250,10 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
         var buffer = Marshal.AllocHGlobal((int)required);
         try
         {
-            // SP_DEVICE_INTERFACE_DETAIL_DATA_W's first field is `cbSize`.
-            // For 64-bit packing, the value is 8 (4-byte cbSize + 2-byte
-            // alignment + the first WCHAR). x86 packs to 6. Both are
-            // documented quirks of the W variant.
             Marshal.WriteInt32(buffer, IntPtr.Size == 8 ? 8 : 6);
-
             if (!NativeMethods.SetupDiGetDeviceInterfaceDetail(deviceInfoSet, ref ifaceData,
                 buffer, required, out _, IntPtr.Zero))
                 return null;
-
-            // The DevicePath field starts at offset 4 (after cbSize).
             return Marshal.PtrToStringUni(buffer + 4);
         }
         finally { Marshal.FreeHGlobal(buffer); }
@@ -203,7 +263,6 @@ public sealed class WinReceiverTransport : IReceiverTransport, IDisposable
 
     private static string? ReadHidString(SafeFileHandle handle, HidStringFunc func)
     {
-        // 254 is the documented maximum for HidD_Get*String.
         const int max = 254;
         var buf = Marshal.AllocHGlobal(max);
         try

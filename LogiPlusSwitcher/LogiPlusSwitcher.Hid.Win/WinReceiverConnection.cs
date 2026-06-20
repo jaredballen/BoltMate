@@ -10,37 +10,42 @@ using Microsoft.Win32.SafeHandles;
 namespace LogiPlusSwitcher.Hid.Win;
 
 /// <summary>
-/// Native-Win32 HID++ connection. Reads come from a dedicated thread doing
-/// overlapped <c>ReadFile</c> against the management interface. Writes use
-/// <c>HidD_SetOutputReport</c> first (works around the long-report
-/// <c>WriteFile</c> failure documented in task #31), falling back to
-/// overlapped <c>WriteFile</c> if the HID API path fails.
+/// Native Win32 HID++ connection for the Bolt receiver. Opens BOTH
+/// management-interface collections (0xFF00/0x0001 short + 0xFF00/0x0002
+/// long) — Windows enumerates them as separate HID interfaces even though
+/// they're the same physical USB endpoint. Reads are merged into a single
+/// stream; writes are routed by report ID:
+/// <list type="bullet">
+///   <item>0x10 (short HID++)  → short-collection handle</item>
+///   <item>0x11 (long HID++)   → long-collection handle (falls back to short if long is missing)</item>
+///   <item>0x20 (DJ legacy)    → short-collection handle</item>
+/// </list>
 /// </summary>
 internal sealed class WinReceiverConnection : IReceiverConnection
 {
-    private readonly SafeFileHandle _handle;
+    private readonly SafeFileHandle _shortHandle;
+    private readonly SafeFileHandle? _longHandle;
     private readonly string _path;
-    private readonly ushort _inputReportLength;
     private readonly ILogger<WinReceiverConnection> _logger;
     private readonly Subject<HidPpFrame> _frames = new();
     private readonly Subject<Exception> _readErrors = new();
     private readonly CompositeDisposable _disposables = new();
     private readonly object _gate = new();
 
-    private Thread? _readThread;
-    private IntPtr _readEvent;
+    private Thread? _shortReadThread;
+    private Thread? _longReadThread;
     private volatile bool _stopping;
     private bool _disposed;
 
     public IObservable<HidPpFrame> InboundFrames => _frames.AsObservable();
     public IObservable<Exception> ReadErrors => _readErrors.AsObservable();
 
-    public WinReceiverConnection(SafeFileHandle handle, string path, ushort inputReportLength,
+    public WinReceiverConnection(SafeFileHandle shortHandle, SafeFileHandle? longHandle, string path,
         ILogger<WinReceiverConnection>? logger = null)
     {
-        _handle = handle;
+        _shortHandle = shortHandle;
+        _longHandle = longHandle;
         _path = path;
-        _inputReportLength = inputReportLength;
         _logger = logger ?? NullLogger<WinReceiverConnection>.Instance;
         _disposables.Add(_frames);
         _disposables.Add(_readErrors);
@@ -51,40 +56,42 @@ internal sealed class WinReceiverConnection : IReceiverConnection
     {
         lock (_gate)
         {
-            if (_readThread is { IsAlive: true } || _disposed) return;
+            if (_disposed) return;
             _stopping = false;
-            _readEvent = NativeMethods.CreateEventW(IntPtr.Zero, manualReset: true, initialState: false, name: null);
-            _readThread = new Thread(ReadLoop)
+            if (_shortReadThread is null || !_shortReadThread.IsAlive)
             {
-                Name = $"WinHid-Read-{Path.GetFileName(_path)}",
-                IsBackground = true,
-            };
-            _readThread.Start();
+                _shortReadThread = new Thread(() => ReadLoop(_shortHandle, 64, "short"))
+                {
+                    Name = "WinHid-Short", IsBackground = true,
+                };
+                _shortReadThread.Start();
+            }
+            if (_longHandle is not null && (_longReadThread is null || !_longReadThread.IsAlive))
+            {
+                _longReadThread = new Thread(() => ReadLoop(_longHandle, 64, "long"))
+                {
+                    Name = "WinHid-Long", IsBackground = true,
+                };
+                _longReadThread.Start();
+            }
         }
     }
 
     public void Stop()
     {
-        Thread? t;
-        IntPtr ev;
+        Thread? t1, t2;
         lock (_gate)
         {
             _stopping = true;
-            t = _readThread;
-            ev = _readEvent;
-            _readThread = null;
+            t1 = _shortReadThread;
+            t2 = _longReadThread;
+            _shortReadThread = null;
+            _longReadThread = null;
         }
-        if (t is not null)
-        {
-            // CancelIoEx wakes the read pump from a blocking GetOverlappedResult.
-            try { NativeMethods.CancelIoEx(_handle, IntPtr.Zero); } catch { }
-            try { t.Join(TimeSpan.FromSeconds(1)); } catch { }
-        }
-        if (ev != IntPtr.Zero)
-        {
-            try { NativeMethods.CloseHandle(ev); } catch { }
-            lock (_gate) { if (_readEvent == ev) _readEvent = IntPtr.Zero; }
-        }
+        try { NativeMethods.CancelIoEx(_shortHandle, IntPtr.Zero); } catch { }
+        if (_longHandle is not null) { try { NativeMethods.CancelIoEx(_longHandle, IntPtr.Zero); } catch { } }
+        try { t1?.Join(TimeSpan.FromSeconds(1)); } catch { }
+        try { t2?.Join(TimeSpan.FromSeconds(1)); } catch { }
     }
 
     public void Write(HidPpFrame frame)
@@ -92,52 +99,28 @@ internal sealed class WinReceiverConnection : IReceiverConnection
         var bytes = frame.ToBytes();
         if (bytes.Length < 1) throw new InvalidOperationException("Frame too short");
 
-        // The HID output report buffer length passed to HidD_SetOutputReport
-        // MUST match the device's declared output report size for the given
-        // report ID. The Bolt management interface uses two output report
-        // sizes: 7 bytes for the short HID++ (report id 0x10) and 20 bytes
-        // for the long HID++ (report id 0x11). frame.ToBytes() gives us
-        // exactly the right length already (HidPpFrame knows the size from
-        // the report id), so just pass it straight through.
+        // Pick collection by report ID.
+        //  0x10 + 0x20 → short collection
+        //  0x11        → long collection (if open), else short
+        var reportId = bytes[0];
+        var target = reportId == 0x11 && _longHandle is not null ? _longHandle : _shortHandle;
+
         var buf = Marshal.AllocHGlobal(bytes.Length);
         try
         {
             Marshal.Copy(bytes, 0, buf, bytes.Length);
 
-            // Try HidD_SetOutputReport first — task-#31 history: WriteFile
-            // returns ERROR_INVALID_FUNCTION (1) for long reports on the Bolt
-            // management interface, but the HID class IOCTL path works.
-            var ok = NativeMethods.HidD_SetOutputReport(_handle, buf, (uint)bytes.Length);
+            // HidD_SetOutputReport uses the HID class IOCTL path. Per task #31,
+            // WriteFile for long reports on the Bolt management interface
+            // returns ERROR_INVALID_FUNCTION; the IOCTL path works. Try IOCTL
+            // first, fall back to WriteFile on failure.
+            var ok = NativeMethods.HidD_SetOutputReport(target, buf, (uint)bytes.Length);
             if (!ok)
             {
                 var err = Marshal.GetLastWin32Error();
-                _logger.LogDebug("HidD_SetOutputReport failed (err 0x{Err:X}); falling back to WriteFile", err);
-
-                // Fallback: overlapped WriteFile. Some HID devices accept
-                // this path but reject HidD_SetOutputReport. Use a temporary
-                // event so we can wait for completion + collect the result.
-                var ev = NativeMethods.CreateEventW(IntPtr.Zero, true, false, null);
-                try
-                {
-                    var ovl = new NativeMethods.NATIVE_OVERLAPPED { EventHandle = ev };
-                    var ovlPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.NATIVE_OVERLAPPED>());
-                    try
-                    {
-                        Marshal.StructureToPtr(ovl, ovlPtr, false);
-                        if (!NativeMethods.WriteFile(_handle, buf, (uint)bytes.Length, IntPtr.Zero, ovlPtr))
-                        {
-                            var werr = Marshal.GetLastWin32Error();
-                            if (werr != NativeMethods.ERROR_IO_PENDING)
-                                throw new System.ComponentModel.Win32Exception(werr,
-                                    $"WriteFile failed (HidD path also failed with 0x{err:X})");
-                        }
-                        if (!NativeMethods.GetOverlappedResult(_handle, ovlPtr, out _, wait: true))
-                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),
-                                "WriteFile GetOverlappedResult failed");
-                    }
-                    finally { Marshal.FreeHGlobal(ovlPtr); }
-                }
-                finally { NativeMethods.CloseHandle(ev); }
+                _logger.LogDebug("HidD_SetOutputReport failed (err 0x{Err:X}, rid 0x{Rid:X2}); falling back to WriteFile",
+                    err, reportId);
+                WriteFileSync(target, buf, bytes.Length);
             }
         }
         finally { Marshal.FreeHGlobal(buf); }
@@ -152,63 +135,60 @@ internal sealed class WinReceiverConnection : IReceiverConnection
 
     // ---------------------------------------------------------------
 
-    private void ReadLoop()
+    private void ReadLoop(SafeFileHandle handle, int bufferSize, string label)
     {
-        var buf = Marshal.AllocHGlobal(_inputReportLength);
+        var buf = Marshal.AllocHGlobal(bufferSize);
         var ovlPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.NATIVE_OVERLAPPED>());
+        var ev = NativeMethods.CreateEventW(IntPtr.Zero, manualReset: true, initialState: false, name: null);
         try
         {
             while (!_stopping)
             {
-                NativeMethods.ResetEvent(_readEvent);
-                var ovl = new NativeMethods.NATIVE_OVERLAPPED { EventHandle = _readEvent };
+                NativeMethods.ResetEvent(ev);
+                var ovl = new NativeMethods.NATIVE_OVERLAPPED { EventHandle = ev };
                 Marshal.StructureToPtr(ovl, ovlPtr, false);
 
-                if (!NativeMethods.ReadFile(_handle, buf, _inputReportLength, IntPtr.Zero, ovlPtr))
+                if (!NativeMethods.ReadFile(handle, buf, (uint)bufferSize, IntPtr.Zero, ovlPtr))
                 {
                     var err = Marshal.GetLastWin32Error();
                     if (err == NativeMethods.ERROR_DEVICE_NOT_CONNECTED)
                     {
-                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, "Device disconnected"));
+                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, $"{label}: device disconnected"));
                         return;
                     }
                     if (err != NativeMethods.ERROR_IO_PENDING)
                     {
-                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, "ReadFile failed"));
+                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, $"{label}: ReadFile failed"));
                         Thread.Sleep(100);
                         continue;
                     }
                 }
 
-                // Wait for either completion or stop signal. CancelIoEx in
-                // Stop() will wake us with ERROR_OPERATION_ABORTED.
-                var waitRes = NativeMethods.WaitForSingleObject(_readEvent, 500);
+                var waitRes = NativeMethods.WaitForSingleObject(ev, 500);
                 if (waitRes == NativeMethods.WAIT_TIMEOUT)
                 {
                     if (_stopping)
                     {
-                        try { NativeMethods.CancelIoEx(_handle, ovlPtr); } catch { }
+                        try { NativeMethods.CancelIoEx(handle, ovlPtr); } catch { }
                         return;
                     }
-                    continue; // keep waiting on the next loop iter
+                    continue;
                 }
 
-                if (!NativeMethods.GetOverlappedResult(_handle, ovlPtr, out var bytesRead, wait: false))
+                if (!NativeMethods.GetOverlappedResult(handle, ovlPtr, out var bytesRead, wait: false))
                 {
                     var err = Marshal.GetLastWin32Error();
-                    if (err == NativeMethods.ERROR_OPERATION_ABORTED) return; // Stop()
+                    if (err == NativeMethods.ERROR_OPERATION_ABORTED) return;
                     if (err == NativeMethods.ERROR_DEVICE_NOT_CONNECTED)
                     {
-                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, "Device disconnected"));
+                        _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, $"{label}: device disconnected"));
                         return;
                     }
-                    _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, "ReadFile GetOverlappedResult failed"));
+                    _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, $"{label}: GetOverlappedResult failed"));
                     continue;
                 }
 
                 if (bytesRead == 0) continue;
-
-                // Copy out + parse on this thread.
                 var managed = new byte[bytesRead];
                 Marshal.Copy(buf, managed, 0, (int)bytesRead);
 
@@ -224,12 +204,38 @@ internal sealed class WinReceiverConnection : IReceiverConnection
         {
             Marshal.FreeHGlobal(buf);
             Marshal.FreeHGlobal(ovlPtr);
+            try { NativeMethods.CloseHandle(ev); } catch { }
+        }
+    }
+
+    private void WriteFileSync(SafeFileHandle handle, IntPtr buf, int length)
+    {
+        var ev = NativeMethods.CreateEventW(IntPtr.Zero, true, false, null);
+        var ovlPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.NATIVE_OVERLAPPED>());
+        try
+        {
+            var ovl = new NativeMethods.NATIVE_OVERLAPPED { EventHandle = ev };
+            Marshal.StructureToPtr(ovl, ovlPtr, false);
+            if (!NativeMethods.WriteFile(handle, buf, (uint)length, IntPtr.Zero, ovlPtr))
+            {
+                var werr = Marshal.GetLastWin32Error();
+                if (werr != NativeMethods.ERROR_IO_PENDING)
+                    throw new System.ComponentModel.Win32Exception(werr, "WriteFile failed");
+            }
+            if (!NativeMethods.GetOverlappedResult(handle, ovlPtr, out _, wait: true))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "WriteFile GetOverlappedResult failed");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ovlPtr);
+            try { NativeMethods.CloseHandle(ev); } catch { }
         }
     }
 
     private void Cleanup()
     {
         Stop();
-        try { _handle.Dispose(); } catch { }
+        try { _shortHandle.Dispose(); } catch { }
+        try { _longHandle?.Dispose(); } catch { }
     }
 }
