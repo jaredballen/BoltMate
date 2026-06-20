@@ -200,6 +200,20 @@ public sealed class TopologySettings
 
     /// <summary>Send announcements on multicast in addition to LAN broadcast.</summary>
     public bool UseMulticast { get; set; } = true;
+
+    /// <summary>
+    /// Enable a parallel mDNS-discovered TCP transport alongside UDP. mDNS
+    /// publishes a <c>_logiplus._udp.local</c> service; the same payload is
+    /// also delivered over TCP to every discovered peer. Lets the app keep
+    /// working when Wi-Fi APs filter broadcast/multicast.
+    /// </summary>
+    public bool UseMdnsTcp { get; set; } = true;
+
+    /// <summary>TCP port the mDNS+TCP channel listens on (and advertises via mDNS TXT).</summary>
+    public int TcpPort { get; set; } = 41421;
+
+    /// <summary>mDNS service type. Convention: <c>_appname._proto.local</c>.</summary>
+    public string MdnsServiceType { get; set; } = "_logiplus._udp.local";
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]

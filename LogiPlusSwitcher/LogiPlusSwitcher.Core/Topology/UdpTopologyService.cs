@@ -37,6 +37,7 @@ public sealed class UdpTopologyService : IDisposable
     private readonly string _hostname;
     private readonly ILogger<UdpTopologyService> _logger;
     private readonly Subject<ReceiverAnnouncement> _announcements = new();
+    private readonly Subject<ReceiverAnnouncement> _outgoing = new();
     private readonly CompositeDisposable _disposables = new();
     // Per-peer last-seen sequence; suppresses N× repeats + late re-orderings.
     private readonly ConcurrentDictionary<string, ulong> _lastSeenSeq = new();
@@ -72,6 +73,19 @@ public sealed class UdpTopologyService : IDisposable
 
     /// <summary>Latest full announcement received per peer — UI uses this to discover remote receiver BLEs.</summary>
     public IReadOnlyCollection<ReceiverAnnouncement> LatestPeerAnnouncements => _latestByPeer.Values.ToArray();
+
+    /// <summary>
+    /// Fires every time we send an announcement. Auxiliary channels (mDNS+TCP)
+    /// subscribe to mirror the same payload over their transport.
+    /// </summary>
+    public IObservable<ReceiverAnnouncement> OutgoingAnnouncements => _outgoing.AsObservable();
+
+    /// <summary>
+    /// Push an inbound announcement received via an auxiliary channel (e.g.
+    /// TCP). Runs the same dedup + stats + emit pipeline as UDP inbound.
+    /// </summary>
+    public void InjectInbound(ReceiverAnnouncement announcement, string channel = "ext") =>
+        HandleInbound(announcement, channel);
 
     public UdpTopologyService(
         ReceiverManager manager,
@@ -169,6 +183,7 @@ public sealed class UdpTopologyService : IDisposable
                 var seq = (ulong)Interlocked.Increment(ref _nextSeq);
                 var payload = BuildAnnouncement(seq);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+                try { _outgoing.OnNext(payload); } catch { /* observers must not block sends */ }
                 var endpoints = AllEndpoints();
 
                 // N× repeats — same Seq each time. Peers dedup.
@@ -229,60 +244,58 @@ public sealed class UdpTopologyService : IDisposable
             {
                 var announcement = JsonSerializer.Deserialize(result.Buffer, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                 if (announcement is null) continue;
-                if (announcement.MachineId == _machineId) continue; // own packet bouncing back
-
-                // Dedup: ignore any seq <= last-seen for this peer.
-                var key = announcement.MachineId;
-                if (_lastSeenSeq.TryGetValue(key, out var lastSeq) && announcement.Seq <= lastSeq)
-                {
-                    // Duplicate (one of the N× repeats) — bump dedup counter.
-                    if (_peerStats.TryGetValue(key, out var dupStats))
-                    {
-                        Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
-                        dupStats.LastSeenUtc = DateTime.UtcNow;
-                    }
-                    continue;
-                }
-
-                // Fresh announcement: detect gap (= packet loss) vs last seq we saw.
-                _lastSeenSeq[key] = announcement.Seq;
-                var stats = _peerStats.GetOrAdd(key, k => new PeerStats { MachineId = k });
-                stats.Hostname = announcement.Hostname;
-                stats.LastSeenUtc = DateTime.UtcNow;
-                stats.LastSeq = announcement.Seq;
-                if (lastSeq > 0 && announcement.Seq > lastSeq + 1)
-                {
-                    var missed = announcement.Seq - lastSeq - 1;
-                    Interlocked.Add(ref stats.MissedFromPeer, (long)missed);
-                    _logger.LogDebug("Topology: gap from peer {Machine} — missed {N} announcement(s) ({Last} -> {Now})",
-                        key, missed, lastSeq, announcement.Seq);
-                }
-                Interlocked.Increment(ref stats.UniqueReceived);
-
-                // Cache the full payload so Settings → Hotkeys can discover
-                // remote receiver BLEs even when our own HostBindings are empty.
-                _latestByPeer[key] = announcement;
-
-                // Mutual ack — peer told us the last Seq of OURS they got.
-                // We track that so the diagnostics view can show outbound loss.
-                foreach (var ack in announcement.Acks)
-                {
-                    if (ack.MachineId == _machineId)
-                    {
-                        stats.LastAckOfOurSeq = ack.LastSeq;
-                        var ourLatest = (ulong)Interlocked.Read(ref _nextSeq);
-                        stats.OutboundLossEstimate = ourLatest > ack.LastSeq ? (long)(ourLatest - ack.LastSeq) : 0;
-                        break;
-                    }
-                }
-
-                _announcements.OnNext(announcement);
+                HandleInbound(announcement, "udp");
             }
             catch (JsonException)
             {
                 // Foreign UDP traffic on the same port — ignore quietly.
             }
         }
+    }
+
+    private void HandleInbound(ReceiverAnnouncement announcement, string channel)
+    {
+        if (announcement.MachineId == _machineId) return; // own packet bouncing back
+
+        var key = announcement.MachineId;
+        if (_lastSeenSeq.TryGetValue(key, out var lastSeq) && announcement.Seq <= lastSeq)
+        {
+            // Duplicate (N× repeat OR same announcement from another channel).
+            if (_peerStats.TryGetValue(key, out var dupStats))
+            {
+                Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
+                dupStats.LastSeenUtc = DateTime.UtcNow;
+            }
+            return;
+        }
+
+        _lastSeenSeq[key] = announcement.Seq;
+        var stats = _peerStats.GetOrAdd(key, k => new PeerStats { MachineId = k });
+        stats.Hostname = announcement.Hostname;
+        stats.LastSeenUtc = DateTime.UtcNow;
+        stats.LastSeq = announcement.Seq;
+        if (lastSeq > 0 && announcement.Seq > lastSeq + 1)
+        {
+            var missed = announcement.Seq - lastSeq - 1;
+            Interlocked.Add(ref stats.MissedFromPeer, (long)missed);
+            _logger.LogDebug("Topology({Ch}): gap from peer {Machine} — missed {N} ({Last} -> {Now})",
+                channel, key, missed, lastSeq, announcement.Seq);
+        }
+        Interlocked.Increment(ref stats.UniqueReceived);
+        _latestByPeer[key] = announcement;
+
+        foreach (var ack in announcement.Acks)
+        {
+            if (ack.MachineId == _machineId)
+            {
+                stats.LastAckOfOurSeq = ack.LastSeq;
+                var ourLatest = (ulong)Interlocked.Read(ref _nextSeq);
+                stats.OutboundLossEstimate = ourLatest > ack.LastSeq ? (long)(ourLatest - ack.LastSeq) : 0;
+                break;
+            }
+        }
+
+        _announcements.OnNext(announcement);
     }
 
     private ReceiverAnnouncement BuildAnnouncement(ulong seq)

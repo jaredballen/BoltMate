@@ -227,16 +227,57 @@ If you want to be doubly sure: quit the app entirely, edit your
 
 ---
 
+## 3. mDNS / Bonjour discovery + TCP delivery (parallel to UDP)
+
+When `Topology.UseMdnsTcp = true` (default), the app additionally:
+
+- **Publishes an mDNS service** `_logiplus._udp.local` with TXT records:
+  - `machineId=<uuid>`
+  - `udpPort=<41420 or override>`
+  - `v=1`
+  Uses standard mDNS UDP **5353** on the link-local multicast group
+  **224.0.0.251**. Bonjour-compatible — visible in `dns-sd -B _logiplus._udp`
+  on macOS / `avahi-browse` on Linux.
+
+- **Discovers peers' service records** via mDNS browsing.
+
+- **Listens on TCP port `Topology.TcpPort` (default 41421)** for inbound peer
+  connections. Discovered peers open a TCP connection and exchange the same
+  announcement payload as UDP, length-prefixed:
+  ```
+  [4-byte little-endian length][JSON announcement bytes]
+  ```
+
+This is a complementary path — UDP and mDNS+TCP run in parallel; whichever
+delivers first wins. Receive-side dedup is by `(machineId, Seq)` so cross-
+channel duplicates are silently absorbed.
+
+**Firewall implications**:
+- macOS: mDNSResponder ships out of the box. TCP 41421 will prompt for
+  Network access on first run; allow on Private networks only.
+- Windows: `dnscache` service handles mDNS responses. New inbound TCP rule
+  required for 41421:
+  ```powershell
+  New-NetFirewallRule -DisplayName "LogiPlusSwitcher mDNS+TCP" `
+      -Direction Inbound -Protocol TCP -LocalPort 41421 `
+      -Action Allow -Profile Private
+  ```
+- Linux: Avahi must be installed for mDNS to work.
+
+**Why both UDP and mDNS+TCP?** Different networks filter different layers.
+Some corporate Wi-Fi APs drop broadcast/multicast but allow mDNS. Some
+strict mDNS-blocked networks still pass directed unicast. Running both
+maximises the chance that at least one channel is delivering — and the
+diagnostics view tells you which.
+
+---
+
 ## Roadmap — additional channels (not yet shipped)
 
-- **mDNS / Bonjour discovery + TCP delivery**: peers register a
-  `_logiplus._udp.local` service so discovery works even when broadcast is
-  filtered. Actual messages go over a TCP connection, which gives explicit
-  delivery confirmation. mDNS uses UDP 5353 on the link-local multicast
-  group `224.0.0.251`.
-- **Per-channel health diagnostics**: the in-app diagnostics panel will
-  show which transport is delivering, packet loss per peer, and which
-  channels are being filtered by the local network.
+- **Per-channel health diagnostics**: stamp inbound packets with which
+  channel they arrived on (broadcast vs multicast vs mDNS-discovered TCP)
+  so the diagnostics panel can show per-channel hit rates. Currently only
+  the aggregated stats are visible.
 
 When these ship, this document will be updated to reflect the new ports
 and addresses they use, **before** they become the default.

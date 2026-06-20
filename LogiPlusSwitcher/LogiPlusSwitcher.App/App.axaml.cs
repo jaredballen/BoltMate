@@ -31,6 +31,7 @@ public partial class App : Application
     private IGlobalHotkeyService? _hotkeyService;
     private HotkeyOrchestrator? _hotkeys;
     private UdpTopologyService? _topology;
+    private MdnsTcpChannel? _mdnsTcp;
     private TopologyCorrelator? _correlator;
     private AppSettings _settings = new();
     private ILicenseService _license = new DevAlwaysProLicenseService();
@@ -160,6 +161,12 @@ public partial class App : Application
             _correlator.Dispose();
             _correlator = null;
         }
+        if (_mdnsTcp is not null)
+        {
+            _disposables.Remove(_mdnsTcp);
+            _mdnsTcp.Dispose();
+            _mdnsTcp = null;
+        }
         if (_topology is not null)
         {
             _disposables.Remove(_topology);
@@ -181,6 +188,14 @@ public partial class App : Application
             _loggerFactory.CreateLogger<UdpTopologyService>());
         _topology.Start();
         _disposables.Add(_topology);
+
+        if (_settings.Topology.UseMdnsTcp)
+        {
+            _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
+                _loggerFactory.CreateLogger<MdnsTcpChannel>());
+            _mdnsTcp.Start();
+            _disposables.Add(_mdnsTcp);
+        }
 
         _correlator = new TopologyCorrelator(_manager, _switcher,
             _topology.Announcements,
