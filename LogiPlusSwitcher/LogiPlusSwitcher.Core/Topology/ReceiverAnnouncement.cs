@@ -31,6 +31,20 @@ public sealed class ReceiverAnnouncement
 
     /// <summary>One entry per attached Bolt receiver on this host.</summary>
     public List<ReceiverAnnouncementEntry> Receivers { get; set; } = new();
+
+    /// <summary>
+    /// Mutual acks: "the last Seq I've received from machineId K is V".
+    /// Receivers use this to measure their own outbound packet loss — if peer
+    /// echoes V but we're already at V+N, then N of our announcements never
+    /// reached them.
+    /// </summary>
+    public List<PeerAck> Acks { get; set; } = new();
+}
+
+public sealed class PeerAck
+{
+    public string MachineId { get; set; } = "";
+    public ulong LastSeq { get; set; }
 }
 
 public sealed class ReceiverAnnouncementEntry
@@ -58,4 +72,5 @@ public sealed class OnlineDeviceEntry
 [JsonSerializable(typeof(ReceiverAnnouncement))]
 [JsonSerializable(typeof(ReceiverAnnouncementEntry))]
 [JsonSerializable(typeof(OnlineDeviceEntry))]
+[JsonSerializable(typeof(PeerAck))]
 internal partial class ReceiverAnnouncementContext : JsonSerializerContext { }

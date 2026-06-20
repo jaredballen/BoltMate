@@ -955,7 +955,9 @@ public partial class SettingsWindow : Window
         sb.AppendLine($"      last seen : {sinceStr}");
         sb.AppendLine($"      last seq  : {peer.LastSeq}");
         sb.AppendLine($"      received  : {peer.UniqueReceived} unique / {peer.DuplicatesSuppressed} dup");
-        sb.AppendLine($"      missed in : {peer.MissedFromPeer}  (peer→us packet loss inferred via seq gaps)");
+        sb.AppendLine($"      missed in : {peer.MissedFromPeer}  (peer→us loss, inferred from seq gaps)");
+        sb.AppendLine($"      peer ack  : last seq of ours they saw = {peer.LastAckOfOurSeq}");
+        sb.AppendLine($"      missed out: {peer.OutboundLossEstimate}  (us→peer loss, inferred from peer ack)");
 
         if (lastAnn is not null)
         {

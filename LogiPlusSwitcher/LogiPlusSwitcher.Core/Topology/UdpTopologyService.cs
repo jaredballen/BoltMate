@@ -263,6 +263,19 @@ public sealed class UdpTopologyService : IDisposable
                 // remote receiver BLEs even when our own HostBindings are empty.
                 _latestByPeer[key] = announcement;
 
+                // Mutual ack — peer told us the last Seq of OURS they got.
+                // We track that so the diagnostics view can show outbound loss.
+                foreach (var ack in announcement.Acks)
+                {
+                    if (ack.MachineId == _machineId)
+                    {
+                        stats.LastAckOfOurSeq = ack.LastSeq;
+                        var ourLatest = (ulong)Interlocked.Read(ref _nextSeq);
+                        stats.OutboundLossEstimate = ourLatest > ack.LastSeq ? (long)(ourLatest - ack.LastSeq) : 0;
+                        break;
+                    }
+                }
+
                 _announcements.OnNext(announcement);
             }
             catch (JsonException)
@@ -281,6 +294,10 @@ public sealed class UdpTopologyService : IDisposable
             Timestamp = DateTimeOffset.UtcNow.ToString("O"),
             Seq = seq,
         };
+        // Mutual ack — echo the last Seq we saw from every known peer so they
+        // can measure their outbound packet loss to us.
+        foreach (var (peerId, lastSeq) in _lastSeenSeq)
+            ann.Acks.Add(new PeerAck { MachineId = peerId, LastSeq = lastSeq });
         foreach (var receiver in _manager.Receivers.Items)
         {
             var entry = new ReceiverAnnouncementEntry
@@ -375,5 +392,15 @@ public sealed class PeerStats
 
     /// <summary>How many duplicate packets (their N× repeats) we suppressed.</summary>
     public long DuplicatesSuppressed;
+
+    /// <summary>
+    /// Most recent ack of OUR seq the peer has echoed back. If our latest
+    /// outgoing seq is N and this is N-K, K of our announcements never
+    /// reached this peer.
+    /// </summary>
+    public ulong LastAckOfOurSeq;
+
+    /// <summary>Inferred us→peer packet loss (our seq minus peer ack at last receive).</summary>
+    public long OutboundLossEstimate;
 }
 
