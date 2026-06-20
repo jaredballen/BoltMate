@@ -97,7 +97,18 @@ public sealed class ReceiverManager : IDisposable
 
         try
         {
-            Refresh_NoLock();
+            try
+            {
+                Refresh_NoLock();
+            }
+            catch (Exception ex)
+            {
+                // Transport-layer hiccups (e.g. native HID library failing to
+                // resolve on a particular timer thread) must NOT take down the
+                // process. Log and let the next tick try again.
+                _logger.LogWarning(ex, "Receiver enumeration tick failed; will retry on next interval");
+                _attachFailures.OnNext(ex);
+            }
         }
         finally
         {
