@@ -59,6 +59,92 @@ public sealed class SwitcherService : IDisposable
 
     public void Dispose() => _disposables.Dispose();
 
+    /// <summary>
+    /// User-initiated fan-out — write <c>CHANGE_HOST(targetHost)</c> to every
+    /// online, host-switch-capable device on every participating receiver.
+    /// Used by global-hotkey handlers; no topology lookup involved (user is
+    /// being explicit about the target slot).
+    /// </summary>
+    /// <returns>Number of devices the switch was issued to.</returns>
+    public int RequestUserFanOut(byte targetHost)
+    {
+        var count = 0;
+        foreach (var receiver in _manager.Receivers.Items)
+        {
+            if (!receiver.IsParticipating) continue;
+            foreach (var device in receiver.Devices.Items)
+            {
+                if (!device.CanReceiveHostSwitch) continue;
+                if (!device.LinkUp) continue;
+                if (receiver.TrySwitchHost(device.DeviceIndex, targetHost))
+                {
+                    _fanOuts.OnNext(new FanOutEvent(
+                        Target: device,
+                        TargetHost: targetHost,
+                        Source: FanOutSource.UserHotkey,
+                        OriginatingReceiver: receiver,
+                        OriginatingSlot: 0));
+                    count++;
+                }
+            }
+        }
+        _logger.LogInformation("User hotkey fan-out: target host {Host}, {Count} device(s) switched", targetHost, count);
+        return count;
+    }
+
+    /// <summary>
+    /// Topology correlator fan-out — a remote machine reported that one of
+    /// our devices just came online there. Match by the remote receiver's BLE
+    /// address against each local sibling's <see cref="PairedDevice.HostBindings"/>
+    /// and route the matching slot. Devices without a binding pointing at the
+    /// remote BLE are skipped (logged).
+    /// </summary>
+    /// <param name="remoteReceiverBleKey">Lowercase hex BLE address of the
+    /// remote receiver where the device re-appeared.</param>
+    /// <param name="originatingDeviceWpid">The device that left us — used to
+    /// avoid trying to switch it back (it already left).</param>
+    /// <returns>Number of siblings fanned out.</returns>
+    public int RequestTopologyFanOut(string remoteReceiverBleKey, ushort? originatingDeviceWpid)
+    {
+        var count = 0;
+        foreach (var receiver in _manager.Receivers.Items)
+        {
+            if (!receiver.IsParticipating) continue;
+            foreach (var device in receiver.Devices.Items)
+            {
+                if (originatingDeviceWpid is { } wpid && device.Wpid == wpid) continue;
+                if (!device.CanReceiveHostSwitch) continue;
+                if (!device.LinkUp) continue;
+
+                var matchingSlot = device.FindHostSlotForBleKey(remoteReceiverBleKey);
+                if (matchingSlot is not byte slot)
+                {
+                    _logger.LogDebug(
+                        "Sibling {Serial} slot {Slot} ({Name}) has no binding to remote BLE {Ble} — skipping",
+                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, remoteReceiverBleKey);
+                    continue;
+                }
+
+                if (receiver.TrySwitchHost(device.DeviceIndex, slot))
+                {
+                    _fanOuts.OnNext(new FanOutEvent(
+                        Target: device,
+                        TargetHost: slot,
+                        Source: FanOutSource.RemoteTopology,
+                        OriginatingReceiver: receiver,
+                        OriginatingSlot: 0));
+                    count++;
+                }
+            }
+        }
+        _logger.LogInformation(
+            "Topology fan-out: remote BLE {Ble}, originator wpid={Wpid}, {Count} device(s) switched",
+            remoteReceiverBleKey,
+            originatingDeviceWpid?.ToString("X4") ?? "?",
+            count);
+        return count;
+    }
+
     private void OnHostSwitchPressed(BoltReceiver origin, DivertedButtonsNotification press)
     {
         if (!origin.IsParticipating)
@@ -176,4 +262,5 @@ public enum FanOutSource
     EasySwitchPress,
     FlowSnoop,
     UserHotkey,
+    RemoteTopology,
 }

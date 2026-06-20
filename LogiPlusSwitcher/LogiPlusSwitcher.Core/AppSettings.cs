@@ -49,6 +49,12 @@ public sealed class AppSettings
     /// <summary>ISO-8601 timestamp of the last update check, or null if never checked.</summary>
     public string? LastUpdateCheckUtc { get; set; }
 
+    /// <summary>Global hotkey bindings. Default chords ship with the app; users can rebind in Settings.</summary>
+    public HotkeySettings Hotkeys { get; set; } = new();
+
+    /// <summary>UDP cross-machine topology settings.</summary>
+    public TopologySettings Topology { get; set; } = new();
+
     public static AppSettings Load()
     {
         if (!File.Exists(AppPaths.SettingsFile))
@@ -93,8 +99,61 @@ public sealed class PersistedHostBinding
     public string? ReceiverName { get; set; }
 }
 
+/// <summary>
+/// Global hotkey config. Each <see cref="HostBindings"/> entry maps a target
+/// host slot (0..2) to a key combo that, when pressed globally, causes us to
+/// write <c>0x1814 setCurrentHost(slot)</c> to every paired device on the
+/// participating receiver. Decoupled from the receiver-detection paths.
+/// </summary>
+public sealed class HotkeySettings
+{
+    /// <summary>Master switch — when false, no hotkeys are registered.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Slot → chord. Default chords picked to dodge common app conflicts.</summary>
+    public Dictionary<byte, string> HostBindings { get; set; } = new()
+    {
+        // macOS will interpret these via the cross-platform serialiser (see
+        // HotkeyChord). "Cmd" maps to MOD_WIN on Win and cmdKey on Mac.
+        [0] = "Cmd+Ctrl+Shift+1",
+        [1] = "Cmd+Ctrl+Shift+2",
+        [2] = "Cmd+Ctrl+Shift+3",
+    };
+}
+
+/// <summary>
+/// Cross-machine UDP topology settings. When enabled, the app broadcasts a
+/// periodic announcement of its attached receivers + currently-online device
+/// WPIDs on the LAN. Peers that also have this enabled use that signal to
+/// fan out remaining local devices when a Bolt device suddenly shows up on
+/// a remote machine (e.g. user pressed Easy-Switch on the keyboard).
+/// </summary>
+public sealed class TopologySettings
+{
+    /// <summary>Master switch — when false, no broadcast and no listen.</summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>UDP port for both broadcast and listen. 41420 = arbitrary LAN-only choice.</summary>
+    public int Port { get; set; } = 41420;
+
+    /// <summary>Broadcast interval in seconds. 2s gives peers time to correlate without flooding.</summary>
+    public int BroadcastIntervalSeconds { get; set; } = 2;
+
+    /// <summary>
+    /// How long after a local device link-lost we keep watching for the device
+    /// re-appearing on a remote machine. Beyond this, we assume no peer saw it
+    /// and skip fan-out.
+    /// </summary>
+    public int CorrelationWindowSeconds { get; set; } = 3;
+
+    /// <summary>Stable machine id (UUID). Auto-generated on first save.</summary>
+    public string? MachineId { get; set; }
+}
+
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ReceiverSettings))]
 [JsonSerializable(typeof(PersistedHostBinding))]
+[JsonSerializable(typeof(HotkeySettings))]
+[JsonSerializable(typeof(TopologySettings))]
 internal partial class AppSettingsContext : JsonSerializerContext { }

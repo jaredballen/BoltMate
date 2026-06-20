@@ -6,12 +6,14 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
+using LogiPlusSwitcher.App.Hotkeys;
 using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.App.Updates;
 using Avalonia.Threading;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.Switcher;
+using LogiPlusSwitcher.Core.Topology;
 using LogiPlusSwitcher.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,6 +28,10 @@ public partial class App : Application
     private TrayMenuController? _trayController;
     private ReceiverPolicyService? _policy;
     private UpdateService? _updates;
+    private IGlobalHotkeyService? _hotkeyService;
+    private HotkeyOrchestrator? _hotkeys;
+    private UdpTopologyService? _topology;
+    private TopologyCorrelator? _correlator;
     private AppSettings _settings = new();
     private ILicenseService _license = new DevAlwaysProLicenseService();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
@@ -73,6 +79,42 @@ public partial class App : Application
         // through each device's HostBindings.
         _switcher = new SwitcherService(_manager, _loggerFactory.CreateLogger<SwitcherService>());
         _disposables.Add(_switcher);
+
+        // Global hotkey support. macOS uses Carbon RegisterEventHotKey; Win
+        // uses RegisterHotKey on a message-only window. Both let the user
+        // bypass the physical Easy-Switch button (which the keyboard handles
+        // internally before any software can see it — see
+        // project_easyswitch_firmware_direct memory for the proof).
+        _hotkeyService = GlobalHotkeyServiceFactory.Create(_loggerFactory);
+        _disposables.Add(_hotkeyService);
+        _hotkeys = new HotkeyOrchestrator(_hotkeyService, _switcher, _settings.Hotkeys,
+            _loggerFactory.CreateLogger<HotkeyOrchestrator>());
+        _hotkeys.Apply();
+        _disposables.Add(_hotkeys);
+
+        // UDP topology — LAN broadcast of receiver state + cross-machine
+        // correlator. Opt-in via Settings → Network. When a Bolt device
+        // disconnects locally and re-appears on a peer's announcement within
+        // the correlation window, fan out remaining local devices to follow.
+        if (_settings.Topology.Enabled)
+        {
+            var machineId = _settings.Topology.MachineId;
+            if (string.IsNullOrWhiteSpace(machineId))
+            {
+                machineId = Guid.NewGuid().ToString("N");
+                _settings.Topology.MachineId = machineId;
+                _settings.Save();
+            }
+            _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
+                _loggerFactory.CreateLogger<UdpTopologyService>());
+            _topology.Start();
+            _disposables.Add(_topology);
+            _correlator = new TopologyCorrelator(_manager, _switcher,
+                _topology.Announcements,
+                TimeSpan.FromSeconds(_settings.Topology.CorrelationWindowSeconds),
+                _loggerFactory.CreateLogger<TopologyCorrelator>());
+            _disposables.Add(_correlator);
+        }
 
         // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
         _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
@@ -132,6 +174,8 @@ public partial class App : Application
         _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings)
         {
             HostNamesChanged = () => _trayController?.RefreshHostLabels(),
+            HotkeysChanged = () => _hotkeys?.Apply(),
+            TopologyChanged = () => { /* live toggle TBD — settings on disk, restart picks up */ },
         };
         _settingsWindow.Closed += (_, _) =>
         {

@@ -62,8 +62,129 @@ public partial class SettingsWindow : Window
         RefreshLaunchAtLogin();
         RefreshUpdatesTab();
         RefreshDiagnosticsTab();
+        RefreshHotkeysTab();
+        RefreshNetworkTab();
         Populate();
         WireLiveRefresh();
+    }
+
+    public Action? HotkeysChanged { get; set; }
+    public Action? TopologyChanged { get; set; }
+
+    private bool _suppressHotkeysEvent;
+    private bool _suppressTopologyEvent;
+
+    private void RefreshHotkeysTab()
+    {
+        if (_settings is null) return;
+        var on = this.FindControl<CheckBox>("HotkeysEnabledToggle");
+        if (on is not null)
+        {
+            _suppressHotkeysEvent = true;
+            on.IsChecked = _settings.Hotkeys.Enabled;
+            _suppressHotkeysEvent = false;
+        }
+        var b0 = this.FindControl<TextBox>("Hotkey0Box");
+        var b1 = this.FindControl<TextBox>("Hotkey1Box");
+        var b2 = this.FindControl<TextBox>("Hotkey2Box");
+        if (b0 is not null) b0.Text = LookupHotkey(0);
+        if (b1 is not null) b1.Text = LookupHotkey(1);
+        if (b2 is not null) b2.Text = LookupHotkey(2);
+        UpdateHotkeyStatus("");
+    }
+
+    private string LookupHotkey(byte slot) =>
+        _settings is null ? ""
+        : _settings.Hotkeys.HostBindings.TryGetValue(slot, out var v) ? v
+        : "";
+
+    private void OnHotkeysEnabledChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_suppressHotkeysEvent || _settings is null) return;
+        if (sender is not CheckBox cb) return;
+        _settings.Hotkeys.Enabled = cb.IsChecked == true;
+        _settings.Save();
+        HotkeysChanged?.Invoke();
+        UpdateHotkeyStatus(_settings.Hotkeys.Enabled ? "Hotkeys on." : "Hotkeys off.");
+    }
+
+    private void OnSaveHotkeys(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_settings is null) return;
+        var b0 = this.FindControl<TextBox>("Hotkey0Box");
+        var b1 = this.FindControl<TextBox>("Hotkey1Box");
+        var b2 = this.FindControl<TextBox>("Hotkey2Box");
+        var raw0 = (b0?.Text ?? "").Trim();
+        var raw1 = (b1?.Text ?? "").Trim();
+        var raw2 = (b2?.Text ?? "").Trim();
+
+        var c0 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw0);
+        var c1 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw1);
+        var c2 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw2);
+
+        var bad = new List<string>();
+        if (!string.IsNullOrEmpty(raw0) && !c0.IsValid) bad.Add($"Host 1: '{raw0}'");
+        if (!string.IsNullOrEmpty(raw1) && !c1.IsValid) bad.Add($"Host 2: '{raw1}'");
+        if (!string.IsNullOrEmpty(raw2) && !c2.IsValid) bad.Add($"Host 3: '{raw2}'");
+        if (bad.Count > 0)
+        {
+            UpdateHotkeyStatus("Unparseable: " + string.Join("; ", bad));
+            return;
+        }
+
+        if (c0.IsValid) _settings.Hotkeys.HostBindings[0] = c0.ToString();
+        else _settings.Hotkeys.HostBindings.Remove(0);
+        if (c1.IsValid) _settings.Hotkeys.HostBindings[1] = c1.ToString();
+        else _settings.Hotkeys.HostBindings.Remove(1);
+        if (c2.IsValid) _settings.Hotkeys.HostBindings[2] = c2.ToString();
+        else _settings.Hotkeys.HostBindings.Remove(2);
+
+        _settings.Save();
+        HotkeysChanged?.Invoke();
+        UpdateHotkeyStatus("Saved. New chords are active.");
+    }
+
+    private void UpdateHotkeyStatus(string text)
+    {
+        var line = this.FindControl<TextBlock>("HotkeyStatusLine");
+        if (line is not null) line.Text = text;
+    }
+
+    private void RefreshNetworkTab()
+    {
+        if (_settings is null) return;
+        var on = this.FindControl<CheckBox>("TopologyEnabledToggle");
+        if (on is not null)
+        {
+            _suppressTopologyEvent = true;
+            on.IsChecked = _settings.Topology.Enabled;
+            _suppressTopologyEvent = false;
+        }
+        var mid = this.FindControl<TextBlock>("MachineIdLine");
+        if (mid is not null) mid.Text = _settings.Topology.MachineId ?? "(generated on first enable)";
+        var port = this.FindControl<TextBlock>("TopologyPortLine");
+        if (port is not null) port.Text = _settings.Topology.Port.ToString();
+        var win = this.FindControl<TextBlock>("TopologyWindowLine");
+        if (win is not null) win.Text = $"{_settings.Topology.CorrelationWindowSeconds}s after a local link-lost";
+        UpdateTopologyStatus("");
+    }
+
+    private void OnTopologyEnabledChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_suppressTopologyEvent || _settings is null) return;
+        if (sender is not CheckBox cb) return;
+        _settings.Topology.Enabled = cb.IsChecked == true;
+        _settings.Save();
+        TopologyChanged?.Invoke();
+        UpdateTopologyStatus(_settings.Topology.Enabled
+            ? "Enabled. Restart the app for the broadcast service to start (live toggle TBD)."
+            : "Disabled. Restart the app to fully release the UDP socket.");
+    }
+
+    private void UpdateTopologyStatus(string text)
+    {
+        var line = this.FindControl<TextBlock>("TopologyStatusLine");
+        if (line is not null) line.Text = text;
     }
 
     private bool _suppressTelemetryEvent;
