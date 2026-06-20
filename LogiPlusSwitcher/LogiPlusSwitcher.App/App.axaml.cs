@@ -195,10 +195,47 @@ public partial class App : Application
             _trayStatus = new TrayIconStatusController(trays[0],
                 _loggerFactory.CreateLogger<TrayIconStatusController>());
             _disposables.Add(_trayStatus);
+
+            // Windows tray convention: left-click opens the settings window
+            // directly (mirrors what the OS does for Action-Center–style icons).
+            // The context menu still appears on right-click via the Menu binding.
+            // macOS leaves the click handler unbound: in the menubar, clicking
+            // an icon SHOULD show its menu — that's the native behavior.
+            if (OperatingSystem.IsWindows())
+            {
+                trays[0].Clicked += (_, _) => OpenSettings(SettingsWindow.TabStatus);
+            }
         }
         else
         {
             log.LogWarning("TrayIcon not found at framework init; dynamic menu wiring skipped");
+        }
+
+        // Pre-warm the SettingsWindow so the first user-triggered open is
+        // instant. We never tear the window down between open / close —
+        // the Closing handler in SettingsWindow cancels the close and hides
+        // the window instead. Permanent teardown happens via Hibernate() in
+        // the desktop Exit handler below.
+        _settingsWindow = new SettingsWindow(_manager, _settings)
+        {
+            HostNamesChanged = () => _trayController?.RefreshHostLabels(),
+            TopologyChanged = ApplyTopologySettings,
+            PeerAnnouncementsProvider = () =>
+                _topology is null
+                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>()
+                    : _topology.LatestPeerAnnouncements,
+            PeerStatsProvider = () =>
+                _topology is null
+                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.PeerStats>()
+                    : _topology.PeerSnapshot,
+            SendStatsProvider = () =>
+                _topology is null ? (0L, 0L) : _topology.SendStats,
+            OnHidden = () => MacActivationPolicy.HideDockIcon(),
+        };
+
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktopLife)
+        {
+            desktopLife.Exit += (_, _) => _settingsWindow?.Hibernate();
         }
     }
 
@@ -273,41 +310,19 @@ public partial class App : Application
 
     private void OpenSettings(string? initialTab = null)
     {
-        if (_manager is null) return;
-
-        if (_settingsWindow is not null && _settingsWindow.IsVisible)
-        {
-            if (initialTab is not null) _settingsWindow.OpenTo(initialTab);
-            _settingsWindow.Activate();
-            return;
-        }
+        if (_settingsWindow is null) return;
 
         // Show the dock icon for the duration of the settings window so users
-        // who Cmd-Tab can find us. Restore accessory mode on close.
+        // who Cmd-Tab can find us. Restore accessory mode in OnHidden.
         MacActivationPolicy.ShowDockIcon();
 
-        _settingsWindow = new SettingsWindow(_manager, _settings)
-        {
-            HostNamesChanged = () => _trayController?.RefreshHostLabels(),
-            TopologyChanged = ApplyTopologySettings,
-            PeerAnnouncementsProvider = () =>
-                _topology is null
-                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>()
-                    : _topology.LatestPeerAnnouncements,
-            PeerStatsProvider = () =>
-                _topology is null
-                    ? Array.Empty<LogiPlusSwitcher.Core.Topology.PeerStats>()
-                    : _topology.PeerSnapshot,
-            SendStatsProvider = () =>
-                _topology is null ? (0L, 0L) : _topology.SendStats,
-        };
-        _settingsWindow.Closed += (_, _) =>
-        {
-            _settingsWindow = null;
-            MacActivationPolicy.HideDockIcon();
-        };
         if (initialTab is not null) _settingsWindow.OpenTo(initialTab);
-        _settingsWindow.Show();
+
+        if (!_settingsWindow.IsVisible)
+            _settingsWindow.Show();
+
+        _settingsWindow.Activate();
+        _settingsWindow.BringIntoView();
     }
 
 }

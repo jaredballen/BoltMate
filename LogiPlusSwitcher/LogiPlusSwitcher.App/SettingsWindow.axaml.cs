@@ -6,6 +6,7 @@ using System.Reactive.Disposables;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using FluentAvalonia.UI.Controls;
 using LogiPlusSwitcher.App.Updates;
 using Microsoft.Extensions.Logging.Abstractions;
 using LogiPlusSwitcher.Core;
@@ -38,6 +39,48 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         Closed += (_, _) => _disposables.Dispose();
+
+        // Pre-warm pattern: the App constructs this window once at startup
+        // and keeps it alive across open/close cycles so the second-and-later
+        // opens are instant. The user clicking the OS close button must NOT
+        // actually destroy the window — cancel the close and hide instead.
+        // Real disposal happens when the App tears the window down on shutdown
+        // (via Hibernate() below), at which point we let Close go through.
+        Closing += (_, e) =>
+        {
+            if (_hibernating) return; // App is tearing us down: allow close.
+            e.Cancel = true;
+            Hide();
+            OnHidden?.Invoke();
+        };
+
+        // Wire NavigationView selection to page-swap. Default to Status page.
+        var nav = this.FindControl<FANavigationView>("MainNav");
+        if (nav is not null)
+        {
+            nav.SelectionChanged += OnNavSelectionChanged;
+            var statusItem = this.FindControl<FANavigationViewItem>("StatusNavItem");
+            if (statusItem is not null) nav.SelectedItem = statusItem;
+        }
+    }
+
+    private bool _hibernating;
+
+    /// <summary>
+    /// Tells the App layer that the user dismissed the window (Closing was
+    /// intercepted; the window is now hidden but still alive). The App flips
+    /// the macOS Dock icon back to accessory mode here.
+    /// </summary>
+    public Action? OnHidden { get; set; }
+
+    /// <summary>
+    /// Permanently closes the window. Call this from the App shutdown path
+    /// after the pre-warmed window is no longer needed.
+    /// </summary>
+    public void Hibernate()
+    {
+        _hibernating = true;
+        Close();
     }
 
     public SettingsWindow(
@@ -60,6 +103,26 @@ public partial class SettingsWindow : Window
         StartStatusTimer();
     }
 
+    /// <summary>
+    /// Swap visible page when the user clicks a different NavigationViewItem.
+    /// </summary>
+    private void OnNavSelectionChanged(object? sender, FANavigationViewSelectionChangedEventArgs e)
+    {
+        if (e.SelectedItem is not FANavigationViewItem nvi) return;
+        var tag = nvi.Tag as string;
+        ShowPage(tag);
+    }
+
+    private void ShowPage(string? tag)
+    {
+        var statusPage = this.FindControl<Control>("StatusPage");
+        var aboutPage = this.FindControl<Control>("AboutPage");
+        var licensePage = this.FindControl<Control>("LicensePage");
+        if (statusPage is not null) statusPage.IsVisible = tag == TabStatus;
+        if (aboutPage is not null) aboutPage.IsVisible = tag == TabAbout;
+        if (licensePage is not null) licensePage.IsVisible = tag == TabLicense;
+    }
+
     /// <summary>Accessor returning the latest UDP announcement from each known peer.</summary>
     public Func<IEnumerable<LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>>? PeerAnnouncementsProvider { get; set; }
 
@@ -76,20 +139,23 @@ public partial class SettingsWindow : Window
     public Action? TopologyChanged { get; set; }
 
     /// <summary>
-    /// Selects which tab is active. Called by the tray menu so that clicking
+    /// Selects which page is active. Called by the tray menu so that clicking
     /// a tray entry lands the user on the matching pane.
     /// </summary>
     public void OpenTo(string tab)
     {
-        var tabs = this.FindControl<TabControl>("MainTabs");
-        if (tabs is null) return;
-        TabItem? target = tab switch
+        var nav = this.FindControl<FANavigationView>("MainNav");
+        if (nav is null) return;
+        FANavigationViewItem? target = tab switch
         {
-            TabAbout => this.FindControl<TabItem>("AboutTab"),
-            TabLicense => this.FindControl<TabItem>("LicenseTab"),
-            _ => this.FindControl<TabItem>("StatusTab"),
+            TabAbout => this.FindControl<FANavigationViewItem>("AboutNavItem"),
+            TabLicense => this.FindControl<FANavigationViewItem>("LicenseNavItem"),
+            _ => this.FindControl<FANavigationViewItem>("StatusNavItem"),
         };
-        if (target is not null) tabs.SelectedItem = target;
+        if (target is not null) nav.SelectedItem = target;
+        // SelectionChanged fires the page swap; in case the same item was
+        // already selected, force the page state to match.
+        ShowPage(tab);
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
