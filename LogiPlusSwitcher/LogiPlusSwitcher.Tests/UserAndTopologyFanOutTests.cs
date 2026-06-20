@@ -9,7 +9,7 @@ namespace LogiPlusSwitcher.Tests;
 
 /// <summary>
 /// Coverage for SwitcherService.RequestTopologyFanOut — the address-based
-/// fan-out used by both the global-hotkey path (source=UserHotkey, no
+/// fan-out used by both user-requested switches (source=UserRequested, no
 /// originator) and the UDP topology correlator (source=RemoteTopology,
 /// originator = device that just left this machine).
 /// </summary>
@@ -69,7 +69,7 @@ public class UserAndTopologyFanOutTests
     private static byte[] BleB => [0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5];
 
     [Fact]
-    public void HotkeyTopologyFanOut_routes_each_device_via_its_own_matching_slot()
+    public void UserTopologyFanOut_routes_each_device_via_its_own_matching_slot()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
@@ -82,18 +82,18 @@ public class UserAndTopologyFanOutTests
         var count = f.Switcher.RequestTopologyFanOut(
             targetHostId,
             originatingDeviceWpid: null,
-            source: FanOutSource.UserHotkey);
+            source: FanOutSource.UserRequested);
 
         Assert.Equal(2, count);
         // Mouse should be routed to its slot 2 (its binding to BleB).
         Assert.Contains(f.FanOuts, e => e.Target.DeviceIndex == 1 && e.TargetHost == 2);
         // Keyboard should be routed to its slot 0 (its binding to BleB).
         Assert.Contains(f.FanOuts, e => e.Target.DeviceIndex == 2 && e.TargetHost == 0);
-        Assert.All(f.FanOuts, e => Assert.Equal(FanOutSource.UserHotkey, e.Source));
+        Assert.All(f.FanOuts, e => Assert.Equal(FanOutSource.UserRequested, e.Source));
     }
 
     [Fact]
-    public void HotkeyTopologyFanOut_skips_device_without_matching_BLE_binding()
+    public void UserTopologyFanOut_skips_device_without_matching_BLE_binding()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
@@ -106,14 +106,14 @@ public class UserAndTopologyFanOutTests
         var count = f.Switcher.RequestTopologyFanOut(
             targetHostId,
             originatingDeviceWpid: null,
-            source: FanOutSource.UserHotkey);
+            source: FanOutSource.UserRequested);
 
         Assert.Equal(1, count); // keyboard only
         Assert.DoesNotContain(f.FanOuts, e => e.Target.DeviceIndex == 1);
     }
 
     [Fact]
-    public void HotkeyTopologyFanOut_skips_non_participating_receiver()
+    public void UserTopologyFanOut_skips_non_participating_receiver()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
@@ -121,13 +121,13 @@ public class UserAndTopologyFanOutTests
         f.SeedDevice(r, 1, wpid: 0xAAAA, bindings: [(1, BleB)]);
 
         var targetHostId = Convert.ToHexString(BleB).ToLowerInvariant();
-        var count = f.Switcher.RequestTopologyFanOut(targetHostId, null, FanOutSource.UserHotkey);
+        var count = f.Switcher.RequestTopologyFanOut(targetHostId, null, FanOutSource.UserRequested);
         Assert.Equal(0, count);
         Assert.Empty(f.FanOuts);
     }
 
     [Fact]
-    public void HotkeyTopologyFanOut_skips_offline_devices()
+    public void UserTopologyFanOut_skips_offline_devices()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
@@ -135,7 +135,7 @@ public class UserAndTopologyFanOutTests
         f.SeedDevice(r, 2, wpid: 0xBBBB, bindings: [(1, BleB)]);
 
         var targetHostId = Convert.ToHexString(BleB).ToLowerInvariant();
-        var count = f.Switcher.RequestTopologyFanOut(targetHostId, null, FanOutSource.UserHotkey);
+        var count = f.Switcher.RequestTopologyFanOut(targetHostId, null, FanOutSource.UserRequested);
 
         Assert.Equal(1, count);
         Assert.DoesNotContain(f.FanOuts, e => e.Target.DeviceIndex == 1);

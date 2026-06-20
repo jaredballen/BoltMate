@@ -6,7 +6,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using DynamicData;
-using LogiPlusSwitcher.App.Hotkeys;
 using LogiPlusSwitcher.App.Licensing;
 using LogiPlusSwitcher.App.Updates;
 using Avalonia.Threading;
@@ -28,8 +27,6 @@ public partial class App : Application
     private TrayMenuController? _trayController;
     private ReceiverPolicyService? _policy;
     private UpdateService? _updates;
-    private IGlobalHotkeyService? _hotkeyService;
-    private HotkeyOrchestrator? _hotkeys;
     private UdpTopologyService? _topology;
     private MdnsTcpChannel? _mdnsTcp;
     private TopologyCorrelator? _correlator;
@@ -171,18 +168,6 @@ public partial class App : Application
         _switcher = new SwitcherService(_manager, _loggerFactory.CreateLogger<SwitcherService>());
         _disposables.Add(_switcher);
 
-        // Global hotkey support. macOS uses Carbon RegisterEventHotKey; Win
-        // uses RegisterHotKey on a message-only window. Both let the user
-        // bypass the physical Easy-Switch button (which the keyboard handles
-        // internally before any software can see it — see
-        // project_easyswitch_firmware_direct memory for the proof).
-        _hotkeyService = GlobalHotkeyServiceFactory.Create(_loggerFactory);
-        _disposables.Add(_hotkeyService);
-        _hotkeys = new HotkeyOrchestrator(_hotkeyService, _switcher, _settings.Hotkeys,
-            _loggerFactory.CreateLogger<HotkeyOrchestrator>());
-        _hotkeys.Apply();
-        _disposables.Add(_hotkeys);
-
         // UDP topology — LAN broadcast of receiver state + cross-machine
         // correlator. Opt-in via Settings → Network. Live-toggle: enable /
         // disable in Settings starts / stops the UDP socket immediately, no
@@ -305,7 +290,6 @@ public partial class App : Application
         _settingsWindow = new SettingsWindow(_manager, _policy, _license, _settings)
         {
             HostNamesChanged = () => _trayController?.RefreshHostLabels(),
-            HotkeysChanged = () => _hotkeys?.Apply(),
             TopologyChanged = ApplyTopologySettings,
             PeerAnnouncementsProvider = () =>
                 _topology is null

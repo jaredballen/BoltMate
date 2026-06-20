@@ -71,170 +71,15 @@ public partial class SettingsWindow : Window
         RefreshLaunchAtLogin();
         RefreshUpdatesTab();
         RefreshDiagnosticsTab();
-        RefreshHotkeysTab();
         RefreshNetworkTab();
         Populate();
         WireLiveRefresh();
         StartDiagnosticsTimer();
     }
 
-    public Action? HotkeysChanged { get; set; }
     public Action? TopologyChanged { get; set; }
 
-    private bool _suppressHotkeysEvent;
     private bool _suppressTopologyEvent;
-    private readonly ObservableCollection<HotkeyBindingRow> _hotkeyRows = new();
-
-    private void RefreshHotkeysTab()
-    {
-        if (_settings is null) return;
-        var on = this.FindControl<CheckBox>("HotkeysEnabledToggle");
-        if (on is not null)
-        {
-            _suppressHotkeysEvent = true;
-            on.IsChecked = _settings.Hotkeys.Enabled;
-            _suppressHotkeysEvent = false;
-        }
-
-        var list = this.FindControl<ItemsControl>("HotkeyBindingsList");
-        if (list is not null && list.ItemsSource is null) list.ItemsSource = _hotkeyRows;
-
-        var targets = DiscoverTargets();
-        _hotkeyRows.Clear();
-        foreach (var b in _settings.Hotkeys.Bindings)
-        {
-            var row = new HotkeyBindingRow
-            {
-                Chord = b.Chord,
-                AvailableTargets = targets,
-            };
-            row.SelectedTarget = string.IsNullOrEmpty(b.TargetBleHex)
-                ? null
-                : targets.FirstOrDefault(t => string.Equals(t.BleHex, b.TargetBleHex, StringComparison.OrdinalIgnoreCase));
-            _hotkeyRows.Add(row);
-        }
-        UpdateHotkeyStatus("");
-    }
-
-    /// <summary>
-    /// Builds the dropdown list. One entry per unique BLE seen across every
-    /// device's HostBindings + every attached receiver's own BLE. Friendly
-    /// label comes from <see cref="HostBinding.ReceiverName"/> when known,
-    /// falls back to short hex.
-    /// </summary>
-    private List<TargetOption> DiscoverTargets()
-    {
-        var dict = new Dictionary<string, TargetOption>(StringComparer.OrdinalIgnoreCase);
-        if (_manager is null) return dict.Values.ToList();
-
-        // 1. This machine's own receivers + their devices' HostBindings.
-        foreach (var r in _manager.Receivers.Items)
-        {
-            if (r.HostIdentifierKey is { } bleSelf)
-            {
-                var label = string.IsNullOrEmpty(r.Info.Serial) ? "(this receiver)" : $"this machine ({r.Info.Serial})";
-                dict.TryAdd(bleSelf, new TargetOption(bleSelf, label));
-            }
-            foreach (var d in r.Devices.Items)
-            {
-                foreach (var binding in d.HostBindings.Values)
-                {
-                    if (!binding.Paired) continue;
-                    if (binding.HostIdentifierKey is not { } bleKey) continue;
-                    var label = !string.IsNullOrEmpty(binding.ReceiverName)
-                        ? binding.ReceiverName!
-                        : (binding.HostIdentifierString ?? bleKey);
-                    if (!dict.ContainsKey(bleKey))
-                        dict[bleKey] = new TargetOption(bleKey, label);
-                }
-            }
-        }
-
-        // 2. Remote receivers — discovered from inbound UDP announcements.
-        // Lets the user pick a peer as a hotkey target even if our own
-        // device-side HostBindings haven't enriched yet (Win arm64 emulation
-        // sometimes times out the HID++ feature discovery — see task #31).
-        if (PeerAnnouncementsProvider is not null)
-        {
-            try
-            {
-                foreach (var ann in PeerAnnouncementsProvider())
-                {
-                    foreach (var entry in ann.Receivers)
-                    {
-                        if (string.IsNullOrEmpty(entry.HostIdentifierHex)) continue;
-                        var key = entry.HostIdentifierHex.ToLowerInvariant();
-                        if (dict.ContainsKey(key)) continue;
-                        var hostname = string.IsNullOrEmpty(ann.Hostname) ? "peer" : ann.Hostname;
-                        var serialPart = string.IsNullOrEmpty(entry.Serial) ? "" : $" · {entry.Serial}";
-                        dict[key] = new TargetOption(key, $"{hostname}{serialPart}");
-                    }
-                }
-            }
-            catch (Exception) { /* defensive — UI never blocks on topology errors */ }
-        }
-
-        return dict.Values.OrderBy(t => t.Display, StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    private void OnHotkeysEnabledChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (_suppressHotkeysEvent || _settings is null) return;
-        if (sender is not CheckBox cb) return;
-        _settings.Hotkeys.Enabled = cb.IsChecked == true;
-        _settings.Save();
-        HotkeysChanged?.Invoke();
-        UpdateHotkeyStatus(_settings.Hotkeys.Enabled ? "Hotkeys on." : "Hotkeys off.");
-    }
-
-    private void OnSaveHotkeys(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (_settings is null) return;
-
-        var bad = new List<string>();
-        var newBindings = new List<HotkeyBinding>();
-        for (var i = 0; i < _hotkeyRows.Count; i++)
-        {
-            var row = _hotkeyRows[i];
-            var raw = (row.Chord ?? "").Trim();
-            var chord = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw);
-            if (!string.IsNullOrEmpty(raw) && !chord.IsValid)
-            {
-                bad.Add($"Row {i + 1}: '{raw}' is not a valid chord");
-                continue;
-            }
-            newBindings.Add(new HotkeyBinding
-            {
-                Chord = chord.IsValid ? chord.ToString() : raw,
-                TargetBleHex = row.SelectedTarget?.BleHex,
-                TargetLabel = row.SelectedTarget?.Display,
-            });
-        }
-        if (bad.Count > 0)
-        {
-            UpdateHotkeyStatus(string.Join("; ", bad));
-            return;
-        }
-        _settings.Hotkeys.Bindings = newBindings;
-        _settings.Save();
-        HotkeysChanged?.Invoke();
-        UpdateHotkeyStatus("Saved. New chords are active.");
-    }
-
-    private void UpdateHotkeyStatus(string text)
-    {
-        var line = this.FindControl<TextBlock>("HotkeyStatusLine");
-        if (line is not null) line.Text = text;
-    }
-
-    public sealed class HotkeyBindingRow
-    {
-        public string Chord { get; set; } = "";
-        public List<TargetOption> AvailableTargets { get; set; } = new();
-        public TargetOption? SelectedTarget { get; set; }
-    }
-
-    public sealed record TargetOption(string BleHex, string Display);
 
     private void RefreshNetworkTab()
     {
@@ -865,9 +710,6 @@ public partial class SettingsWindow : Window
         if (_settings is not null)
         {
             sb.AppendLine($"  License key set: {(!string.IsNullOrEmpty(_settings.LicenseKey) ? "yes" : "no")}");
-            sb.AppendLine($"  Hotkeys enabled: {_settings.Hotkeys.Enabled} | bindings: {_settings.Hotkeys.Bindings.Count}");
-            foreach (var b in _settings.Hotkeys.Bindings)
-                sb.AppendLine($"    • {b.Chord,-22} → {(string.IsNullOrEmpty(b.TargetBleHex) ? "(unbound)" : $"{b.TargetLabel ?? b.TargetBleHex} [{b.TargetBleHex}]")}");
             sb.AppendLine($"  Primary receiver: {_settings.PrimaryReceiverSerial ?? "(none)"}");
             sb.AppendLine($"  Auto-update: {_settings.AutoCheckForUpdates} (every {_settings.UpdateCheckIntervalHours}h)");
             sb.AppendLine($"  Telemetry enabled: {_settings.TelemetryEnabled}");

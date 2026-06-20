@@ -61,9 +61,6 @@ public sealed class AppSettings
     /// <summary>ISO-8601 timestamp of the last update check, or null if never checked.</summary>
     public string? LastUpdateCheckUtc { get; set; }
 
-    /// <summary>Global hotkey bindings. Default chords ship with the app; users can rebind in Settings.</summary>
-    public HotkeySettings Hotkeys { get; set; } = new();
-
     /// <summary>UDP cross-machine topology settings.</summary>
     public TopologySettings Topology { get; set; } = new();
 
@@ -109,49 +106,6 @@ public sealed class PersistedHostBinding
     public bool Paired { get; set; }
     public string? HostIdentifierHex { get; set; }
     public string? ReceiverName { get; set; }
-}
-
-/// <summary>
-/// Global hotkey config. Each <see cref="Bindings"/> entry pairs a key chord
-/// with a target receiver identified by BLE address. On press, the orchestrator
-/// asks <see cref="Switcher.SwitcherService.RequestTopologyFanOut"/> to find
-/// each device's slot pointing to that BLE and write CHANGE_HOST(matching_slot)
-/// — which may be a different slot index per device.
-/// </summary>
-/// <remarks>
-/// Why BLE-target instead of slot-index: slot indices are device-private (the
-/// mouse's slot 0 and the keyboard's slot 0 may point to different machines).
-/// What "host 1" means on the user's mouse can differ from what it means on
-/// their keyboard. The shared addressable name across devices is the receiver
-/// BLE on the destination machine — that's what HostBindings resolves to.
-/// </remarks>
-public sealed class HotkeySettings
-{
-    /// <summary>Master switch — when false, no hotkeys are registered.</summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>Ordered list of chord → target bindings. Index in list = registration id.</summary>
-    public List<HotkeyBinding> Bindings { get; set; } = new()
-    {
-        // Default chords ship pre-defined but UNBOUND — BLEs vary per setup
-        // so the user picks a target receiver in Settings → Hotkeys.
-        new HotkeyBinding { Chord = "Cmd+Ctrl+Shift+1" },
-        new HotkeyBinding { Chord = "Cmd+Ctrl+Shift+2" },
-        new HotkeyBinding { Chord = "Cmd+Ctrl+Shift+3" },
-    };
-}
-
-/// <summary>One chord ↔ target receiver pair.</summary>
-public sealed class HotkeyBinding
-{
-    /// <summary>Round-trippable chord string like <c>"Cmd+Ctrl+Shift+1"</c>.</summary>
-    public string Chord { get; set; } = "";
-
-    /// <summary>Lowercase hex BLE of the target receiver, or null if unbound.</summary>
-    public string? TargetBleHex { get; set; }
-
-    /// <summary>Optional friendly label (e.g. "Mac mini", "Win VM") for display.</summary>
-    public string? TargetLabel { get; set; }
 }
 
 /// <summary>
@@ -238,7 +192,5 @@ public sealed class TopologySettings
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ReceiverSettings))]
 [JsonSerializable(typeof(PersistedHostBinding))]
-[JsonSerializable(typeof(HotkeySettings))]
-[JsonSerializable(typeof(HotkeyBinding))]
 [JsonSerializable(typeof(TopologySettings))]
 internal partial class AppSettingsContext : JsonSerializerContext { }

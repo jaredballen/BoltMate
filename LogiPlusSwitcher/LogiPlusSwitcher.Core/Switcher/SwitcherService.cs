@@ -60,20 +60,20 @@ public sealed class SwitcherService : IDisposable
     public void Dispose() => _disposables.Dispose();
 
     /// <summary>
-    /// Topology-aware fan-out by destination host identifier. Used by global
-    /// hotkeys (no originator) and the UDP topology correlator (originator =
-    /// the device that just left this machine). For each local sibling, finds
-    /// the slot whose <see cref="HostBinding.HostIdentifier"/> matches the
-    /// target id and writes <c>CHANGE_HOST(matching_slot)</c> — which may be
-    /// a different slot index per device.
+    /// Topology-aware fan-out by destination host identifier. Used by the UDP
+    /// topology correlator (originator = the device that just left this
+    /// machine). For each local sibling, finds the slot whose
+    /// <see cref="HostBinding.HostIdentifier"/> matches the target id and
+    /// writes <c>CHANGE_HOST(matching_slot)</c> — which may be a different
+    /// slot index per device.
     /// </summary>
     /// <param name="remoteReceiverHostId">Lowercase hex 6-byte host identifier
     /// of the target receiver — the value stored in each device's HostBindings.
     /// Logitech-proprietary, NOT a real BLE/BT address. May be on this machine
     /// (local switch) or a peer (cross-machine sync).</param>
     /// <param name="originatingDeviceWpid">Optional — when set, skip the
-    /// device with this WPID (it already left). For hotkey-driven fan-out
-    /// pass null.</param>
+    /// device with this WPID (it already left). Pass null for a fan-out with
+    /// no originator (e.g. CLI-initiated switch).</param>
     /// <param name="source">Tag so subscribers know which path fired.</param>
     /// <returns>Number of siblings fanned out.</returns>
     public int RequestTopologyFanOut(string remoteReceiverHostId, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology, string? destinationReceiverName = null)
@@ -305,6 +305,7 @@ public enum FanOutSource
 {
     EasySwitchPress,
     FlowSnoop,
-    UserHotkey,
+    /// <summary>User-initiated switch with no originating device (CLI / API caller).</summary>
+    UserRequested,
     RemoteTopology,
 }
