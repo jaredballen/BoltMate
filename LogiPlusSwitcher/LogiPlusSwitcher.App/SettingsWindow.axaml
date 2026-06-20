@@ -154,10 +154,15 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Global hotkeys" FontSize="16" FontWeight="Bold" />
                         <TextBlock Foreground="#CCC" TextWrapping="Wrap">
-                            Press a chord anywhere on your machine to instantly switch every paired device to the matching host.
-                            Replaces having to find the physical Easy-Switch button.
-                            Format: <Run FontFamily="JetBrains Mono,Menlo,Consolas,monospace">Cmd+Ctrl+Shift+1</Run>.
+                            Press a chord anywhere on your machine to instantly route every paired device to the target receiver.
+                            Each device follows via the slot whose binding points to that receiver's BLE address — so devices
+                            with different slot layouts still land on the same machine.
+                        </TextBlock>
+                        <TextBlock Foreground="#999" FontSize="12" TextWrapping="Wrap">
+                            Chord format: <Run FontFamily="JetBrains Mono,Menlo,Consolas,monospace">Cmd+Ctrl+Shift+1</Run>.
                             Modifiers: Cmd, Ctrl, Alt (Option), Shift. Keys: 0-9, A-Z, F1-F12.
+                            Targets are auto-discovered from every device's HostBindings — devices need to come online once
+                            for their bindings to populate.
                         </TextBlock>
                     </StackPanel>
 
@@ -165,16 +170,23 @@
                               Content="Enable global hotkeys"
                               IsCheckedChanged="OnHotkeysEnabledChanged" />
 
-                    <Grid ColumnDefinitions="120,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto" Margin="22,0,0,0">
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Host 1" VerticalAlignment="Center" />
-                        <TextBox   Grid.Row="0" Grid.Column="1" x:Name="Hotkey0Box" Margin="0,2" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Host 2" VerticalAlignment="Center" />
-                        <TextBox   Grid.Row="1" Grid.Column="1" x:Name="Hotkey1Box" Margin="0,2" />
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Host 3" VerticalAlignment="Center" />
-                        <TextBox   Grid.Row="2" Grid.Column="1" x:Name="Hotkey2Box" Margin="0,2" />
-                        <Button    Grid.Row="3" Grid.Column="1" Content="Save hotkeys" Click="OnSaveHotkeys"
-                                   HorizontalAlignment="Right" Margin="0,8,0,0" />
-                    </Grid>
+                    <ItemsControl x:Name="HotkeyBindingsList" Margin="22,0,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="app:SettingsWindow+HotkeyBindingRow">
+                                <Grid ColumnDefinitions="180,*" Margin="0,4">
+                                    <TextBox Grid.Column="0" Text="{Binding Chord, Mode=TwoWay}" Margin="0,0,8,0" />
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding AvailableTargets}"
+                                              SelectedItem="{Binding SelectedTarget, Mode=TwoWay}"
+                                              PlaceholderText="(unbound — pick target)"
+                                              DisplayMemberBinding="{Binding Display}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Content="Save hotkeys" Click="OnSaveHotkeys"
+                            HorizontalAlignment="Right" Margin="22,4,0,0" />
 
                     <TextBlock x:Name="HotkeyStatusLine" Margin="22,0,0,0" Foreground="#888" FontSize="12" TextWrapping="Wrap" />
                 </StackPanel>

@@ -59,6 +59,10 @@ public static class HidPp10
     /// <summary>
     /// Builds the HID++ 1.0 short frame that enables receiver notifications.
     /// Wire: <c>10 FF 80 00 00 09 00</c> — WIRELESS | SOFTWARE_PRESENT.
+    /// Bolt firmware hardware-clamps the mask to these two bits — verified
+    /// 2026-06-20 by writing 0xFFFFFF and observing the receiver echo back
+    /// 0x000900 unchanged. No additional notifications can be enabled, so the
+    /// keyboard Easy-Switch press remains invisible at every software layer.
     /// </summary>
     public static HidPpFrame BuildEnableNotificationsFrame() =>
         HidPpFrame.Hidpp10Short(

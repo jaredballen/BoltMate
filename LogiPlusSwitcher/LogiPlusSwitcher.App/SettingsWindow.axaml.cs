@@ -73,6 +73,7 @@ public partial class SettingsWindow : Window
 
     private bool _suppressHotkeysEvent;
     private bool _suppressTopologyEvent;
+    private readonly ObservableCollection<HotkeyBindingRow> _hotkeyRows = new();
 
     private void RefreshHotkeysTab()
     {
@@ -84,19 +85,61 @@ public partial class SettingsWindow : Window
             on.IsChecked = _settings.Hotkeys.Enabled;
             _suppressHotkeysEvent = false;
         }
-        var b0 = this.FindControl<TextBox>("Hotkey0Box");
-        var b1 = this.FindControl<TextBox>("Hotkey1Box");
-        var b2 = this.FindControl<TextBox>("Hotkey2Box");
-        if (b0 is not null) b0.Text = LookupHotkey(0);
-        if (b1 is not null) b1.Text = LookupHotkey(1);
-        if (b2 is not null) b2.Text = LookupHotkey(2);
+
+        var list = this.FindControl<ItemsControl>("HotkeyBindingsList");
+        if (list is not null && list.ItemsSource is null) list.ItemsSource = _hotkeyRows;
+
+        var targets = DiscoverTargets();
+        _hotkeyRows.Clear();
+        foreach (var b in _settings.Hotkeys.Bindings)
+        {
+            var row = new HotkeyBindingRow
+            {
+                Chord = b.Chord,
+                AvailableTargets = targets,
+            };
+            row.SelectedTarget = string.IsNullOrEmpty(b.TargetBleHex)
+                ? null
+                : targets.FirstOrDefault(t => string.Equals(t.BleHex, b.TargetBleHex, StringComparison.OrdinalIgnoreCase));
+            _hotkeyRows.Add(row);
+        }
         UpdateHotkeyStatus("");
     }
 
-    private string LookupHotkey(byte slot) =>
-        _settings is null ? ""
-        : _settings.Hotkeys.HostBindings.TryGetValue(slot, out var v) ? v
-        : "";
+    /// <summary>
+    /// Builds the dropdown list. One entry per unique BLE seen across every
+    /// device's HostBindings + every attached receiver's own BLE. Friendly
+    /// label comes from <see cref="HostBinding.ReceiverName"/> when known,
+    /// falls back to short hex.
+    /// </summary>
+    private List<TargetOption> DiscoverTargets()
+    {
+        var dict = new Dictionary<string, TargetOption>(StringComparer.OrdinalIgnoreCase);
+        if (_manager is null) return dict.Values.ToList();
+
+        foreach (var r in _manager.Receivers.Items)
+        {
+            if (r.BluetoothAddressKey is { } bleSelf)
+            {
+                var label = string.IsNullOrEmpty(r.Info.Serial) ? "(this receiver)" : $"this Mac ({r.Info.Serial})";
+                dict.TryAdd(bleSelf, new TargetOption(bleSelf, label));
+            }
+            foreach (var d in r.Devices.Items)
+            {
+                foreach (var binding in d.HostBindings.Values)
+                {
+                    if (!binding.Paired) continue;
+                    if (binding.BluetoothAddressKey is not { } bleKey) continue;
+                    var label = !string.IsNullOrEmpty(binding.ReceiverName)
+                        ? binding.ReceiverName!
+                        : (binding.BluetoothAddressString ?? bleKey);
+                    if (!dict.ContainsKey(bleKey))
+                        dict[bleKey] = new TargetOption(bleKey, label);
+                }
+            }
+        }
+        return dict.Values.OrderBy(t => t.Display, StringComparer.OrdinalIgnoreCase).ToList();
+    }
 
     private void OnHotkeysEnabledChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -111,34 +154,32 @@ public partial class SettingsWindow : Window
     private void OnSaveHotkeys(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_settings is null) return;
-        var b0 = this.FindControl<TextBox>("Hotkey0Box");
-        var b1 = this.FindControl<TextBox>("Hotkey1Box");
-        var b2 = this.FindControl<TextBox>("Hotkey2Box");
-        var raw0 = (b0?.Text ?? "").Trim();
-        var raw1 = (b1?.Text ?? "").Trim();
-        var raw2 = (b2?.Text ?? "").Trim();
-
-        var c0 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw0);
-        var c1 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw1);
-        var c2 = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw2);
 
         var bad = new List<string>();
-        if (!string.IsNullOrEmpty(raw0) && !c0.IsValid) bad.Add($"Host 1: '{raw0}'");
-        if (!string.IsNullOrEmpty(raw1) && !c1.IsValid) bad.Add($"Host 2: '{raw1}'");
-        if (!string.IsNullOrEmpty(raw2) && !c2.IsValid) bad.Add($"Host 3: '{raw2}'");
+        var newBindings = new List<HotkeyBinding>();
+        for (var i = 0; i < _hotkeyRows.Count; i++)
+        {
+            var row = _hotkeyRows[i];
+            var raw = (row.Chord ?? "").Trim();
+            var chord = LogiPlusSwitcher.Core.Hotkeys.HotkeyChord.Parse(raw);
+            if (!string.IsNullOrEmpty(raw) && !chord.IsValid)
+            {
+                bad.Add($"Row {i + 1}: '{raw}' is not a valid chord");
+                continue;
+            }
+            newBindings.Add(new HotkeyBinding
+            {
+                Chord = chord.IsValid ? chord.ToString() : raw,
+                TargetBleHex = row.SelectedTarget?.BleHex,
+                TargetLabel = row.SelectedTarget?.Display,
+            });
+        }
         if (bad.Count > 0)
         {
-            UpdateHotkeyStatus("Unparseable: " + string.Join("; ", bad));
+            UpdateHotkeyStatus(string.Join("; ", bad));
             return;
         }
-
-        if (c0.IsValid) _settings.Hotkeys.HostBindings[0] = c0.ToString();
-        else _settings.Hotkeys.HostBindings.Remove(0);
-        if (c1.IsValid) _settings.Hotkeys.HostBindings[1] = c1.ToString();
-        else _settings.Hotkeys.HostBindings.Remove(1);
-        if (c2.IsValid) _settings.Hotkeys.HostBindings[2] = c2.ToString();
-        else _settings.Hotkeys.HostBindings.Remove(2);
-
+        _settings.Hotkeys.Bindings = newBindings;
         _settings.Save();
         HotkeysChanged?.Invoke();
         UpdateHotkeyStatus("Saved. New chords are active.");
@@ -149,6 +190,15 @@ public partial class SettingsWindow : Window
         var line = this.FindControl<TextBlock>("HotkeyStatusLine");
         if (line is not null) line.Text = text;
     }
+
+    public sealed class HotkeyBindingRow
+    {
+        public string Chord { get; set; } = "";
+        public List<TargetOption> AvailableTargets { get; set; } = new();
+        public TargetOption? SelectedTarget { get; set; }
+    }
+
+    public sealed record TargetOption(string BleHex, string Display);
 
     private void RefreshNetworkTab()
     {
@@ -177,8 +227,8 @@ public partial class SettingsWindow : Window
         _settings.Save();
         TopologyChanged?.Invoke();
         UpdateTopologyStatus(_settings.Topology.Enabled
-            ? "Enabled. Restart the app for the broadcast service to start (live toggle TBD)."
-            : "Disabled. Restart the app to fully release the UDP socket.");
+            ? "Enabled. UDP socket bound and broadcasting now."
+            : "Disabled. UDP socket released.");
     }
 
     private void UpdateTopologyStatus(string text)

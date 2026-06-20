@@ -93,28 +93,10 @@ public partial class App : Application
         _disposables.Add(_hotkeys);
 
         // UDP topology — LAN broadcast of receiver state + cross-machine
-        // correlator. Opt-in via Settings → Network. When a Bolt device
-        // disconnects locally and re-appears on a peer's announcement within
-        // the correlation window, fan out remaining local devices to follow.
-        if (_settings.Topology.Enabled)
-        {
-            var machineId = _settings.Topology.MachineId;
-            if (string.IsNullOrWhiteSpace(machineId))
-            {
-                machineId = Guid.NewGuid().ToString("N");
-                _settings.Topology.MachineId = machineId;
-                _settings.Save();
-            }
-            _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
-                _loggerFactory.CreateLogger<UdpTopologyService>());
-            _topology.Start();
-            _disposables.Add(_topology);
-            _correlator = new TopologyCorrelator(_manager, _switcher,
-                _topology.Announcements,
-                TimeSpan.FromSeconds(_settings.Topology.CorrelationWindowSeconds),
-                _loggerFactory.CreateLogger<TopologyCorrelator>());
-            _disposables.Add(_correlator);
-        }
+        // correlator. Opt-in via Settings → Network. Live-toggle: enable /
+        // disable in Settings starts / stops the UDP socket immediately, no
+        // app restart needed.
+        ApplyTopologySettings();
 
         // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
         _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
@@ -157,6 +139,52 @@ public partial class App : Application
 
     private SettingsWindow? _settingsWindow;
 
+    /// <summary>
+    /// Starts or stops the UDP topology services to match
+    /// <see cref="AppSettings.Topology"/>. Safe to call repeatedly — disposes
+    /// existing services before recreating. Wired to the Settings -> Network
+    /// toggle so the user doesn't have to restart.
+    /// </summary>
+    private void ApplyTopologySettings()
+    {
+        if (_manager is null || _switcher is null) return;
+
+        // Tear down anything currently running.
+        if (_correlator is not null)
+        {
+            _disposables.Remove(_correlator);
+            _correlator.Dispose();
+            _correlator = null;
+        }
+        if (_topology is not null)
+        {
+            _disposables.Remove(_topology);
+            _topology.Dispose();
+            _topology = null;
+        }
+
+        if (!_settings.Topology.Enabled) return;
+
+        var machineId = _settings.Topology.MachineId;
+        if (string.IsNullOrWhiteSpace(machineId))
+        {
+            machineId = Guid.NewGuid().ToString("N");
+            _settings.Topology.MachineId = machineId;
+            _settings.Save();
+        }
+
+        _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
+            _loggerFactory.CreateLogger<UdpTopologyService>());
+        _topology.Start();
+        _disposables.Add(_topology);
+
+        _correlator = new TopologyCorrelator(_manager, _switcher,
+            _topology.Announcements,
+            TimeSpan.FromSeconds(_settings.Topology.CorrelationWindowSeconds),
+            _loggerFactory.CreateLogger<TopologyCorrelator>());
+        _disposables.Add(_correlator);
+    }
+
     private void OpenSettings()
     {
         if (_manager is null || _policy is null) return;
@@ -175,7 +203,7 @@ public partial class App : Application
         {
             HostNamesChanged = () => _trayController?.RefreshHostLabels(),
             HotkeysChanged = () => _hotkeys?.Apply(),
-            TopologyChanged = () => { /* live toggle TBD — settings on disk, restart picks up */ },
+            TopologyChanged = ApplyTopologySettings,
         };
         _settingsWindow.Closed += (_, _) =>
         {

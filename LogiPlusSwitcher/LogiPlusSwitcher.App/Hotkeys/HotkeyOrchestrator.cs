@@ -12,14 +12,17 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace LogiPlusSwitcher.App.Hotkeys;
 
 /// <summary>
-/// Reads <see cref="HotkeySettings"/>, registers each chord with the
-/// platform <see cref="IGlobalHotkeyService"/>, and routes presses to
-/// <see cref="SwitcherService.RequestUserFanOut"/>.
+/// Maps each <see cref="HotkeyBinding"/> in settings to a global chord
+/// registration. On press, calls <see cref="SwitcherService.RequestTopologyFanOut"/>
+/// with the bound target BLE — same topology lookup as the Easy-Switch / Flow /
+/// UDP correlator paths, so every device routes to the slot that points at the
+/// chosen target (slot index may differ across devices).
 /// </summary>
 /// <remarks>
-/// Each hotkey gets a numeric id derived from the target host slot + 1000
-/// (so id 1000 = host 0, 1001 = host 1, …). The +1000 offset just gives
-/// us room to add other hotkey categories later without colliding.
+/// Each binding's index in <see cref="HotkeySettings.Bindings"/> is its
+/// registration id (offset by <see cref="HotkeyIdBase"/>). Unbound bindings
+/// (TargetBleHex == null) are skipped — the chord is still pre-defined for
+/// the UI but no hotkey is registered with the OS until the user picks a target.
 /// </remarks>
 public sealed class HotkeyOrchestrator : IDisposable
 {
@@ -30,7 +33,7 @@ public sealed class HotkeyOrchestrator : IDisposable
     private readonly HotkeySettings _settings;
     private readonly ILogger<HotkeyOrchestrator> _logger;
     private readonly CompositeDisposable _disposables = new();
-    private readonly HashSet<int> _registeredIds = new();
+    private readonly Dictionary<int, HotkeyBinding> _registeredById = new();
 
     public HotkeyOrchestrator(
         IGlobalHotkeyService hotkeys,
@@ -46,13 +49,14 @@ public sealed class HotkeyOrchestrator : IDisposable
         _disposables.Add(_hotkeys.Pressed.Subscribe(OnPressed));
     }
 
-    /// <summary>Registers every chord in the current settings. Safe to call repeatedly.</summary>
+    /// <summary>Registers every (bound) chord in the current settings. Safe to call repeatedly.</summary>
     public void Apply()
     {
+        ClearAll();
+
         if (!_settings.Enabled)
         {
-            _logger.LogInformation("Hotkeys disabled in settings; clearing any prior registrations");
-            ClearAll();
+            _logger.LogInformation("Hotkeys disabled in settings");
             return;
         }
         if (!_hotkeys.IsSupported)
@@ -61,20 +65,28 @@ public sealed class HotkeyOrchestrator : IDisposable
             return;
         }
 
-        ClearAll();
-
-        foreach (var kv in _settings.HostBindings)
+        for (var i = 0; i < _settings.Bindings.Count; i++)
         {
-            var slot = kv.Key;
-            var chord = HotkeyChord.Parse(kv.Value);
-            if (!chord.IsValid)
+            var binding = _settings.Bindings[i];
+            if (string.IsNullOrWhiteSpace(binding.TargetBleHex))
             {
-                _logger.LogWarning("Skipping invalid chord '{Raw}' for slot {Slot}", kv.Value, slot);
+                _logger.LogInformation("Chord {Chord} is unbound — skipping registration", binding.Chord);
                 continue;
             }
-            var id = HotkeyIdBase + slot;
+            var chord = HotkeyChord.Parse(binding.Chord);
+            if (!chord.IsValid)
+            {
+                _logger.LogWarning("Skipping invalid chord '{Raw}' (target {Ble})", binding.Chord, binding.TargetBleHex);
+                continue;
+            }
+
+            var id = HotkeyIdBase + i;
             if (_hotkeys.TryRegister(id, chord))
-                _registeredIds.Add(id);
+            {
+                _registeredById[id] = binding;
+                _logger.LogInformation("Bound {Chord} -> target BLE {Ble} ({Label})",
+                    binding.Chord, binding.TargetBleHex, binding.TargetLabel ?? "(no label)");
+            }
         }
     }
 
@@ -86,23 +98,36 @@ public sealed class HotkeyOrchestrator : IDisposable
 
     private void ClearAll()
     {
-        foreach (var id in _registeredIds.ToArray())
+        foreach (var id in _registeredById.Keys.ToArray())
             _hotkeys.Unregister(id);
-        _registeredIds.Clear();
+        _registeredById.Clear();
     }
 
     private void OnPressed(int id)
     {
-        if (id < HotkeyIdBase) return;
-        var slot = (byte)(id - HotkeyIdBase);
-        _logger.LogInformation("Hotkey -> host slot {Slot}", slot);
+        if (!_registeredById.TryGetValue(id, out var binding))
+        {
+            _logger.LogWarning("Hotkey {Id} fired but no binding found", id);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(binding.TargetBleHex))
+        {
+            _logger.LogWarning("Hotkey {Id} fired but target BLE is unbound", id);
+            return;
+        }
+
+        _logger.LogInformation("Hotkey {Chord} -> target BLE {Ble} ({Label})",
+            binding.Chord, binding.TargetBleHex, binding.TargetLabel ?? "(no label)");
         try
         {
-            _switcher.RequestUserFanOut(slot);
+            _switcher.RequestTopologyFanOut(
+                binding.TargetBleHex.ToLowerInvariant(),
+                originatingDeviceWpid: null,
+                source: FanOutSource.UserHotkey);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "User fan-out for slot {Slot} threw", slot);
+            _logger.LogError(ex, "Hotkey fan-out for chord {Chord} threw", binding.Chord);
         }
     }
 }

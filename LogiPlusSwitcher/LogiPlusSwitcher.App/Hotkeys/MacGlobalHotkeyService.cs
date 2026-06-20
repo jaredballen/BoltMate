@@ -30,7 +30,9 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
 
     private readonly ILogger<MacGlobalHotkeyService> _logger;
     private readonly Subject<int> _pressed = new();
-    private readonly Dictionary<int, IntPtr> _registered = new();
+    // One logical hotkey id maps to >=1 OS-level registrations — digit keys
+    // bind both the top-row keycode and the numpad keycode so either fires.
+    private readonly Dictionary<int, List<IntPtr>> _registered = new();
     private readonly object _gate = new();
     private readonly CompositeDisposable _disposables = new();
     private EventHandlerUPP? _handler;
@@ -76,8 +78,8 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
         if (!chord.IsValid) return false;
         Start();
 
-        var keyCode = TranslateKey(chord.Key);
-        if (keyCode is null)
+        var keyCodes = TranslateKeyVariants(chord.Key);
+        if (keyCodes.Count == 0)
         {
             _logger.LogWarning("Hotkey {Id}: unsupported key {Key}", id, chord.Key);
             return false;
@@ -89,21 +91,29 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
         {
             Unregister_NoLock(id);
 
-            var hotKeyId = new EventHotKeyID
+            var refs = new List<IntPtr>();
+            foreach (var keyCode in keyCodes)
             {
-                Signature = HotkeySignature,
-                Id = (uint)id,
-            };
-            var status = RegisterEventHotKey(keyCode.Value, modifiers, hotKeyId,
-                GetApplicationEventTarget(), 0, out var hotKeyRef);
-            if (status != 0)
+                var hotKeyId = new EventHotKeyID { Signature = HotkeySignature, Id = (uint)id };
+                var status = RegisterEventHotKey(keyCode, modifiers, hotKeyId,
+                    GetApplicationEventTarget(), 0, out var hotKeyRef);
+                if (status != 0)
+                {
+                    _logger.LogDebug("RegisterEventHotKey for {Chord} keyCode 0x{Code:X2} failed: status {Status}",
+                        chord, keyCode, status);
+                    continue;
+                }
+                refs.Add(hotKeyRef);
+            }
+
+            if (refs.Count == 0)
             {
-                _logger.LogWarning("RegisterEventHotKey for {Chord} failed: status {Status}", chord, status);
+                _logger.LogWarning("RegisterEventHotKey for {Chord} failed for every keycode variant", chord);
                 return false;
             }
-            _registered[id] = hotKeyRef;
-            _logger.LogInformation("Hotkey registered: id {Id} chord {Chord} (keyCode 0x{Code:X2} mods 0x{Mods:X4})",
-                id, chord, keyCode.Value, modifiers);
+            _registered[id] = refs;
+            _logger.LogInformation("Hotkey registered: id {Id} chord {Chord} (keyCodes [{Codes}] mods 0x{Mods:X4})",
+                id, chord, string.Join(",", System.Linq.Enumerable.Select(keyCodes, k => $"0x{k:X2}")), modifiers);
             return true;
         }
     }
@@ -119,10 +129,13 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
 
     private void Unregister_NoLock(int id)
     {
-        if (!_registered.Remove(id, out var hotKeyRef)) return;
-        var status = UnregisterEventHotKey(hotKeyRef);
-        if (status != 0)
-            _logger.LogDebug("UnregisterEventHotKey {Id} status {Status}", id, status);
+        if (!_registered.Remove(id, out var refs)) return;
+        foreach (var hotKeyRef in refs)
+        {
+            var status = UnregisterEventHotKey(hotKeyRef);
+            if (status != 0)
+                _logger.LogDebug("UnregisterEventHotKey {Id} status {Status}", id, status);
+        }
     }
 
     public void Dispose()
@@ -131,10 +144,11 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
         _disposed = true;
         lock (_gate)
         {
-            foreach (var hotKeyRef in _registered.Values)
-            {
-                try { UnregisterEventHotKey(hotKeyRef); } catch { }
-            }
+            foreach (var refs in _registered.Values)
+                foreach (var hotKeyRef in refs)
+                {
+                    try { UnregisterEventHotKey(hotKeyRef); } catch { }
+                }
             _registered.Clear();
         }
         if (_handlerRef != IntPtr.Zero)
@@ -175,31 +189,43 @@ public sealed class MacGlobalHotkeyService : IGlobalHotkeyService
     }
 
     /// <summary>
-    /// Translates our <see cref="HotkeyKey"/> to the Carbon virtual keycode.
-    /// Values from Inside Macintosh / IOKit Events.h
-    /// (kVK_ANSI_*). ARM macOS uses identical codes.
+    /// Translates our <see cref="HotkeyKey"/> to Carbon virtual keycodes.
+    /// Digit keys (D0..D9) return BOTH the top-row code and the numpad code so
+    /// either physical key fires the same hotkey. Other keys return a single
+    /// keycode. Values from Inside Macintosh / IOKit Events.h (kVK_ANSI_* and
+    /// kVK_ANSI_Keypad*). ARM macOS uses identical codes.
     /// </summary>
-    private static uint? TranslateKey(HotkeyKey k) => k switch
+    private static List<uint> TranslateKeyVariants(HotkeyKey k)
     {
-        HotkeyKey.D1 => 0x12, HotkeyKey.D2 => 0x13, HotkeyKey.D3 => 0x14,
-        HotkeyKey.D4 => 0x15, HotkeyKey.D5 => 0x17, HotkeyKey.D6 => 0x16,
-        HotkeyKey.D7 => 0x1A, HotkeyKey.D8 => 0x1C, HotkeyKey.D9 => 0x19,
-        HotkeyKey.D0 => 0x1D,
-        HotkeyKey.A => 0x00, HotkeyKey.B => 0x0B, HotkeyKey.C => 0x08,
-        HotkeyKey.D => 0x02, HotkeyKey.E => 0x0E, HotkeyKey.F => 0x03,
-        HotkeyKey.G => 0x05, HotkeyKey.H => 0x04, HotkeyKey.I => 0x22,
-        HotkeyKey.J => 0x26, HotkeyKey.K => 0x28, HotkeyKey.L => 0x25,
-        HotkeyKey.M => 0x2E, HotkeyKey.N => 0x2D, HotkeyKey.O => 0x1F,
-        HotkeyKey.P => 0x23, HotkeyKey.Q => 0x0C, HotkeyKey.R => 0x0F,
-        HotkeyKey.S => 0x01, HotkeyKey.T => 0x11, HotkeyKey.U => 0x20,
-        HotkeyKey.V => 0x09, HotkeyKey.W => 0x0D, HotkeyKey.X => 0x07,
-        HotkeyKey.Y => 0x10, HotkeyKey.Z => 0x06,
-        HotkeyKey.F1 => 0x7A, HotkeyKey.F2 => 0x78, HotkeyKey.F3 => 0x63,
-        HotkeyKey.F4 => 0x76, HotkeyKey.F5 => 0x60, HotkeyKey.F6 => 0x61,
-        HotkeyKey.F7 => 0x62, HotkeyKey.F8 => 0x64, HotkeyKey.F9 => 0x65,
-        HotkeyKey.F10 => 0x6D, HotkeyKey.F11 => 0x67, HotkeyKey.F12 => 0x6F,
-        _ => null,
-    };
+        // (top-row, numpad) pairs for digits
+        return k switch
+        {
+            HotkeyKey.D0 => new() { 0x1D, 0x52 },
+            HotkeyKey.D1 => new() { 0x12, 0x53 },
+            HotkeyKey.D2 => new() { 0x13, 0x54 },
+            HotkeyKey.D3 => new() { 0x14, 0x55 },
+            HotkeyKey.D4 => new() { 0x15, 0x56 },
+            HotkeyKey.D5 => new() { 0x17, 0x57 },
+            HotkeyKey.D6 => new() { 0x16, 0x58 },
+            HotkeyKey.D7 => new() { 0x1A, 0x59 },
+            HotkeyKey.D8 => new() { 0x1C, 0x5B },
+            HotkeyKey.D9 => new() { 0x19, 0x5C },
+            HotkeyKey.A => new() { 0x00 }, HotkeyKey.B => new() { 0x0B }, HotkeyKey.C => new() { 0x08 },
+            HotkeyKey.D => new() { 0x02 }, HotkeyKey.E => new() { 0x0E }, HotkeyKey.F => new() { 0x03 },
+            HotkeyKey.G => new() { 0x05 }, HotkeyKey.H => new() { 0x04 }, HotkeyKey.I => new() { 0x22 },
+            HotkeyKey.J => new() { 0x26 }, HotkeyKey.K => new() { 0x28 }, HotkeyKey.L => new() { 0x25 },
+            HotkeyKey.M => new() { 0x2E }, HotkeyKey.N => new() { 0x2D }, HotkeyKey.O => new() { 0x1F },
+            HotkeyKey.P => new() { 0x23 }, HotkeyKey.Q => new() { 0x0C }, HotkeyKey.R => new() { 0x0F },
+            HotkeyKey.S => new() { 0x01 }, HotkeyKey.T => new() { 0x11 }, HotkeyKey.U => new() { 0x20 },
+            HotkeyKey.V => new() { 0x09 }, HotkeyKey.W => new() { 0x0D }, HotkeyKey.X => new() { 0x07 },
+            HotkeyKey.Y => new() { 0x10 }, HotkeyKey.Z => new() { 0x06 },
+            HotkeyKey.F1 => new() { 0x7A }, HotkeyKey.F2 => new() { 0x78 }, HotkeyKey.F3 => new() { 0x63 },
+            HotkeyKey.F4 => new() { 0x76 }, HotkeyKey.F5 => new() { 0x60 }, HotkeyKey.F6 => new() { 0x61 },
+            HotkeyKey.F7 => new() { 0x62 }, HotkeyKey.F8 => new() { 0x64 }, HotkeyKey.F9 => new() { 0x65 },
+            HotkeyKey.F10 => new() { 0x6D }, HotkeyKey.F11 => new() { 0x67 }, HotkeyKey.F12 => new() { 0x6F },
+            _ => new(),
+        };
+    }
 
     /// <summary>Carbon modifier mask. Values from Carbon Events.h.</summary>
     private static uint TranslateModifiers(HotkeyModifiers m)

@@ -60,51 +60,22 @@ public sealed class SwitcherService : IDisposable
     public void Dispose() => _disposables.Dispose();
 
     /// <summary>
-    /// User-initiated fan-out — write <c>CHANGE_HOST(targetHost)</c> to every
-    /// online, host-switch-capable device on every participating receiver.
-    /// Used by global-hotkey handlers; no topology lookup involved (user is
-    /// being explicit about the target slot).
-    /// </summary>
-    /// <returns>Number of devices the switch was issued to.</returns>
-    public int RequestUserFanOut(byte targetHost)
-    {
-        var count = 0;
-        foreach (var receiver in _manager.Receivers.Items)
-        {
-            if (!receiver.IsParticipating) continue;
-            foreach (var device in receiver.Devices.Items)
-            {
-                if (!device.CanReceiveHostSwitch) continue;
-                if (!device.LinkUp) continue;
-                if (receiver.TrySwitchHost(device.DeviceIndex, targetHost))
-                {
-                    _fanOuts.OnNext(new FanOutEvent(
-                        Target: device,
-                        TargetHost: targetHost,
-                        Source: FanOutSource.UserHotkey,
-                        OriginatingReceiver: receiver,
-                        OriginatingSlot: 0));
-                    count++;
-                }
-            }
-        }
-        _logger.LogInformation("User hotkey fan-out: target host {Host}, {Count} device(s) switched", targetHost, count);
-        return count;
-    }
-
-    /// <summary>
-    /// Topology correlator fan-out — a remote machine reported that one of
-    /// our devices just came online there. Match by the remote receiver's BLE
-    /// address against each local sibling's <see cref="PairedDevice.HostBindings"/>
-    /// and route the matching slot. Devices without a binding pointing at the
-    /// remote BLE are skipped (logged).
+    /// Topology-aware fan-out by receiver BLE target. Used by global hotkeys
+    /// (no originator) and the UDP topology correlator (originator = the
+    /// device that just left this machine). For each local sibling, finds the
+    /// slot whose <see cref="HostBinding.BluetoothAddress"/> matches the
+    /// target BLE and writes <c>CHANGE_HOST(matching_slot)</c> — which may be
+    /// a different slot index per device.
     /// </summary>
     /// <param name="remoteReceiverBleKey">Lowercase hex BLE address of the
-    /// remote receiver where the device re-appeared.</param>
-    /// <param name="originatingDeviceWpid">The device that left us — used to
-    /// avoid trying to switch it back (it already left).</param>
+    /// target receiver. May be on this machine (local switch) or a peer
+    /// (cross-machine sync).</param>
+    /// <param name="originatingDeviceWpid">Optional — when set, skip the
+    /// device with this WPID (it already left). For hotkey-driven fan-out
+    /// pass null.</param>
+    /// <param name="source">Tag so subscribers know which path fired.</param>
     /// <returns>Number of siblings fanned out.</returns>
-    public int RequestTopologyFanOut(string remoteReceiverBleKey, ushort? originatingDeviceWpid)
+    public int RequestTopologyFanOut(string remoteReceiverBleKey, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology)
     {
         var count = 0;
         foreach (var receiver in _manager.Receivers.Items)
@@ -130,7 +101,7 @@ public sealed class SwitcherService : IDisposable
                     _fanOuts.OnNext(new FanOutEvent(
                         Target: device,
                         TargetHost: slot,
-                        Source: FanOutSource.RemoteTopology,
+                        Source: source,
                         OriginatingReceiver: receiver,
                         OriginatingSlot: 0));
                     count++;
@@ -138,9 +109,9 @@ public sealed class SwitcherService : IDisposable
             }
         }
         _logger.LogInformation(
-            "Topology fan-out: remote BLE {Ble}, originator wpid={Wpid}, {Count} device(s) switched",
-            remoteReceiverBleKey,
-            originatingDeviceWpid?.ToString("X4") ?? "?",
+            "Topology fan-out (source={Source}): target BLE {Ble}, originator wpid={Wpid}, {Count} device(s) switched",
+            source, remoteReceiverBleKey,
+            originatingDeviceWpid?.ToString("X4") ?? "(none)",
             count);
         return count;
     }

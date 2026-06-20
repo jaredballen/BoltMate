@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Disposables;
+using System.Threading;
 using DynamicData;
 using LogiPlusSwitcher.Core.Bolt;
 using LogiPlusSwitcher.Core.HidPp;
@@ -21,6 +23,11 @@ public sealed class DeviceEnricher : IDisposable
     private readonly ReceiverManager _manager;
     private readonly ILogger<DeviceEnricher> _logger;
     private readonly CompositeDisposable _disposables = new();
+    // One gate per receiver. Serialises enrichment across slots so we don't
+    // flood the HID wire with 14+ concurrent requests when two devices link up
+    // simultaneously — that race caused slot 1's feature discovery to silently
+    // time out while slot 2 succeeded, leaving the keyboard unfit for fan-out.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _receiverGates = new();
 
     public DeviceEnricher(ReceiverManager manager, ILogger<DeviceEnricher> logger)
     {
@@ -77,6 +84,20 @@ public sealed class DeviceEnricher : IDisposable
     }
 
     private async System.Threading.Tasks.Task EnrichSlotAsync(BoltReceiver receiver, byte deviceIndex)
+    {
+        var gate = _receiverGates.GetOrAdd(receiver.Info.Path, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await EnrichSlotInnerAsync(receiver, deviceIndex).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async System.Threading.Tasks.Task EnrichSlotInnerAsync(BoltReceiver receiver, byte deviceIndex)
     {
         try
         {
@@ -162,6 +183,12 @@ public sealed class DeviceEnricher : IDisposable
                         dict[b.HostIndex] = b;
                     device.HostBindings = dict;
 
+                    var summary = string.Join(", ", bindings.Select(b =>
+                        $"h{b.HostIndex}={(b.Paired ? (b.BluetoothAddressString ?? "(no ble)") : "unpaired")}"));
+                    _logger.LogInformation(
+                        "Slot {Slot} HostBindings: current={Current} {Summary}",
+                        deviceIndex, hosts.CurrentHost, summary);
+
                     receiver.RefreshSlot(deviceIndex);
                 }
                 catch (HidPpException) { /* skip */ }
@@ -169,9 +196,15 @@ public sealed class DeviceEnricher : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Enriching slot {Slot} surfaced an exception (non-fatal)", deviceIndex);
+            _logger.LogWarning(ex, "Enriching slot {Slot} failed — fan-out will skip this device until a re-enrich pass", deviceIndex);
         }
     }
 
-    public void Dispose() => _disposables.Dispose();
+    public void Dispose()
+    {
+        _disposables.Dispose();
+        foreach (var gate in _receiverGates.Values)
+            gate.Dispose();
+        _receiverGates.Clear();
+    }
 }

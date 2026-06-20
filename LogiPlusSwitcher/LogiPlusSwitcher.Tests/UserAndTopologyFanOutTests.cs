@@ -8,8 +8,10 @@ using Xunit;
 namespace LogiPlusSwitcher.Tests;
 
 /// <summary>
-/// Coverage for SwitcherService's non-detection-driven fan-out paths:
-/// RequestUserFanOut (hotkey) + RequestTopologyFanOut (UDP correlator).
+/// Coverage for SwitcherService.RequestTopologyFanOut — the address-based
+/// fan-out used by both the global-hotkey path (source=UserHotkey, no
+/// originator) and the UDP topology correlator (source=RemoteTopology,
+/// originator = device that just left this machine).
 /// </summary>
 public class UserAndTopologyFanOutTests
 {
@@ -67,33 +69,76 @@ public class UserAndTopologyFanOutTests
     private static byte[] BleB => [0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5];
 
     [Fact]
-    public void UserFanOut_writes_target_host_to_every_online_device()
+    public void HotkeyTopologyFanOut_routes_each_device_via_its_own_matching_slot()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
-        f.SeedDevice(r, 1, wpid: 0xAAAA);
-        f.SeedDevice(r, 2, wpid: 0xBBBB);
-        f.SeedDevice(r, 3, wpid: 0xCCCC, linkUp: false); // offline
+        // Mouse: slot 1 maps to BleA, slot 2 maps to BleB.
+        f.SeedDevice(r, 1, wpid: 0xAAAA, bindings: [(1, BleA), (2, BleB)]);
+        // Keyboard: slot 0 maps to BleB (different slot index!).
+        f.SeedDevice(r, 2, wpid: 0xBBBB, bindings: [(0, BleB), (1, BleA)]);
 
-        var count = f.Switcher.RequestUserFanOut(targetHost: 2);
+        var targetBleKey = Convert.ToHexString(BleB).ToLowerInvariant();
+        var count = f.Switcher.RequestTopologyFanOut(
+            targetBleKey,
+            originatingDeviceWpid: null,
+            source: FanOutSource.UserHotkey);
 
         Assert.Equal(2, count);
-        Assert.All(f.FanOuts, e => Assert.Equal((byte)2, e.TargetHost));
+        // Mouse should be routed to its slot 2 (its binding to BleB).
+        Assert.Contains(f.FanOuts, e => e.Target.DeviceIndex == 1 && e.TargetHost == 2);
+        // Keyboard should be routed to its slot 0 (its binding to BleB).
+        Assert.Contains(f.FanOuts, e => e.Target.DeviceIndex == 2 && e.TargetHost == 0);
         Assert.All(f.FanOuts, e => Assert.Equal(FanOutSource.UserHotkey, e.Source));
-        Assert.DoesNotContain(f.FanOuts, e => e.Target.DeviceIndex == 3);
     }
 
     [Fact]
-    public void UserFanOut_skips_non_participating_receiver()
+    public void HotkeyTopologyFanOut_skips_device_without_matching_BLE_binding()
+    {
+        using var f = new Fixture();
+        var r = f.AddReceiver();
+        // Mouse has bindings to BleA only — no slot maps to BleB.
+        f.SeedDevice(r, 1, wpid: 0xAAAA, bindings: [(0, BleA), (1, BleA)]);
+        // Keyboard slot 1 maps to BleB.
+        f.SeedDevice(r, 2, wpid: 0xBBBB, bindings: [(0, BleA), (1, BleB)]);
+
+        var targetBleKey = Convert.ToHexString(BleB).ToLowerInvariant();
+        var count = f.Switcher.RequestTopologyFanOut(
+            targetBleKey,
+            originatingDeviceWpid: null,
+            source: FanOutSource.UserHotkey);
+
+        Assert.Equal(1, count); // keyboard only
+        Assert.DoesNotContain(f.FanOuts, e => e.Target.DeviceIndex == 1);
+    }
+
+    [Fact]
+    public void HotkeyTopologyFanOut_skips_non_participating_receiver()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
         r.IsParticipating = false;
-        f.SeedDevice(r, 1);
+        f.SeedDevice(r, 1, wpid: 0xAAAA, bindings: [(1, BleB)]);
 
-        var count = f.Switcher.RequestUserFanOut(targetHost: 1);
+        var targetBleKey = Convert.ToHexString(BleB).ToLowerInvariant();
+        var count = f.Switcher.RequestTopologyFanOut(targetBleKey, null, FanOutSource.UserHotkey);
         Assert.Equal(0, count);
         Assert.Empty(f.FanOuts);
+    }
+
+    [Fact]
+    public void HotkeyTopologyFanOut_skips_offline_devices()
+    {
+        using var f = new Fixture();
+        var r = f.AddReceiver();
+        f.SeedDevice(r, 1, wpid: 0xAAAA, linkUp: false, bindings: [(1, BleB)]);
+        f.SeedDevice(r, 2, wpid: 0xBBBB, bindings: [(1, BleB)]);
+
+        var targetBleKey = Convert.ToHexString(BleB).ToLowerInvariant();
+        var count = f.Switcher.RequestTopologyFanOut(targetBleKey, null, FanOutSource.UserHotkey);
+
+        Assert.Equal(1, count);
+        Assert.DoesNotContain(f.FanOuts, e => e.Target.DeviceIndex == 1);
     }
 
     [Fact]

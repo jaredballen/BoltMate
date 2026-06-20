@@ -22,6 +22,12 @@ public sealed class WinGlobalHotkeyService : IGlobalHotkeyService
     private readonly ILogger<WinGlobalHotkeyService> _logger;
     private readonly Subject<int> _pressed = new();
     private readonly Dictionary<int, HotkeyChord> _pending = new();
+    // Track every OS-level RegisterHotKey id we issued for a given logical id.
+    // Digit keys register both the top-row VK and the VK_NUMPAD variant; same
+    // logical hotkey is reachable either way.
+    private readonly Dictionary<int, List<int>> _osIdsByLogicalId = new();
+    private readonly Dictionary<int, int> _logicalIdByOsId = new();
+    private int _nextOsId = 100_000;
     private readonly object _gate = new();
     private readonly CompositeDisposable _disposables = new();
     private readonly ManualResetEventSlim _ready = new();
@@ -72,35 +78,64 @@ public sealed class WinGlobalHotkeyService : IGlobalHotkeyService
             return true;
         }
 
-        var vk = TranslateKey(chord.Key);
-        if (vk is null)
+        var vks = TranslateKeyVariants(chord.Key);
+        if (vks.Count == 0)
         {
             _logger.LogWarning("Hotkey {Id}: unsupported key {Key}", id, chord.Key);
             return false;
         }
         var mods = TranslateModifiers(chord.Modifiers) | MOD_NOREPEAT;
 
-        // Marshal the RegisterHotKey call onto the pump thread so messages
-        // arrive there. PostThreadMessage with WM_USER+1 (REGISTER) and pack
-        // the args via a pinned struct... simpler: just call directly here;
-        // RegisterHotKey targets the window by HWND, not the calling thread.
-        var ok = RegisterHotKey(_hwnd, id, mods, vk.Value);
-        if (!ok)
+        lock (_gate)
         {
-            var err = Marshal.GetLastWin32Error();
-            _logger.LogWarning("RegisterHotKey id {Id} chord {Chord} failed: 0x{Err:X}", id, chord, err);
-            return false;
+            UnregisterCore_NoLock(id);
+
+            var osIds = new List<int>();
+            foreach (var vk in vks)
+            {
+                var osId = ++_nextOsId;
+                if (RegisterHotKey(_hwnd, osId, mods, vk))
+                {
+                    osIds.Add(osId);
+                    _logicalIdByOsId[osId] = id;
+                }
+                else
+                {
+                    var err = Marshal.GetLastWin32Error();
+                    _logger.LogDebug("RegisterHotKey vk 0x{Vk:X2} for {Chord} failed: 0x{Err:X}", vk, chord, err);
+                }
+            }
+
+            if (osIds.Count == 0)
+            {
+                _logger.LogWarning("RegisterHotKey for {Chord} failed for every variant", chord);
+                return false;
+            }
+            _osIdsByLogicalId[id] = osIds;
+            _logger.LogInformation("Hotkey registered: id {Id} chord {Chord} (vks [{Vks}] mods 0x{Mods:X4})",
+                id, chord, string.Join(",", vks.Select(v => $"0x{v:X2}")), mods);
+            return true;
         }
-        _logger.LogInformation("Hotkey registered: id {Id} chord {Chord} (vk 0x{Vk:X2} mods 0x{Mods:X4})",
-            id, chord, vk.Value, mods);
-        return true;
     }
 
     public void Unregister(int id)
     {
         if (_disposed) return;
-        if (_hwnd != IntPtr.Zero) UnregisterHotKey(_hwnd, id);
-        lock (_gate) _pending.Remove(id);
+        lock (_gate)
+        {
+            UnregisterCore_NoLock(id);
+            _pending.Remove(id);
+        }
+    }
+
+    private void UnregisterCore_NoLock(int id)
+    {
+        if (!_osIdsByLogicalId.Remove(id, out var osIds)) return;
+        foreach (var osId in osIds)
+        {
+            _logicalIdByOsId.Remove(osId);
+            if (_hwnd != IntPtr.Zero) UnregisterHotKey(_hwnd, osId);
+        }
     }
 
     public void Dispose()
@@ -138,9 +173,14 @@ public sealed class WinGlobalHotkeyService : IGlobalHotkeyService
         {
             if (msg.Message == WM_HOTKEY)
             {
-                var id = msg.WParam.ToInt32();
-                _logger.LogDebug("Win32 hotkey fired: id {Id}", id);
-                try { _pressed.OnNext(id); } catch { }
+                var osId = msg.WParam.ToInt32();
+                int? logicalId;
+                lock (_gate) logicalId = _logicalIdByOsId.TryGetValue(osId, out var lid) ? lid : null;
+                if (logicalId is { } resolved)
+                {
+                    _logger.LogDebug("Win32 hotkey fired: osId {OsId} -> logical {Logical}", osId, resolved);
+                    try { _pressed.OnNext(resolved); } catch { }
+                }
             }
             TranslateMessage(ref msg);
             DispatchMessage(ref msg);
@@ -153,15 +193,26 @@ public sealed class WinGlobalHotkeyService : IGlobalHotkeyService
         }
     }
 
-    private static uint? TranslateKey(HotkeyKey k) => k switch
+    /// <summary>
+    /// Returns Win32 virtual-key codes for the chord key. Digit keys return
+    /// both the top-row VK and the VK_NUMPAD variant so either physical key
+    /// fires the same hotkey. Win32 VK constants from WinUser.h.
+    /// </summary>
+    private static List<uint> TranslateKeyVariants(HotkeyKey k) => k switch
     {
-        HotkeyKey.D0 => 0x30, HotkeyKey.D1 => 0x31, HotkeyKey.D2 => 0x32,
-        HotkeyKey.D3 => 0x33, HotkeyKey.D4 => 0x34, HotkeyKey.D5 => 0x35,
-        HotkeyKey.D6 => 0x36, HotkeyKey.D7 => 0x37, HotkeyKey.D8 => 0x38,
-        HotkeyKey.D9 => 0x39,
-        >= HotkeyKey.A and <= HotkeyKey.Z => (uint)(0x41 + ((int)k - (int)HotkeyKey.A)),
-        >= HotkeyKey.F1 and <= HotkeyKey.F12 => (uint)(0x70 + ((int)k - (int)HotkeyKey.F1)),
-        _ => null,
+        HotkeyKey.D0 => new() { 0x30, 0x60 },
+        HotkeyKey.D1 => new() { 0x31, 0x61 },
+        HotkeyKey.D2 => new() { 0x32, 0x62 },
+        HotkeyKey.D3 => new() { 0x33, 0x63 },
+        HotkeyKey.D4 => new() { 0x34, 0x64 },
+        HotkeyKey.D5 => new() { 0x35, 0x65 },
+        HotkeyKey.D6 => new() { 0x36, 0x66 },
+        HotkeyKey.D7 => new() { 0x37, 0x67 },
+        HotkeyKey.D8 => new() { 0x38, 0x68 },
+        HotkeyKey.D9 => new() { 0x39, 0x69 },
+        >= HotkeyKey.A and <= HotkeyKey.Z => new() { (uint)(0x41 + ((int)k - (int)HotkeyKey.A)) },
+        >= HotkeyKey.F1 and <= HotkeyKey.F12 => new() { (uint)(0x70 + ((int)k - (int)HotkeyKey.F1)) },
+        _ => new(),
     };
 
     private static uint TranslateModifiers(HotkeyModifiers m)
