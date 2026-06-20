@@ -200,11 +200,13 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                 var managed = new byte[bytesRead];
                 Marshal.Copy(buf, managed, 0, (int)bytesRead);
 
-                _logger.LogDebug("WinHid IN  ({Label}): {Hex}", label, Convert.ToHexString(managed));
+                _logger.LogDebug("WinHid IN  ({Label}, {Len}B): {Hex}",
+                    label, bytesRead, Convert.ToHexString(managed));
 
-                var frame = HidPpFrame.TryParse(managed);
-                if (frame is { } f) _frames.OnNext(f);
-                else _logger.LogDebug("WinHid IN  ({Label}): unparsable, dropping", label);
+                // Windows' HID class driver can concatenate multiple queued
+                // input reports into a single ReadFile result. Split by
+                // report-id length and parse each chunk independently.
+                SplitAndEmit(managed, label);
             }
         }
         catch (Exception ex)
@@ -217,6 +219,42 @@ internal sealed class WinReceiverConnection : IReceiverConnection
             Marshal.FreeHGlobal(ovlPtr);
             try { NativeMethods.CloseHandle(ev); } catch { }
             _logger.LogInformation("WinHid read loop exited ({Label})", label);
+        }
+    }
+
+    /// <summary>
+    /// Splits a (potentially concatenated) HID input buffer into individual
+    /// HID++ reports and pushes each onto the inbound frame stream. Report
+    /// boundaries are determined by the report id byte at each chunk's
+    /// position 0:
+    ///   0x10 short HID++   → 7 bytes
+    ///   0x11 long HID++    → 20 bytes
+    ///   0x20 DJ legacy     → 7 bytes (per HID++ 1.0 / Solaar)
+    /// Unknown report ids fall back to "consume rest" so we don't silently
+    /// truncate something unexpected.
+    /// </summary>
+    private void SplitAndEmit(byte[] buf, string label)
+    {
+        var offset = 0;
+        while (offset < buf.Length)
+        {
+            var rid = buf[offset];
+            int len = rid switch
+            {
+                0x10 or 0x20 => 7,
+                0x11         => 20,
+                _            => buf.Length - offset, // unknown: consume rest as one
+            };
+            if (offset + len > buf.Length) len = buf.Length - offset;
+            if (len <= 0) break;
+
+            var chunk = new byte[len];
+            Array.Copy(buf, offset, chunk, 0, len);
+            offset += len;
+
+            var frame = HidPpFrame.TryParse(chunk);
+            if (frame is { } f) _frames.OnNext(f);
+            else _logger.LogDebug("WinHid IN  ({Label}): unparsable chunk rid=0x{Rid:X2}, dropping", label, rid);
         }
     }
 
