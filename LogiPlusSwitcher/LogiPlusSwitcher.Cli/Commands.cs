@@ -1,4 +1,5 @@
 using System.Reactive.Linq;
+using System.Runtime.InteropServices;
 using DynamicData;
 using LogiPlusSwitcher.Core;
 using LogiPlusSwitcher.Core.Bolt;
@@ -758,6 +759,330 @@ internal static class Commands
         Console.WriteLine("Press ENTER when done to close the handle.");
         await Task.Run(() => Console.ReadLine(), ct);
         Console.WriteLine("Closing handle.");
+        return 0;
+    }
+
+    /// <summary>
+    /// Opens EVERY HID interface enumerated under the Bolt receiver's
+    /// VID/PID (not just the management interface) and dumps raw input
+    /// reports from each. Used to find the special HID scancode/consumer-
+    /// control code the keyboard emits when Easy-Switch is pressed, which
+    /// would be detectable at the OS HID layer even though it's invisible
+    /// to the management interface.
+    /// </summary>
+    public static async Task<int> RunSniffAllInterfacesAsync(CancellationToken ct)
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+        {
+            Console.WriteLine("sniff-all is macOS-only (IOKit-direct).");
+            return 2;
+        }
+
+        var logger = LoggerFactory.CreateLogger("SniffAll");
+
+        var manager = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, 0);
+        if (manager == IntPtr.Zero) { logger.LogError("IOHIDManagerCreate failed"); return 1; }
+
+        try
+        {
+            var match = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CreateMatchingDictionary(0x046D, 0xC548);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerSetDeviceMatching(manager, match);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(match);
+
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerOpen(manager,
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+
+            var set = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerCopyDevices(manager);
+            if (set == IntPtr.Zero) { logger.LogError("No Bolt interfaces found"); return 1; }
+
+            var count = (int)LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFSetGetCount(set);
+            var devices = new IntPtr[count];
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFSetGetValues(set, devices);
+
+            logger.LogInformation("[SNIFF] Found {Count} HID interface(s) under Bolt VID/PID", count);
+
+            var openedDevices = new List<IntPtr>();
+            var buffers = new List<IntPtr>();
+            var callbacks = new List<LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDReportCallback>();
+            const int BufSize = 64;
+
+            for (var i = 0; i < count; i++)
+            {
+                var dev = devices[i];
+                if (dev == IntPtr.Zero) continue;
+                var usagePage = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.GetInt32Property(dev, "PrimaryUsagePage") ?? 0;
+                var usage = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.GetInt32Property(dev, "PrimaryUsage") ?? 0;
+                var product = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.GetStringProperty(dev, "Product") ?? "?";
+                var label = $"iface#{i} UP=0x{usagePage:X4} U=0x{usage:X4} ({product})";
+
+                var openResult = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceOpen(dev,
+                    LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+                if (openResult != 0)
+                {
+                    logger.LogWarning("[SNIFF] [skip] {Label} — open failed 0x{Err:X8}", label, openResult);
+                    continue;
+                }
+
+                var buf = Marshal.AllocHGlobal(BufSize);
+                buffers.Add(buf);
+                var localLabel = label;
+                var localLogger = logger;
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDReportCallback cb =
+                    (ctx, result, sender, type, reportId, report, reportLength) =>
+                {
+                    if (result != 0) return;
+                    var len = (int)reportLength;
+                    if (len <= 0 || len > BufSize) return;
+                    var bytes = new byte[len];
+                    Marshal.Copy(report, bytes, 0, len);
+                    localLogger.LogInformation("[SNIFF] {Label} rid=0x{Rid:X2} len={Len} data={Hex}",
+                        localLabel, reportId, len, Convert.ToHexString(bytes));
+                };
+                callbacks.Add(cb);
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceRegisterInputReportCallback(
+                    dev, buf, (IntPtr)BufSize, cb, IntPtr.Zero);
+                openedDevices.Add(dev);
+                logger.LogInformation("[SNIFF] [open] {Label}", label);
+            }
+
+            logger.LogInformation("[SNIFF] Listening on {Count} interface(s). All input reports → log.", openedDevices.Count);
+            Console.WriteLine();
+            Console.WriteLine($"Sniffing {openedDevices.Count} interface(s). All events going to the log file.");
+            Console.WriteLine("Press the buttons you want to capture, then press ENTER to stop.");
+
+            // Spin up a CFRunLoop thread for the callbacks.
+            var thread = new Thread(() =>
+            {
+                var rl = LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRunLoopGetCurrent();
+                foreach (var dev in openedDevices)
+                    LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceScheduleWithRunLoop(dev, rl,
+                        LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRunLoopDefaultMode);
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRunLoopRun();
+            }) { IsBackground = true };
+            thread.Start();
+
+            await Task.Run(() => Console.ReadLine(), ct);
+
+            foreach (var dev in openedDevices)
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDDeviceClose(dev,
+                    LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+            foreach (var buf in buffers) Marshal.FreeHGlobal(buf);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(set);
+            return 0;
+        }
+        finally
+        {
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.IOHIDManagerClose(manager,
+                LogiPlusSwitcher.Hid.IOKit.IOKitInterop.OptionsNone);
+            LogiPlusSwitcher.Hid.IOKit.IOKitInterop.CFRelease(manager);
+        }
+    }
+
+    /// <summary>
+    /// Dumps every feature the given slot exposes — iterates IRoot from
+    /// index 1 to GetFeatureCount and prints feature_id + type for each.
+    /// Used to find unknown features on a device (e.g. "what's at index
+    /// 0x10 on the MX Keys S?"). Cross-reference against Solaar's
+    /// hidpp20_constants.SupportedFeature for IDs.
+    /// </summary>
+    public static async Task<int> RunDumpFeaturesAsync(IReceiverTransport transport, byte slot, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var linkSub = receiver.LinkEstablished.Subscribe(d => { if (d.DeviceIndex == slot) settled.Set(); });
+        receiver.Start();
+        if (!settled.Wait(TimeSpan.FromSeconds(10), ct))
+        {
+            Console.WriteLine($"Slot {slot} did not link up within 10s.");
+            return 1;
+        }
+
+        // Step 1: resolve FEATURE_SET (feature_id 0x0001 per Solaar's
+        // hidpp20_constants.SupportedFeature) via IRoot. Then call function 0
+        // of FEATURE_SET to get the count, then function 1 to enumerate by index.
+        var fsLookup = await receiver.Root.GetFeatureAsync(slot, 0x0001, ct);
+        if (fsLookup is null)
+        {
+            Console.WriteLine("FEATURE_SET (0x0001) not exposed on this slot — can't enumerate.");
+            return 1;
+        }
+        var fsIndex = fsLookup.Index;
+        Console.WriteLine($"FEATURE_SET (0x0001) resolved at index 0x{fsIndex:X2}");
+
+        var countReply = await receiver.Client.RequestAsync(
+            deviceIndex: slot,
+            featureIndex: fsIndex,
+            function: 0x00,
+            useLongReport: false,
+            cancellationToken: ct);
+        var count = countReply.Parameters.Span[0];
+
+        Console.WriteLine($"Slot {slot} exposes {count} features (plus IRoot at index 0):");
+        Console.WriteLine();
+        Console.WriteLine("  index │ feature_id │ type │ name (known)");
+        Console.WriteLine("  ──────┼────────────┼──────┼─────────────");
+        Console.WriteLine("   0x00 │   0x0001   │ 0x00 │ ROOT");
+
+        for (byte idx = 1; idx <= count; idx++)
+        {
+            // FEATURE_SET function 0x01: given index, return featureId + type.
+            try
+            {
+                var reply = await receiver.Client.RequestAsync(
+                    deviceIndex: slot,
+                    featureIndex: fsIndex,
+                    function: 0x01,
+                    parameters: new byte[] { idx },
+                    useLongReport: false,
+                    cancellationToken: ct);
+                var p = reply.Parameters.Span;
+                var featureId = (ushort)((p[0] << 8) | p[1]);
+                var type = p.Length > 2 ? p[2] : (byte)0;
+                Console.WriteLine($"   0x{idx:X2} │   0x{featureId:X4}   │ 0x{type:X2} │ {KnownFeatureName(featureId)}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   0x{idx:X2} │ FAILED: {ex.Message}");
+            }
+        }
+        return 0;
+    }
+
+    private static string KnownFeatureName(ushort id) => id switch
+    {
+        0x0000 => "ROOT",
+        0x0001 => "FEATURE_SET",
+        0x0002 => "FEATURE_INFO",
+        0x0003 => "DEVICE_FW_VERSION (DeviceInfo)",
+        0x0005 => "DEVICE_NAME",
+        0x0007 => "DEVICE_FRIENDLY_NAME",
+        0x0008 => "KEEP_ALIVE",
+        0x0020 => "CONFIG_CHANGE",
+        0x0021 => "CRYPTO_ID",
+        0x00C0 => "DFUCONTROL_LEGACY",
+        0x00C1 => "DFUCONTROL_UNSIGNED",
+        0x00C2 => "DFUCONTROL_SIGNED",
+        0x00D0 => "DFU",
+        0x1000 => "BATTERY_STATUS",
+        0x1001 => "BATTERY_VOLTAGE",
+        0x1004 => "UNIFIED_BATTERY",
+        0x100B => "ADC_MEASUREMENT",
+        0x1300 => "LED_CONTROL",
+        0x1814 => "CHANGE_HOST",
+        0x1815 => "HOSTS_INFO",
+        0x1B04 => "REPROG_CONTROLS_V4",
+        0x1B05 => "REPROG_CONTROLS_V5",
+        0x1D4B => "WIRELESS_DEVICE_STATUS",
+        0x1DF0 => "REMAINING_PAIRING",
+        0x1E00 => "ENABLE_HIDDEN_FEATURES",
+        0x1F1F => "FIRMWARE_PROPERTIES",
+        0x2100 => "VERTICAL_SCROLLING",
+        0x2110 => "SMART_SHIFT",
+        0x2111 => "SMART_SHIFT_ENHANCED",
+        0x2121 => "HI_RES_WHEEL",
+        0x2150 => "THUMB_WHEEL",
+        0x2201 => "ADJUSTABLE_DPI",
+        0x2202 => "EXTENDED_ADJUSTABLE_DPI",
+        0x2400 => "HYBRID_TRACKING",
+        0x40A0 => "FN_INVERSION",
+        0x40A2 => "NEW_FN_INVERSION",
+        0x40A3 => "K375S_FN_INVERSION",
+        0x4100 => "ENCRYPTION",
+        0x4220 => "LOCK_KEY_STATE",
+        0x4301 => "SOLAR_DASHBOARD",
+        0x4521 => "DISABLE_KEYS",
+        0x4522 => "DISABLE_KEYS_BY_USAGE",
+        0x4530 => "DUAL_PLATFORM",
+        0x4531 => "MULTIPLATFORM",
+        0x4540 => "KEYBOARD_LAYOUT_2",
+        0x4600 => "CROWN",
+        0x6010 => "TOUCHPAD_FW_ITEMS",
+        0x6011 => "TOUCHPAD_SW_ITEMS",
+        0x6020 => "TOUCHPAD_WIN8_FW_ITEMS",
+        0x6100 => "TOUCHMOUSE_RAW_POINTS",
+        0x6110 => "TOUCHMOUSE_6120",
+        0x8060 => "REPORT_RATE",
+        0x8061 => "EXTENDED_ADJUSTABLE_REPORT_RATE",
+        0x8070 => "COLOR_LED_EFFECTS",
+        0x8071 => "RGB_EFFECTS",
+        0x8080 => "PER_KEY_LIGHTING",
+        0x8081 => "PER_KEY_LIGHTING_V2",
+        0x8090 => "MODE_STATUS",
+        0x8100 => "ONBOARD_PROFILES",
+        0x8110 => "MOUSE_BUTTON_SPY",
+        _ => "(unknown — check Solaar hidpp20_constants.SupportedFeature)",
+    };
+
+    /// <summary>
+    /// Force-divert a single CID regardless of its IsDivertable flag.
+    /// Tests whether Logitech's "Hotkey-only" flag is advisory or enforced.
+    /// Opens, sets divert on the CID, subscribes to HostSwitchPresses, waits
+    /// for ENTER. User presses the physical button — if a divertedButtonsEvent
+    /// fires, divert IS possible despite the flag.
+    /// </summary>
+    public static async Task<int> RunDiagForceDivertAsync(IReceiverTransport transport, byte slot, byte reprogIndex, ushort cid, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        using var settled = new ManualResetEventSlim(false);
+        using var linkSub = receiver.LinkEstablished.Subscribe(d => { if (d.DeviceIndex == slot) settled.Set(); });
+        receiver.Start();
+
+        Console.WriteLine($"Waiting up to 10s for slot {slot} to link up…");
+        if (!settled.Wait(TimeSpan.FromSeconds(10), ct))
+        {
+            Console.WriteLine($"Slot {slot} did not link up within 10s. Is the device active on this host?");
+            return 1;
+        }
+        Console.WriteLine($"Slot {slot} linked. Sending setCidReporting(cid=0x{cid:X4}, bfield=0x03) on feature index 0x{reprogIndex:X2}...");
+
+        var seenEvents = 0;
+        using var sub = receiver.HostSwitchPresses
+            .Where(p => p.DeviceIndex == slot)
+            .Subscribe(p =>
+            {
+                Interlocked.Increment(ref seenEvents);
+                Console.WriteLine($"  [event] {(p.IsReleaseEvent ? "RELEASE" : $"PRESS cids=[{p.Cid1:X4},{p.Cid2:X4},{p.Cid3:X4},{p.Cid4:X4}]")}");
+            });
+
+        try
+        {
+            await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, 0x03, ct);
+            Console.WriteLine("  setCidReporting(0x03) sent — no error from device.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  setCidReporting FAILED: {ex.Message}");
+            return 2;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Press the physical button on the device that corresponds to CID 0x{0:X4}.", cid);
+        Console.WriteLine("(For keyboard Easy-Switch on slot 1: press the host-N button on the keyboard.)");
+        Console.WriteLine("Then press ENTER to close.");
+        await Task.Run(() => Console.ReadLine(), ct);
+
+        Console.WriteLine();
+        Console.WriteLine($"Total events seen: {seenEvents}");
+        Console.WriteLine();
+        if (seenEvents > 0)
+            Console.WriteLine("VERDICT: divert WORKS on this CID — IsDivertable flag was advisory, not enforced.");
+        else
+            Console.WriteLine("VERDICT: divert silently ignored — flag genuinely locks the CID.");
+
+        // Restore (best effort, may already be lost due to device disconnect).
+        try { await receiver.ReprogControls.SetCidReportingAsync(slot, reprogIndex, cid, 0x02, CancellationToken.None); } catch { }
         return 0;
     }
 

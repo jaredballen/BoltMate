@@ -86,6 +86,19 @@ return args[0].ToLowerInvariant() switch
 
     "diag-libhidapi-shared" => await Commands.RunDiagLibhidapiSharedAsync(transport, cts.Token),
 
+    "dump-features" when args.Length == 2 && byte.TryParse(args[1], out var dfSlot) =>
+        await Commands.RunDumpFeaturesAsync(transport, dfSlot, cts.Token),
+
+    "sniff-all" => await Commands.RunSniffAllInterfacesAsync(cts.Token),
+
+    "diag-force-divert" when args.Length == 4
+                              && byte.TryParse(args[1], out var fdSlot)
+                              && byte.TryParse(args[2].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? args[2][2..] : args[2],
+                                   System.Globalization.NumberStyles.HexNumber, null, out var fdReprog)
+                              && ushort.TryParse(args[3].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? args[3][2..] : args[3],
+                                   System.Globalization.NumberStyles.HexNumber, null, out var fdCid) =>
+        await Commands.RunDiagForceDivertAsync(transport, fdSlot, fdReprog, fdCid, cts.Token),
+
     "tail" => await Commands.RunTailAsync(
         lastN: args.Skip(1).FirstOrDefault(a => a.StartsWith("-n", StringComparison.Ordinal)) is { } n
                 && int.TryParse(n.AsSpan(2), out var nv) ? nv : 50,
