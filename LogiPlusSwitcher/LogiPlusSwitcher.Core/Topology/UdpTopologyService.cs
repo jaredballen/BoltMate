@@ -294,13 +294,30 @@ public sealed class UdpTopologyService : IDisposable
         var key = announcement.MachineId;
         if (_lastSeenSeq.TryGetValue(key, out var lastSeq) && announcement.Seq <= lastSeq)
         {
-            // Duplicate (N× repeat OR same announcement from another channel).
-            if (_peerStats.TryGetValue(key, out var dupStats))
+            // Peer-restart detection: a peer that restarts resets its seq to 1
+            // but keeps its machineId. Our cached lastSeq would suppress every
+            // post-restart packet forever. If the incoming seq is FAR below
+            // the cached value (we'd need a huge multi-thousand-packet gap for
+            // a legitimate replay to look like this), assume restart and let
+            // the new run repopulate.
+            if (announcement.Seq < lastSeq && (lastSeq - announcement.Seq) >= 100)
             {
-                Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
-                dupStats.LastSeenUtc = DateTime.UtcNow;
+                _logger.LogInformation(
+                    "Topology({Ch}): peer {Machine} appears to have restarted (incoming seq {Now} far below cached {Last}); resetting dedup baseline",
+                    channel, key, announcement.Seq, lastSeq);
+                _lastSeenSeq.TryRemove(key, out _);
+                // fall through — treat this as the first packet from the new run
             }
-            return;
+            else
+            {
+                // Duplicate (N× repeat OR same announcement from another channel).
+                if (_peerStats.TryGetValue(key, out var dupStats))
+                {
+                    Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
+                    dupStats.LastSeenUtc = DateTime.UtcNow;
+                }
+                return;
+            }
         }
 
         _lastSeenSeq[key] = announcement.Seq;
