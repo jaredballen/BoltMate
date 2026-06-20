@@ -38,6 +38,44 @@ internal static class MacActivationPolicy
     [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
     private static extern void SendMessage_activate(IntPtr receiver, IntPtr selector, bool flag);
 
+    [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
+    private static extern void SendMessage_setStr(IntPtr receiver, IntPtr selector, IntPtr str);
+
+    /// <summary>
+    /// Sets <c>NSProcessInfo.processName</c> so the macOS menubar's application
+    /// menu shows the right title when launched without a .app bundle (e.g.
+    /// <c>dotnet run</c>). The bundled .app's Info.plist provides this in
+    /// production; this fixes the dev experience.
+    /// </summary>
+    public static void SetProcessName(string name)
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        try
+        {
+            var nsProcessInfoClass = ObjCGetClass("NSProcessInfo");
+            if (nsProcessInfoClass == IntPtr.Zero) return;
+            var processInfo = SendMessage_get(nsProcessInfoClass, SelRegisterName("processInfo"));
+            if (processInfo == IntPtr.Zero) return;
+
+            var nsStringClass = ObjCGetClass("NSString");
+            if (nsStringClass == IntPtr.Zero) return;
+            var nsName = SendMessage_stringWithUtf8(nsStringClass, name);
+            if (nsName == IntPtr.Zero) return;
+
+            SendMessage_setStr(processInfo, SelRegisterName("setProcessName:"), nsName);
+        }
+        catch
+        {
+            // Swallow — cosmetic.
+        }
+    }
+
+    [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
+    private static extern IntPtr SendMessage_stringWithUtf8_impl(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.LPStr)] string utf8);
+
+    private static IntPtr SendMessage_stringWithUtf8(IntPtr nsStringClass, string s) =>
+        SendMessage_stringWithUtf8_impl(nsStringClass, SelRegisterName("stringWithUTF8String:"), s);
+
     /// <summary>Bring the app's Dock icon up; bring it to the foreground.</summary>
     public static void ShowDockIcon()
     {

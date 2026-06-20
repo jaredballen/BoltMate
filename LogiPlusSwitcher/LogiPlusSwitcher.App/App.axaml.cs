@@ -72,6 +72,10 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("LogiPlusSwitcher.App starting (Avalonia 12)");
 
+        // macOS menubar app-name fix when launched without a .app bundle (dev
+        // `dotnet run`). Bundled .app gets this from Info.plist already.
+        MacActivationPolicy.SetProcessName("BoltMate");
+
         _settings = AppSettings.Load();
         _settings.Topology.Enabled = true;
         // Composition root for the HID transport.
