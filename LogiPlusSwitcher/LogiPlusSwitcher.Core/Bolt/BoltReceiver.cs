@@ -640,12 +640,17 @@ public sealed class BoltReceiver : IDisposable
     /// on success.
     /// </summary>
     /// <remarks>
-    /// <b>Known limitation</b>: the obvious SET_LONG_REGISTER path is rejected
-    /// by current Bolt firmware with <c>InvalidArgument</c>. The actual rename
-    /// path is likely HID++ 2.0 feature <c>0x0005 DEVICE_NAME</c> setName sent
-    /// to the device itself (requires link-up + feature index discovery). This
-    /// implementation keeps the API contract so consumers can call it; expect
-    /// a <see cref="HidPpException"/> until the device-side write is wired.
+    /// <b>Known limitation</b>: no working rename path exists on tested Bolt
+    /// hardware. We try in order:
+    /// <list type="number">
+    ///   <item><c>0x0007 DEVICE_FRIENDLY_NAME setFriendlyName</c> — succeeds at
+    ///         the wire level but firmware silently ignores it (task #33).</item>
+    ///   <item><c>BOLT_DEVICE_NAME</c> via HID++ 1.0 SET_LONG_REGISTER — rejected
+    ///         with <c>InvalidArgument</c>.</item>
+    /// </list>
+    /// <c>0x0005 DEVICE_NAME</c> exposes only read functions (count / read /
+    /// type) per the HID++ 2.0 spec — there is no setName. A wire-trace of
+    /// Logi Options+ doing a rename would be the next investigation.
     /// </remarks>
     /// <returns>True if the rename succeeded (either via device-side
     /// FRIENDLY_NAME or receiver-side BOLT_DEVICE_NAME); throws on error reply; false on timeout.</returns>
