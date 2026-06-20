@@ -42,6 +42,44 @@ internal static class MacActivationPolicy
     private static extern void SendMessage_setStr(IntPtr receiver, IntPtr selector, IntPtr str);
 
     /// <summary>
+    /// Rewrites the existing app menu's first-item title — the one that shows
+    /// after the Apple logo in the macOS menubar. Call AFTER Avalonia has
+    /// constructed NSApp.mainMenu (any time post framework init is fine).
+    /// </summary>
+    public static void SetAppMenuTitle(string title)
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        try
+        {
+            var nsApplicationClass = ObjCGetClass("NSApplication");
+            if (nsApplicationClass == IntPtr.Zero) return;
+            var sharedApp = SendMessage_get(nsApplicationClass, SelRegisterName("sharedApplication"));
+            if (sharedApp == IntPtr.Zero) return;
+            var mainMenu = SendMessage_get(sharedApp, SelRegisterName("mainMenu"));
+            if (mainMenu == IntPtr.Zero) return;
+            var firstItem = SendMessage_getItemAt(mainMenu, SelRegisterName("itemAtIndex:"), 0);
+            if (firstItem == IntPtr.Zero) return;
+            // The first item itself has a title, but the actual displayed
+            // string is the title of its SUBMENU. Set both for safety.
+            var nsStringClass = ObjCGetClass("NSString");
+            if (nsStringClass == IntPtr.Zero) return;
+            var nsTitle = SendMessage_stringWithUtf8(nsStringClass, title);
+            if (nsTitle == IntPtr.Zero) return;
+            SendMessage_setStr(firstItem, SelRegisterName("setTitle:"), nsTitle);
+            var subMenu = SendMessage_get(firstItem, SelRegisterName("submenu"));
+            if (subMenu != IntPtr.Zero)
+                SendMessage_setStr(subMenu, SelRegisterName("setTitle:"), nsTitle);
+        }
+        catch
+        {
+            // Swallow — cosmetic.
+        }
+    }
+
+    [DllImport("/usr/lib/libobjc.dylib", EntryPoint = "objc_msgSend")]
+    private static extern IntPtr SendMessage_getItemAt(IntPtr receiver, IntPtr selector, long index);
+
+    /// <summary>
     /// Sets <c>NSProcessInfo.processName</c> so the macOS menubar's application
     /// menu shows the right title when launched without a .app bundle (e.g.
     /// <c>dotnet run</c>). The bundled .app's Info.plist provides this in

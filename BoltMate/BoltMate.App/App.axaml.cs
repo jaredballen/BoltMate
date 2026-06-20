@@ -72,9 +72,15 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("BoltMate.App starting (Avalonia 12)");
 
-        // macOS menubar app-name fix when launched without a .app bundle (dev
-        // `dotnet run`). Bundled .app gets this from Info.plist already.
-        MacActivationPolicy.SetProcessName("BoltMate");
+        // macOS menubar app-name fix. SetProcessName in Program.Main ran
+        // before Avalonia bootstrapped, but Avalonia builds NSApp.mainMenu
+        // using its own cached title. Rewrite the menu item title here AND
+        // again on a deferred dispatch in case Avalonia builds the menu
+        // after our framework-init callback returns.
+        MacActivationPolicy.SetAppMenuTitle("BoltMate");
+        Avalonia.Threading.Dispatcher.UIThread.Post(
+            () => MacActivationPolicy.SetAppMenuTitle("BoltMate"),
+            Avalonia.Threading.DispatcherPriority.Background);
 
         _settings = AppSettings.Load();
         _settings.Topology.Enabled = true;
