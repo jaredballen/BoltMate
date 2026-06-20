@@ -54,15 +54,16 @@ public sealed class PairedDevice
 
     /// <summary>
     /// Returns the device's host-slot index whose binding matches
-    /// <paramref name="bluetoothAddressKey"/> (a lowercase hex string).
+    /// <paramref name="hostIdentifierHex"/> (lowercase hex of the 6-byte
+    /// per-pairing host identifier stored in HostBindings[N].HostIdentifier).
     /// Used by <see cref="Switcher.SwitcherService"/> to route a sibling
     /// device's switch to the slot pointing at the same target receiver.
     /// </summary>
-    public byte? FindHostSlotForBleKey(string bluetoothAddressKey)
+    public byte? FindHostSlotForHostId(string hostIdentifierHex)
     {
         foreach (var (slot, binding) in HostBindings)
         {
-            if (binding.Paired && binding.HostIdentifierKey == bluetoothAddressKey)
+            if (binding.Paired && binding.HostIdentifierKey == hostIdentifierHex)
                 return slot;
         }
         return null;

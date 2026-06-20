@@ -89,6 +89,12 @@ return args[0].ToLowerInvariant() switch
     "dump-features" when args.Length == 2 && byte.TryParse(args[1], out var dfSlot) =>
         await Commands.RunDumpFeaturesAsync(transport, dfSlot, cts.Token),
 
+    "probe-host-bindings" when args.Length == 2 && byte.TryParse(args[1], out var phSlot) =>
+        await Commands.RunProbeHostBindingsAsync(transport, phSlot, cts.Token),
+
+    "probe-host-bindings" when args.Length == 1 =>
+        await Commands.RunProbeHostBindingsAsync(transport, null, cts.Token),
+
     "sniff-all" => await Commands.RunSniffAllInterfacesAsync(cts.Token),
 
     "diag-force-divert" when args.Length == 4

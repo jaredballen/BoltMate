@@ -549,7 +549,7 @@ public partial class SettingsWindow : Window
                 var row = new StringBuilder($"{d.DisplayName} (slot {d.DeviceIndex})".PadRight(30));
                 foreach (var ble in bleList)
                 {
-                    var slot = d.FindHostSlotForBleKey(ble);
+                    var slot = d.FindHostSlotForHostId(ble);
                     row.Append(slot.HasValue ? $"  H{slot.Value + 1}".PadRight(14) : "  -".PadRight(14));
                 }
                 _topology.Add(new TopologyRow { Line = row.ToString() });

@@ -40,6 +40,7 @@ internal static class Commands
         Console.WriteLine("  logiplus tail [-n<N>] [--app|--cli] [--no-follow]");
         Console.WriteLine("                                      Tail the newest log file (App by default). Survives log roll.");
         Console.WriteLine("  logiplus diag-divert <slot> <cid>   Probe Set/Clear divert on a single CID (engineering tool).");
+        Console.WriteLine("  logiplus probe-host-bindings [slot] Sweep 0x1815 fns for writeable host-identifier surfaces (all linked slots by default).");
         Console.WriteLine("  logiplus help                       This message.");
     }
 
@@ -952,6 +953,225 @@ internal static class Commands
             }
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Probe feature 0x1815 (HOSTS_INFO) for write functions on the host
+    /// identifier bytes. Solaar only ever READS fn 0x10 and treats the 6-byte
+    /// address field as opaque (`_ignore`) — there is no documented setter.
+    /// This sweep iterates fn 0x0..0xF and logs the HID++ error code returned
+    /// by each:
+    ///   • 0x07 InvalidFunctionId — fn doesn't exist on this device.
+    ///   • 0x02 InvalidArgument   — fn EXISTS, our payload is wrong shape.
+    ///   • 0x09 Unsupported       — fn defined but disabled.
+    ///   • 0x00 NoError           — fn EXISTS and accepted our write.
+    ///                              READ-BACK confirms whether it stuck.
+    /// We probe each fn with three payload shapes to triangulate args:
+    ///   (a) [hostIdx]                         — same shape as fn 0x10 (read)
+    ///   (b) [hostIdx, ID6×6]                  — read+6-byte address
+    ///   (c) [hostIdx, busType=1, ID6×6]       — read+busType+address (fn 0x1 layout)
+    /// Only targets host indexes the device has marked UNPAIRED to keep this
+    /// non-destructive. If your device has no unpaired slots, the probe
+    /// refuses to run.
+    /// </summary>
+    public static async Task<int> RunProbeHostBindingsAsync(IReceiverTransport transport, byte? specificSlot, CancellationToken ct)
+    {
+        var infos = transport.Enumerate();
+        if (infos.Count == 0) { Console.WriteLine("No Bolt receivers found."); return 1; }
+
+        var info = infos[0];
+        using var connection = transport.Open(info);
+        using var receiver = new BoltReceiver(info, connection, logger: LoggerFactory.CreateLogger<BoltReceiver>());
+
+        var linkedSlots = new HashSet<byte>();
+        using var linkSub = receiver.LinkEstablished.Subscribe(d => linkedSlots.Add(d.DeviceIndex));
+        receiver.Start();
+
+        // Settle longer for multi-slot mode — give every slot a chance to announce.
+        // Solaar's rule of thumb is 2-3s after enumerate; we use 5s to be safe.
+        await Task.Delay(TimeSpan.FromSeconds(5), ct);
+
+        IEnumerable<byte> slotsToProbe;
+        if (specificSlot is byte one)
+        {
+            if (!linkedSlots.Contains(one))
+            {
+                Console.WriteLine($"Slot {one} did not link up — is the device awake and on this receiver?");
+                return 1;
+            }
+            slotsToProbe = new[] { one };
+        }
+        else
+        {
+            if (linkedSlots.Count == 0)
+            {
+                Console.WriteLine("No linked devices on this receiver. Make sure they're awake.");
+                return 1;
+            }
+            slotsToProbe = linkedSlots.OrderBy(s => s).ToArray();
+            Console.WriteLine($"Will probe {linkedSlots.Count} linked slot(s): {string.Join(", ", slotsToProbe.Select(s => $"#{s}"))}");
+            Console.WriteLine();
+        }
+
+        var anyHit = false;
+        foreach (var slot in slotsToProbe)
+        {
+            Console.WriteLine($"════════════════════════════════ Slot {slot} ════════════════════════════════");
+            try
+            {
+                var hits = await ProbeSlotAsync(receiver, slot, ct);
+                anyHit = anyHit || hits;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Slot {slot} probe failed: {ex.Message}");
+            }
+            Console.WriteLine();
+        }
+        return anyHit ? 0 : 0;
+    }
+
+    private static async Task<bool> ProbeSlotAsync(BoltReceiver receiver, byte slot, CancellationToken ct)
+    {
+        // Resolve 0x1815 on the device.
+        var hostsInfoFeat = await receiver.Root.GetFeatureAsync(slot, 0x1815, ct);
+        if (hostsInfoFeat is null)
+        {
+            Console.WriteLine("Feature 0x1815 not exposed on this slot.");
+            return false;
+        }
+        var fidx = hostsInfoFeat.Index;
+        Console.WriteLine($"Feature 0x1815 resolved at index 0x{fidx:X2}");
+
+        // Read header (fn 0x00) to learn host count.
+        var hdr = await receiver.Client.RequestAsync(slot, fidx, 0x0, useLongReport: false, cancellationToken: ct);
+        var hcap = hdr.Parameters.Span[0];
+        var nHosts = hdr.Parameters.Span[1];
+        var curHost = hdr.Parameters.Span[2];
+        Console.WriteLine($"Header: capability=0x{hcap:X2}  numHosts={nHosts}  currentHost={curHost}");
+
+        // Read every host's binding via fn 0x1 to find an unpaired slot.
+        // Firmware sometimes reports inflated numHosts (e.g. 8 when the
+        // physical max is 3); cap at min(nHosts, 8) and stop scanning if a
+        // read times out, so probing keeps going for the slots that exist.
+        byte? unpairedIdx = null;
+        var baseline = new Dictionary<byte, byte[]>();
+        var scanLimit = Math.Min(nHosts, (byte)8);
+        for (byte h = 0; h < scanLimit; h++)
+        {
+            try
+            {
+                var reply = await receiver.Client.RequestAsync(slot, fidx, 0x1,
+                    parameters: new byte[] { h }, useLongReport: true,
+                    timeout: TimeSpan.FromSeconds(2),
+                    cancellationToken: ct);
+                var p = reply.Parameters.Span;
+                var paired = p.Length > 1 && ((p[1] & 0x01) != 0 || p[1] == 0x02);
+                baseline[h] = p.ToArray();
+                var addr = paired && p.Length >= 9 ? Convert.ToHexString(p.Slice(3, 6)).ToLowerInvariant() : "(unpaired)";
+                Console.WriteLine($"  h{h}: paired={paired}  address={addr}  raw={Convert.ToHexString(p)}");
+                if (!paired && unpairedIdx is null) unpairedIdx = h;
+            }
+            catch (HidPpException ex)
+            {
+                // Firmware doesn't actually have this slot — stop the scan.
+                Console.WriteLine($"  h{h}: read failed ({ex.ErrorCode}) — likely past physical slot count, stopping.");
+                break;
+            }
+        }
+        if (unpairedIdx is not byte target)
+        {
+            Console.WriteLine();
+            Console.WriteLine("All host slots are paired — refusing to write to a live pairing. ");
+            Console.WriteLine("Free a slot first (CLI: device <slot> unpair-host <h>, or use Logi Options+).");
+            return false;
+        }
+        Console.WriteLine();
+        Console.WriteLine($"Probing writes targeting unpaired h{target}. Tested payload shapes:");
+        Console.WriteLine("  (a) [hostIdx]");
+        Console.WriteLine("  (b) [hostIdx, 6-byte ID]   — DE AD BE EF 00 00");
+        Console.WriteLine("  (c) [hostIdx, busType=1, 6-byte ID]");
+        Console.WriteLine();
+        Console.WriteLine("  fn   shape │ result                                        │ read-back (fn 0x1)");
+        Console.WriteLine("  ───────────┼───────────────────────────────────────────────┼─────────────────────────");
+
+        // Known: fn 0x0 = getHostsInfo, fn 0x1 = getHostInfo, fn 0x3 = getHostFriendlyName,
+        // fn 0x4 = setHostFriendlyName. Skip those — focus on undocumented.
+        byte[] testId = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00];
+        var shapes = new (string Name, byte[] Body)[]
+        {
+            ("(a) [hi]      ", new byte[] { target }),
+            ("(b) [hi,ID6]  ", new byte[] { target, testId[0], testId[1], testId[2], testId[3], testId[4], testId[5] }),
+            ("(c) [hi,bus,ID]", new byte[] { target, 0x01, testId[0], testId[1], testId[2], testId[3], testId[4], testId[5] }),
+        };
+
+        var interesting = new List<(byte Fn, string Shape, HidPpErrorCode? Code, byte[]? Reply)>();
+        for (byte fn = 0; fn <= 0xF; fn++)
+        {
+            if (fn == 0x0 || fn == 0x1 || fn == 0x3 || fn == 0x4) continue; // documented readers/writers
+            foreach (var s in shapes)
+            {
+                HidPpErrorCode? errCode = null;
+                byte[]? replyBytes = null;
+                try
+                {
+                    var r = await receiver.Client.RequestAsync(slot, fidx, fn,
+                        parameters: s.Body, useLongReport: true,
+                        timeout: TimeSpan.FromSeconds(2),
+                        cancellationToken: ct);
+                    replyBytes = r.Parameters.ToArray();
+                }
+                catch (HidPpException ex)
+                {
+                    errCode = ex.ErrorCode;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  0x{fn:X1}  {s.Name} │ EXCEPTION: {ex.GetType().Name}");
+                    continue;
+                }
+
+                // Read back fn 0x1 to detect any change.
+                string changed = "—";
+                try
+                {
+                    var rb = await receiver.Client.RequestAsync(slot, fidx, 0x1,
+                        parameters: new byte[] { target }, useLongReport: true, cancellationToken: ct);
+                    var same = rb.Parameters.Span.SequenceEqual(baseline[target]);
+                    changed = same ? "unchanged" : $"CHANGED → {Convert.ToHexString(rb.Parameters.Span)}";
+                    baseline[target] = rb.Parameters.ToArray(); // update baseline for next iter
+                }
+                catch { /* ignore */ }
+
+                var resultStr = errCode is { } ec
+                    ? $"err 0x{(byte)ec:X2} {ec}"
+                    : $"OK reply={Convert.ToHexString(replyBytes ?? [])}";
+                Console.WriteLine($"  0x{fn:X1}  {s.Name} │ {resultStr,-44}  │ {changed}");
+
+                if (errCode != HidPpErrorCode.InvalidFunctionId &&
+                    errCode != HidPpErrorCode.InvalidFeatureIndex)
+                {
+                    interesting.Add((fn, s.Name.Trim(), errCode, replyBytes));
+                }
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("=========================== INTERPRETATION =========================");
+        if (interesting.Count == 0)
+        {
+            Console.WriteLine("All probed fns returned InvalidFunctionId (0x07). 0x1815 has no");
+            Console.WriteLine("undocumented setters on this device. App-layer mapping is the path.");
+        }
+        else
+        {
+            Console.WriteLine($"{interesting.Count} fn/shape combo(s) returned something other than");
+            Console.WriteLine("InvalidFunctionId — these may be writeable surfaces. Watch for the");
+            Console.WriteLine("read-back marked 'CHANGED' above; that's a confirmed write.");
+            foreach (var hit in interesting)
+                Console.WriteLine($"  • fn 0x{hit.Fn:X1} {hit.Shape} → {hit.Code?.ToString() ?? "OK"}");
+        }
+        return interesting.Count > 0;
     }
 
     private static string KnownFeatureName(ushort id) => id switch

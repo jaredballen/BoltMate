@@ -60,39 +60,66 @@ public sealed class SwitcherService : IDisposable
     public void Dispose() => _disposables.Dispose();
 
     /// <summary>
-    /// Topology-aware fan-out by receiver BLE target. Used by global hotkeys
-    /// (no originator) and the UDP topology correlator (originator = the
-    /// device that just left this machine). For each local sibling, finds the
-    /// slot whose <see cref="HostBinding.HostIdentifier"/> matches the
-    /// target BLE and writes <c>CHANGE_HOST(matching_slot)</c> — which may be
+    /// Topology-aware fan-out by destination host identifier. Used by global
+    /// hotkeys (no originator) and the UDP topology correlator (originator =
+    /// the device that just left this machine). For each local sibling, finds
+    /// the slot whose <see cref="HostBinding.HostIdentifier"/> matches the
+    /// target id and writes <c>CHANGE_HOST(matching_slot)</c> — which may be
     /// a different slot index per device.
     /// </summary>
-    /// <param name="remoteReceiverBleKey">Lowercase hex BLE address of the
-    /// target receiver. May be on this machine (local switch) or a peer
-    /// (cross-machine sync).</param>
+    /// <param name="remoteReceiverHostId">Lowercase hex 6-byte host identifier
+    /// of the target receiver — the value stored in each device's HostBindings.
+    /// Logitech-proprietary, NOT a real BLE/BT address. May be on this machine
+    /// (local switch) or a peer (cross-machine sync).</param>
     /// <param name="originatingDeviceWpid">Optional — when set, skip the
     /// device with this WPID (it already left). For hotkey-driven fan-out
     /// pass null.</param>
     /// <param name="source">Tag so subscribers know which path fired.</param>
     /// <returns>Number of siblings fanned out.</returns>
-    public int RequestTopologyFanOut(string remoteReceiverBleKey, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology)
+    public int RequestTopologyFanOut(string remoteReceiverHostId, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology)
     {
         var count = 0;
+        var receiverCount = _manager.Receivers.Items.Count();
+        _logger.LogInformation(
+            "FanOut starting: target={Target}, originatorWpid={Wpid}, source={Source}, receivers={N}",
+            remoteReceiverHostId, originatingDeviceWpid?.ToString("X4") ?? "(none)", source, receiverCount);
         foreach (var receiver in _manager.Receivers.Items)
         {
-            if (!receiver.IsParticipating) continue;
+            if (!receiver.IsParticipating)
+            {
+                _logger.LogInformation("FanOut: receiver {Serial} NOT participating — skipping", receiver.Info.Serial);
+                continue;
+            }
+            var deviceCount = receiver.Devices.Items.Count();
+            _logger.LogInformation("FanOut: scanning receiver {Serial} ({N} devices)", receiver.Info.Serial, deviceCount);
             foreach (var device in receiver.Devices.Items)
             {
-                if (originatingDeviceWpid is { } wpid && device.Wpid == wpid) continue;
-                if (!device.CanReceiveHostSwitch) continue;
-                if (!device.LinkUp) continue;
+                if (originatingDeviceWpid is { } wpid && device.Wpid == wpid)
+                {
+                    _logger.LogInformation("FanOut: slot {Slot} wpid {DevWpid:X4} == originator — skipping", device.DeviceIndex, device.Wpid);
+                    continue;
+                }
+                if (!device.CanReceiveHostSwitch)
+                {
+                    _logger.LogInformation("FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} CanReceiveHostSwitch=false (ChangeHostIndex null) — skipping",
+                        device.DeviceIndex, device.DisplayName, device.Wpid);
+                    continue;
+                }
+                if (!device.LinkUp)
+                {
+                    _logger.LogInformation("FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} LinkUp=false — skipping",
+                        device.DeviceIndex, device.DisplayName, device.Wpid);
+                    continue;
+                }
 
-                var matchingSlot = device.FindHostSlotForBleKey(remoteReceiverBleKey);
+                var matchingSlot = device.FindHostSlotForHostId(remoteReceiverHostId);
                 if (matchingSlot is not byte slot)
                 {
-                    _logger.LogDebug(
-                        "Sibling {Serial} slot {Slot} ({Name}) has no binding to remote BLE {Ble} — skipping",
-                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, remoteReceiverBleKey);
+                    var bindingsDump = string.Join(", ", device.HostBindings.Select(kv =>
+                        $"h{kv.Key}={(kv.Value.Paired ? kv.Value.HostIdentifierKey ?? "(null)" : "unpaired")}"));
+                    _logger.LogWarning(
+                        "FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} no binding to target {Target} — bindings: [{Dump}] — skipping",
+                        device.DeviceIndex, device.DisplayName, device.Wpid, remoteReceiverHostId, bindingsDump);
                     continue;
                 }
 
@@ -135,7 +162,7 @@ public sealed class SwitcherService : IDisposable
         }
         _logger.LogInformation(
             "Topology fan-out (source={Source}): target identifier {Id}, originator wpid={Wpid}, {Count} device(s) switched",
-            source, remoteReceiverBleKey,
+            source, remoteReceiverHostId,
             originatingDeviceWpid?.ToString("X4") ?? "(none)",
             count);
         return count;
@@ -162,13 +189,13 @@ public sealed class SwitcherService : IDisposable
     private void FanOut(BoltReceiver origin, byte originatingSlot, byte originHostIndex, FanOutSource source)
     {
         var originDevice = origin.TryGetDevice(originatingSlot);
-        var targetBleKey = originDevice is not null
+        var targetHostId = originDevice is not null
                            && originDevice.HostBindings.TryGetValue(originHostIndex, out var binding)
                            && binding.Paired
             ? binding.HostIdentifierKey
             : null;
 
-        if (targetBleKey is null)
+        if (targetHostId is null)
         {
             _logger.LogInformation(
                 "Fan-out trigger from {Serial} slot {Slot} host {Host} (source={Source}) — no BLE binding cached; falling back to same-index routing",
@@ -179,7 +206,7 @@ public sealed class SwitcherService : IDisposable
 
         _logger.LogInformation(
             "Fan-out trigger from {Serial} slot {Slot} -> BLE {Ble} (source={Source})",
-            origin.Info.Serial, originatingSlot, targetBleKey, source);
+            origin.Info.Serial, originatingSlot, targetHostId, source);
 
         foreach (var receiver in _manager.Receivers.Items)
         {
@@ -191,12 +218,12 @@ public sealed class SwitcherService : IDisposable
                 if (!device.CanReceiveHostSwitch) continue;
                 if (!device.LinkUp) continue;
 
-                var matchingSlot = device.FindHostSlotForBleKey(targetBleKey);
+                var matchingSlot = device.FindHostSlotForHostId(targetHostId);
                 if (matchingSlot is not byte slot)
                 {
                     _logger.LogDebug(
                         "Sibling {Serial} slot {Slot} ({Name}) has no binding to BLE {Ble} — skipping",
-                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, targetBleKey);
+                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, targetHostId);
                     continue;
                 }
 
