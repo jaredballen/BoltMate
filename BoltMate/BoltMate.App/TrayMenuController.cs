@@ -2,6 +2,7 @@ using System;
 using System.Reactive.Disposables;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Topology;
 using Microsoft.Extensions.Logging;
@@ -9,9 +10,11 @@ using Microsoft.Extensions.Logging;
 namespace BoltMate.App;
 
 /// <summary>
-/// Minimal tray menu mirroring the three Settings tabs: Status, About,
-/// License, plus Quit. Connection health is conveyed by the tray-icon badge,
-/// not by menu text — so the menu labels are static.
+/// Tray menu mirroring the Settings tabs: Status, About, License, plus Quit.
+/// Connection health is conveyed by the tray-icon badge — menu labels are
+/// static EXCEPT for a top "Fix permissions…" item that appears when the
+/// permission service reports a denied permission. Clicking it opens the
+/// WelcomeWindow at the first un-granted primer page.
 /// </summary>
 public sealed class TrayMenuController : IDisposable
 {
@@ -19,6 +22,10 @@ public sealed class TrayMenuController : IDisposable
     private readonly ReceiverManager _manager;
     private readonly ILogger<TrayMenuController> _logger;
     private readonly CompositeDisposable _disposables = new();
+
+    // When non-null, the rebuilt menu pins a "Fix permissions…" item to
+    // the very top. The App layer toggles this via SetPermissionStatus.
+    private OverallStatus _permissionStatus = OverallStatus.AllGood;
 
     public TrayMenuController(
         NativeMenu menu,
@@ -36,17 +43,38 @@ public sealed class TrayMenuController : IDisposable
     public Action? OnAboutClicked { get; set; }
     public Action? OnLicenseClicked { get; set; }
 
+    /// <summary>Click handler for the alert-state "Fix permissions…" entry.</summary>
+    public Action? OnFixPermissionsClicked { get; set; }
+
     /// <summary>Bind the topology service. Tray-icon badge owns connection state; nothing to do here.</summary>
     public void Bind(UdpTopologyService? topology) { }
 
     /// <summary>Stub for legacy callers — host-label customisation was cut.</summary>
     public void RefreshHostLabels() { }
 
+    /// <summary>Push a fresh permission snapshot; rebuilds the menu only if alert-presence flipped.</summary>
+    public void SetPermissionStatus(OverallStatus status)
+    {
+        var wasAlerting = _permissionStatus == OverallStatus.AnyDenied;
+        var nowAlerting = status == OverallStatus.AnyDenied;
+        _permissionStatus = status;
+        if (wasAlerting == nowAlerting) return;
+        Dispatcher.UIThread.Post(BuildItems);
+    }
+
     public void Dispose() => _disposables.Dispose();
 
     private void BuildItems()
     {
         _menu.Items.Clear();
+
+        if (_permissionStatus == OverallStatus.AnyDenied)
+        {
+            var fixItem = new NativeMenuItem("⚠ Fix permissions…");
+            fixItem.Click += (_, _) => OnFixPermissionsClicked?.Invoke();
+            _menu.Items.Add(fixItem);
+            _menu.Items.Add(new NativeMenuItemSeparator());
+        }
 
         var statusItem = new NativeMenuItem("Status");
         statusItem.Click += (_, _) => OnStatusClicked?.Invoke();

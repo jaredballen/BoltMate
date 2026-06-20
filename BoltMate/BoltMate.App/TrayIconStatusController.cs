@@ -15,10 +15,12 @@ namespace BoltMate.App;
 
 /// <summary>
 /// Owns the tray icon image and updates it based on cross-machine peer
-/// connection health. Three states:
-///   • Neutral — topology off OR no peers ever discovered. Plain template icon.
-///   • Good    — at least one peer seen within <see cref="StaleAfter"/>. Green check badge.
+/// connection health AND OS-permission state. States, in render priority
+/// (highest first):
+///   • Alert   — at least one OS permission denied. Yellow "!" badge.
 ///   • Bad     — topology on with peers known, but none seen within window. Red X badge.
+///   • Good    — at least one peer seen within <see cref="StaleAfter"/>. Green check badge.
+///   • Neutral — topology off OR no peers ever discovered. Plain template icon.
 /// </summary>
 /// <remarks>
 /// macOS detail: template-image behavior (<c>NSImage.isTemplate</c>) only
@@ -40,11 +42,13 @@ public sealed class TrayIconStatusController : IDisposable
 
     private UdpTopologyService? _topology;
     private State _last = State.None;
+    private OverallStatus _permissionStatus = OverallStatus.AllGood;
 
     // Cached compositions. Built lazily; rebuilt only on theme change.
     private WindowIcon? _neutralIcon;
     private WindowIcon? _goodIcon;
     private WindowIcon? _badIcon;
+    private WindowIcon? _alertIcon;
 
     public TrayIconStatusController(TrayIcon trayIcon, ILogger logger)
     {
@@ -73,11 +77,23 @@ public sealed class TrayIconStatusController : IDisposable
         Refresh();
     }
 
+    /// <summary>
+    /// Push a fresh permission snapshot. The Alert state overrides peer
+    /// health when any permission is denied. Call this every time the
+    /// PermissionStatusService observable ticks.
+    /// </summary>
+    public void SetPermissionStatus(OverallStatus status)
+    {
+        if (_permissionStatus == status) return;
+        _permissionStatus = status;
+        Refresh();
+    }
+
     private void OnColorValuesChanged(object? sender, PlatformColorValues e)
     {
         Dispatcher.UIThread.Post(() =>
         {
-            _neutralIcon = _goodIcon = _badIcon = null;
+            _neutralIcon = _goodIcon = _badIcon = _alertIcon = null;
             _last = State.None;
             Refresh();
         });
@@ -90,8 +106,13 @@ public sealed class TrayIconStatusController : IDisposable
         try
         {
             _trayIcon.Icon = GetOrBuild(state);
+            _trayIcon.ToolTipText = state == State.Alert
+                ? "BoltMate — permissions needed"
+                : "BoltMate";
             _last = state;
-            // Template flag only valid in neutral state.
+            // Template flag only valid in neutral state — any composited
+            // badge (good / bad / alert) drops the template flag so AppKit
+            // doesn't try to template-invert the colored sticker.
             try
             {
                 if (OperatingSystem.IsMacOS())
@@ -109,6 +130,11 @@ public sealed class TrayIconStatusController : IDisposable
 
     private State ResolveState()
     {
+        // Alert beats every other state — a denied permission is the most
+        // important thing for the user to know about.
+        if (_permissionStatus == OverallStatus.AnyDenied)
+            return State.Alert;
+
         if (_topology is null) return State.Neutral;
         var peers = _topology.PeerSnapshot;
         if (peers.Count == 0) return State.Neutral;
@@ -121,6 +147,7 @@ public sealed class TrayIconStatusController : IDisposable
 
     private WindowIcon GetOrBuild(State state) => state switch
     {
+        State.Alert   => _alertIcon   ??= Build(BadgeKind.Alert),
         State.Good    => _goodIcon    ??= Build(BadgeKind.Good),
         State.Bad     => _badIcon     ??= Build(BadgeKind.Bad),
         _             => _neutralIcon ??= BuildNeutral(),
@@ -151,7 +178,13 @@ public sealed class TrayIconStatusController : IDisposable
             // Badge sits in the lower-right corner ~40% of the icon dimension.
             var badgeSize = Math.Max(10, w * 0.45);
             var rect = new Rect(w - badgeSize, h - badgeSize, badgeSize, badgeSize);
-            var fill = kind == BadgeKind.Good ? Brushes.LimeGreen : Brushes.OrangeRed;
+            var fill = kind switch
+            {
+                BadgeKind.Good  => Brushes.LimeGreen,
+                BadgeKind.Bad   => Brushes.OrangeRed,
+                BadgeKind.Alert => Brushes.Gold,
+                _               => Brushes.Gray,
+            };
             ctx.DrawEllipse(fill, new Pen(Brushes.White, badgeSize * 0.08), rect.Center, rect.Width / 2, rect.Height / 2);
 
             var glyphPen = new Pen(Brushes.White, badgeSize * 0.14, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
@@ -164,12 +197,21 @@ public sealed class TrayIconStatusController : IDisposable
                 ctx.DrawLine(glyphPen, p1, p2);
                 ctx.DrawLine(glyphPen, p2, p3);
             }
-            else
+            else if (kind == BadgeKind.Bad)
             {
                 // X: two diagonals.
                 var pad = badgeSize * 0.28;
                 ctx.DrawLine(glyphPen, new Point(rect.X + pad, rect.Y + pad), new Point(rect.Right - pad, rect.Bottom - pad));
                 ctx.DrawLine(glyphPen, new Point(rect.Right - pad, rect.Y + pad), new Point(rect.X + pad, rect.Bottom - pad));
+            }
+            else // Alert: exclamation point — vertical stroke + dot.
+            {
+                var cx = rect.X + badgeSize * 0.5;
+                var topY = rect.Y + badgeSize * 0.25;
+                var stemBottomY = rect.Y + badgeSize * 0.6;
+                ctx.DrawLine(glyphPen, new Point(cx, topY), new Point(cx, stemBottomY));
+                var dotRadius = badgeSize * 0.09;
+                ctx.DrawEllipse(Brushes.White, null, new Point(cx, rect.Y + badgeSize * 0.78), dotRadius, dotRadius);
             }
         }
 
@@ -196,6 +238,6 @@ public sealed class TrayIconStatusController : IDisposable
 
     public void Dispose() => _disposables.Dispose();
 
-    private enum State { None, Neutral, Good, Bad }
-    private enum BadgeKind { Good, Bad }
+    private enum State { None, Neutral, Good, Bad, Alert }
+    private enum BadgeKind { Good, Bad, Alert }
 }

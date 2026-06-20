@@ -39,6 +39,15 @@ public sealed class AppSettings
     /// </summary>
     public Dictionary<string, string> CachedReceiverIdentifiers { get; set; } = new();
 
+    /// <summary>
+    /// Has the first-run welcome / permission-priming wizard finished? Set to
+    /// true by <c>WelcomeWindow</c> when the user clicks "Open BoltMate" on
+    /// the final page. We deliberately do NOT cache per-permission grant state
+    /// here — the OS is the source of truth and re-checked on every launch
+    /// (and periodically while running) by <c>PermissionStatusService</c>.
+    /// </summary>
+    public bool HasShownWelcome { get; set; } = false;
+
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 
