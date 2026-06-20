@@ -403,202 +403,226 @@ public partial class SettingsWindow : Window
     }
 
     // ====================================================================
-    // Diagnostics tab — full live snapshot of HID state + network sync
+    // Status tab — labeled rows, local receivers + up to 2 network peers
     // ====================================================================
 
     private DispatcherTimer? _diagTimer;
 
+    private readonly ObservableCollection<LocalReceiverRow> _localReceivers = new();
+    private readonly ObservableCollection<PeerRow> _peers = new();
+
     private void StartDiagnosticsTimer()
     {
+        // Wire row sources on first show.
+        var localList = this.FindControl<ItemsControl>("LocalReceiversList");
+        if (localList is not null) localList.ItemsSource = _localReceivers;
+        var peersList = this.FindControl<ItemsControl>("PeersList");
+        if (peersList is not null) peersList.ItemsSource = _peers;
+
         _diagTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _diagTimer.Tick += (_, _) => RefreshDiagnostics();
+        _diagTimer.Tick += (_, _) => RefreshStatusTab();
         _diagTimer.Start();
         _disposables.Add(System.Reactive.Disposables.Disposable.Create(() =>
         {
             _diagTimer.Stop();
             _diagTimer = null;
         }));
-        RefreshDiagnostics();
+        RefreshStatusTab();
     }
 
-    private void OnRefreshDiagnostics(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        RefreshDiagnostics();
-
-    private void RefreshDiagnostics()
+    private void RefreshStatusTab()
     {
-        var tb = this.FindControl<SelectableTextBlock>("DiagnosticsText");
-        if (tb is null) return;
-        try { tb.Text = BuildDiagnosticsSnapshot(); }
-        catch (Exception ex) { tb.Text = $"(diagnostics render failed: {ex.Message})"; }
+        try
+        {
+            RefreshLocalSection();
+            RefreshPeersSection();
+        }
+        catch
+        {
+            // best-effort: never let a refresh exception kill the timer
+        }
     }
 
-    private string BuildDiagnosticsSnapshot()
+    private void RefreshLocalSection()
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("════════════════════════════════════════════════════════════════════");
-        sb.AppendLine($"  LogiPlusSwitcher — diagnostics snapshot at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        sb.AppendLine("════════════════════════════════════════════════════════════════════");
-        sb.AppendLine();
-
-        // ---- Local receivers ----
-        sb.AppendLine("LOCAL");
-        sb.AppendLine("─────");
+        _localReceivers.Clear();
+        var empty = this.FindControl<TextBlock>("LocalEmptyLine");
         if (_manager is null || _manager.Receivers.Count == 0)
         {
-            sb.AppendLine("  (no receivers attached)");
+            if (empty is not null) empty.IsVisible = true;
+            return;
         }
-        else
-        {
-            foreach (var r in _manager.Receivers.Items)
-                RenderReceiver(sb, r);
-        }
-        sb.AppendLine();
+        if (empty is not null) empty.IsVisible = false;
 
-        // ---- Network sync ----
-        sb.AppendLine("NETWORK SYNC");
-        sb.AppendLine("────────────");
+        foreach (var r in _manager.Receivers.Items)
+        {
+            var details = r.LastKnownDetails;
+            var fw = details?.FirmwareVersionString;
+            var serial = !string.IsNullOrEmpty(r.Info.Serial) ? r.Info.Serial
+                        : details?.Serial ?? "(no serial)";
+
+            var devices = new List<LocalDeviceRow>();
+            foreach (var d in r.Devices.Items.OrderBy(d => (int)d.DeviceIndex))
+            {
+                var link = d.LinkUp ? "● online" : "○ offline";
+                var battery = d.LastKnownBattery is { } b
+                    ? (b.Percent.HasValue
+                        ? $"{b.Percent}%{(b.Charging == true ? " (charging)" : "")}"
+                        : "?")
+                    : null;
+
+                string currentHostText = "";
+                if (d.LastKnownCurrentHost is byte cur)
+                {
+                    var receiverName = d.HostBindings.TryGetValue(cur, out var bind)
+                                       && !string.IsNullOrEmpty(bind.ReceiverName)
+                        ? bind.ReceiverName!
+                        : "(unnamed)";
+                    currentHostText = $"H{cur + 1} → {receiverName}";
+                }
+
+                devices.Add(new LocalDeviceRow
+                {
+                    Header = $"Slot {d.DeviceIndex} · {d.DisplayName} · wpid 0x{d.Wpid:X4}",
+                    SubLine = string.Join("   ", new[]
+                    {
+                        link,
+                        string.IsNullOrEmpty(currentHostText) ? null : $"current {currentHostText}",
+                        battery is null ? null : $"battery {battery}",
+                    }.Where(s => !string.IsNullOrEmpty(s))!),
+                });
+            }
+
+            _localReceivers.Add(new LocalReceiverRow
+            {
+                Header = r.Info.ProductString,
+                Firmware = fw is null ? "(fw unknown)" : $"fw {fw}",
+                SerialLine = $"serial {serial}",
+                Devices = devices,
+            });
+        }
+    }
+
+    private void RefreshPeersSection()
+    {
+        _peers.Clear();
+        var stateLine = this.FindControl<TextBlock>("PeersStateLine");
+        var overflowLine = this.FindControl<TextBlock>("PeersOverflowLine");
+        if (overflowLine is not null) overflowLine.IsVisible = false;
+
         if (_settings is null || !_settings.Topology.Enabled)
         {
-            sb.AppendLine("  (disabled in Settings → Network)");
-        }
-        else
-        {
-            var send = SendStatsProvider?.Invoke();
-            if (send is not null)
-            {
-                var (att, err) = send.Value;
-                sb.AppendLine($"  Send attempts: {att,8} | errors: {err,6}{(err > 0 ? " ⚠" : "")}");
-            }
-            sb.AppendLine($"  Local machineId: {_settings.Topology.MachineId ?? "(none)"}");
-            sb.AppendLine($"  UDP port: {_settings.Topology.Port}  |  multicast: {(_settings.Topology.UseMulticast ? _settings.Topology.MulticastGroup : "off")}");
-            sb.AppendLine($"  Repeat: {_settings.Topology.RepeatCount}× per announcement, gap {_settings.Topology.RepeatGapMs}ms");
-            sb.AppendLine($"  Cadence: normal {_settings.Topology.BroadcastIntervalSeconds}s; burst {_settings.Topology.BurstIntervalMs}ms for {_settings.Topology.BurstDurationMs}ms after link-lost");
-            sb.AppendLine();
-
-            var peers = PeerStatsProvider?.Invoke()?.ToList() ?? new List<LogiPlusSwitcher.Core.Topology.PeerStats>();
-            var anns = PeerAnnouncementsProvider?.Invoke()?.ToDictionary(a => a.MachineId, a => a)
-                       ?? new Dictionary<string, LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>();
-
-            if (peers.Count == 0 && anns.Count == 0)
-            {
-                sb.AppendLine("  (no peers discovered yet)");
-            }
-            else
-            {
-                foreach (var peer in peers.OrderBy(p => p.Hostname ?? p.MachineId))
-                    RenderPeer(sb, peer, anns.TryGetValue(peer.MachineId, out var a) ? a : null);
-            }
-        }
-        sb.AppendLine();
-
-        // ---- Settings summary ----
-        sb.AppendLine("SETTINGS");
-        sb.AppendLine("────────");
-        if (_settings is not null)
-        {
-            sb.AppendLine($"  Auto-update: {_settings.AutoCheckForUpdates} (every {_settings.UpdateCheckIntervalHours}h)");
-            sb.AppendLine($"  Telemetry enabled: {_settings.TelemetryEnabled}");
-        }
-
-        return sb.ToString();
-    }
-
-    private static void RenderReceiver(StringBuilder sb, BoltReceiver r)
-    {
-        var details = r.LastKnownDetails;
-        var fw = details is not null
-            ? $"fw {details.FirmwareVersionString}"
-            : "fw (not read)";
-        var serial = !string.IsNullOrEmpty(r.Info.Serial) ? r.Info.Serial
-                    : details?.Serial ?? "(no serial)";
-        var ble = r.HostIdentifierKey ?? "(no ble)";
-
-        sb.AppendLine($"  ▼ {r.Info.ProductString}");
-        sb.AppendLine($"      serial : {serial}");
-        sb.AppendLine($"      {fw}");
-        sb.AppendLine($"      ble    : {ble}");
-        sb.AppendLine($"      path   : {Shorten(r.Info.Path, 70)}");
-
-        var devices = r.Devices.Items.OrderBy(d => (int)d.DeviceIndex).ToList();
-        if (devices.Count == 0)
-        {
-            sb.AppendLine("      └─ (no paired devices)");
+            if (stateLine is not null) stateLine.Text = "Cross-machine sync is off. Enable it in the Network tab to see peers.";
             return;
         }
-        foreach (var d in devices)
-            RenderDevice(sb, d);
-    }
 
-    private static void RenderDevice(StringBuilder sb, PairedDevice d)
-    {
-        var name = d.DisplayName;
-        var link = d.LinkUp ? "● online" : "○ offline";
-        var bat = d.LastKnownBattery is { } b
-            ? $"{(b.Percent.HasValue ? b.Percent + "%" : "?")}{(b.Charging == true ? "⚡" : "")}"
-            : "?";
-        var fw = d.Firmware is not null ? d.Firmware.DisplayString : "(fw not read)";
-        var current = d.LastKnownCurrentHost.HasValue ? $" current=H{d.LastKnownCurrentHost + 1}" : "";
+        var peers = PeerStatsProvider?.Invoke()?.ToList() ?? new List<LogiPlusSwitcher.Core.Topology.PeerStats>();
+        var anns = PeerAnnouncementsProvider?.Invoke()?.ToDictionary(a => a.MachineId, a => a)
+                   ?? new Dictionary<string, LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement>();
 
-        sb.AppendLine($"      ├─ Slot {d.DeviceIndex}  {name}  ({link}){current}");
-        sb.AppendLine($"      │     wpid    : 0x{d.Wpid:X4}");
-        sb.AppendLine($"      │     serial  : {d.Serial ?? "(unknown)"}");
-        sb.AppendLine($"      │     battery : {bat}");
-        sb.AppendLine($"      │     {fw}");
-        if (d.HostBindings.Count == 0)
+        if (peers.Count == 0 && anns.Count == 0)
         {
-            sb.AppendLine("      │     hosts   : (not yet read)");
+            if (stateLine is not null) stateLine.Text = "Cross-machine sync is on. No peers discovered yet.";
             return;
         }
-        sb.AppendLine("      │     hosts:");
-        foreach (var (slot, binding) in d.HostBindings.OrderBy(kv => kv.Key))
+
+        if (stateLine is not null) stateLine.Text = $"Cross-machine sync is on. {peers.Count} peer{(peers.Count == 1 ? "" : "s")} reachable.";
+
+        // Logi devices support 3 hosts max → a sync group has at most 3
+        // machines (this one + up to 2 peers). Show the two most-recently-
+        // seen; surface the rest as an overflow line.
+        var ordered = peers
+            .OrderByDescending(p => p.LastSeenUtc)
+            .ToList();
+        const int MaxPeersShown = 2;
+        foreach (var peer in ordered.Take(MaxPeersShown))
         {
-            var marker = d.LastKnownCurrentHost == slot ? " ← current" : "";
-            if (!binding.Paired)
-            {
-                sb.AppendLine($"      │       H{slot + 1}: unpaired{marker}");
-                continue;
-            }
-            var bleKey = binding.HostIdentifierKey ?? "(no ble)";
-            var rname = !string.IsNullOrEmpty(binding.ReceiverName) ? $" ({binding.ReceiverName})" : "";
-            sb.AppendLine($"      │       H{slot + 1}: {bleKey}{rname}{marker}");
+            anns.TryGetValue(peer.MachineId, out var ann);
+            _peers.Add(BuildPeerRow(peer, ann));
+        }
+        var extra = ordered.Count - MaxPeersShown;
+        if (extra > 0 && overflowLine is not null)
+        {
+            overflowLine.IsVisible = true;
+            overflowLine.Text = $"+ {extra} more peer{(extra == 1 ? "" : "s")} not displayed (sync group caps at 3 machines)";
         }
     }
 
-    private static void RenderPeer(StringBuilder sb,
+    private static PeerRow BuildPeerRow(
         LogiPlusSwitcher.Core.Topology.PeerStats peer,
-        LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement? lastAnn)
+        LogiPlusSwitcher.Core.Topology.ReceiverAnnouncement? ann)
     {
         var hostname = string.IsNullOrEmpty(peer.Hostname) ? "(unknown host)" : peer.Hostname;
+        var shortId = peer.MachineId.Length > 8 ? peer.MachineId[..8] : peer.MachineId;
+
         var sinceMs = (DateTime.UtcNow - peer.LastSeenUtc).TotalMilliseconds;
         var sinceStr = peer.LastSeenUtc == default
             ? "never"
             : sinceMs < 1500 ? $"{sinceMs:F0}ms ago"
-                             : $"{sinceMs / 1000:F1}s ago";
-        var alive = sinceMs < 10_000 ? "✓" : "⚠ silent";
+                             : sinceMs < 60_000 ? $"{sinceMs / 1000:F1}s ago"
+                                                : $"{sinceMs / 60_000:F1}m ago";
+        var alive = sinceMs < 10_000 ? "online" : "silent";
 
-        sb.AppendLine($"  ▼ {hostname}  [{alive}]");
-        sb.AppendLine($"      machineId : {peer.MachineId}");
-        sb.AppendLine($"      last seen : {sinceStr}");
-        sb.AppendLine($"      last seq  : {peer.LastSeq}");
-        sb.AppendLine($"      received  : {peer.UniqueReceived} unique / {peer.DuplicatesSuppressed} dup");
-        sb.AppendLine($"      missed in : {peer.MissedFromPeer}  (peer→us loss, inferred from seq gaps)");
-        sb.AppendLine($"      peer ack  : last seq of ours they saw = {peer.LastAckOfOurSeq}");
-        sb.AppendLine($"      missed out: {peer.OutboundLossEstimate}  (us→peer loss, inferred from peer ack)");
-
-        if (lastAnn is not null)
-        {
-            foreach (var r in lastAnn.Receivers)
+        var receiverSummary = ann is null
+            ? "(no announcement payload yet)"
+            : string.Join(" · ", ann.Receivers.Select(r =>
             {
-                var ble = r.HostIdentifierHex ?? "(no ble)";
-                var ser = string.IsNullOrEmpty(r.Serial) ? "(no serial)" : r.Serial;
-                sb.AppendLine($"      └─ Receiver {ser}  ble={ble}");
-                if (r.OnlineDevices.Count == 0) sb.AppendLine("           (no devices online)");
-                foreach (var od in r.OnlineDevices)
-                    sb.AppendLine($"           ● Slot {od.Slot}  wpid 0x{od.WpidHex}  {od.Name ?? ""}");
+                var ser = string.IsNullOrEmpty(r.Serial) ? "no-serial" : r.Serial;
+                return $"rcvr {ser}";
+            }));
+
+        var deviceLines = new List<PeerDeviceRow>();
+        if (ann is not null)
+        {
+            foreach (var rentry in ann.Receivers)
+            {
+                if (rentry.OnlineDevices.Count == 0) continue;
+                foreach (var od in rentry.OnlineDevices)
+                {
+                    var name = string.IsNullOrEmpty(od.Name) ? "(no name)" : od.Name;
+                    deviceLines.Add(new PeerDeviceRow
+                    {
+                        Line = $"  ● slot {od.Slot} · wpid 0x{od.WpidHex} · {name}",
+                    });
+                }
             }
         }
+        if (deviceLines.Count == 0)
+            deviceLines.Add(new PeerDeviceRow { Line = "  (no devices online on this peer)" });
+
+        return new PeerRow
+        {
+            Header = $"{hostname}  [{alive}]",
+            LastSeen = $"last seen {sinceStr}",
+            MetaLine = $"machine {shortId}   {receiverSummary}   recv {peer.UniqueReceived}",
+            Devices = deviceLines,
+        };
     }
 
-    private static string Shorten(string s, int max) =>
-        s.Length > max ? string.Concat("…", s.AsSpan(s.Length - max + 1)) : s;
+    public sealed class LocalReceiverRow
+    {
+        public string Header { get; set; } = "";
+        public string Firmware { get; set; } = "";
+        public string SerialLine { get; set; } = "";
+        public List<LocalDeviceRow> Devices { get; set; } = new();
+    }
+
+    public sealed class LocalDeviceRow
+    {
+        public string Header { get; set; } = "";
+        public string SubLine { get; set; } = "";
+    }
+
+    public sealed class PeerRow
+    {
+        public string Header { get; set; } = "";
+        public string LastSeen { get; set; } = "";
+        public string MetaLine { get; set; } = "";
+        public List<PeerDeviceRow> Devices { get; set; } = new();
+    }
+
+    public sealed class PeerDeviceRow
+    {
+        public string Line { get; set; } = "";
+    }
 }

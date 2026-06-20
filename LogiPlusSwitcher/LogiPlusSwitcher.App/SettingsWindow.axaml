@@ -147,33 +147,85 @@
             </ScrollViewer>
         </TabItem>
 
-        <!-- Diagnostics tab -->
-        <TabItem Header="Diagnostics">
-            <Grid Margin="8" RowDefinitions="Auto,*,Auto">
+        <!-- Status tab -->
+        <TabItem Header="Status">
+            <Grid Margin="8" RowDefinitions="Auto,*">
                 <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,8">
-                    <TextBlock Text="System diagnostics" FontSize="16" FontWeight="Bold" />
-                    <TextBlock Foreground="#CCC" TextWrapping="Wrap">
-                        Full snapshot of everything the app sees: local Bolt receivers, their paired devices,
-                        host-slot bindings, firmware versions, battery, plus the network sync state and per-peer health.
-                        Refreshes every second. Use "Copy to clipboard" to attach to a support thread.
+                    <TextBlock Text="Live status" FontSize="16" FontWeight="Bold" />
+                    <TextBlock Foreground="#CCC" TextWrapping="Wrap" FontSize="12">
+                        This machine's attached receivers and devices, plus any network peers reachable on the LAN.
+                        Refreshes once per second.
                     </TextBlock>
                 </StackPanel>
 
-                <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
-                    <ScrollViewer>
-                        <SelectableTextBlock x:Name="DiagnosticsText"
-                                             Padding="12"
-                                             FontFamily="JetBrains Mono,Menlo,Consolas,monospace"
-                                             FontSize="12"
-                                             TextWrapping="NoWrap"
-                                             Text="(loading…)" />
-                    </ScrollViewer>
-                </Border>
+                <ScrollViewer Grid.Row="1">
+                    <StackPanel Spacing="14">
+                        <!-- Section 1: this machine -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="This machine" FontSize="14" FontWeight="Bold" Foreground="#DDD" />
+                            <ItemsControl x:Name="LocalReceiversList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="app:SettingsWindow+LocalReceiverRow">
+                                        <Border Padding="10" Margin="0,0,0,6" Background="#16FFFFFF" CornerRadius="4">
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <TextBlock Grid.Column="0" Text="{Binding Header}" FontWeight="Bold" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Firmware}" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding SerialLine}" Foreground="#999" FontSize="11" />
+                                                <ItemsControl ItemsSource="{Binding Devices}" Margin="6,4,0,0">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="app:SettingsWindow+LocalDeviceRow">
+                                                            <Border Padding="6,4" Margin="0,2" Background="#10FFFFFF" CornerRadius="3">
+                                                                <StackPanel Spacing="2">
+                                                                    <TextBlock Text="{Binding Header}" FontWeight="SemiBold" FontSize="12" />
+                                                                    <TextBlock Text="{Binding SubLine}" Foreground="#AAA" FontSize="11"
+                                                                               FontFamily="JetBrains Mono,Menlo,Consolas,monospace" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="LocalEmptyLine" Text="(no receivers attached)" Foreground="#888" FontSize="12" IsVisible="False" />
+                        </StackPanel>
 
-                <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
-                    <TextBlock Text="Tip: Click anywhere then Cmd/Ctrl+A → Cmd/Ctrl+C to copy" Foreground="#999" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <Button Content="Refresh now" Click="OnRefreshDiagnostics" />
-                </StackPanel>
+                        <!-- Section 2: network peers -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Network peers" FontSize="14" FontWeight="Bold" Foreground="#DDD" />
+                            <TextBlock x:Name="PeersStateLine" Foreground="#888" FontSize="11" TextWrapping="Wrap" />
+                            <ItemsControl x:Name="PeersList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="app:SettingsWindow+PeerRow">
+                                        <Border Padding="10" Margin="0,0,0,6" Background="#16FFFFFF" CornerRadius="4">
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <TextBlock Grid.Column="0" Text="{Binding Header}" FontWeight="Bold" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding LastSeen}" Foreground="#999" FontSize="11" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding MetaLine}" Foreground="#999" FontSize="11"
+                                                           FontFamily="JetBrains Mono,Menlo,Consolas,monospace" />
+                                                <ItemsControl ItemsSource="{Binding Devices}" Margin="6,2,0,0">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="app:SettingsWindow+PeerDeviceRow">
+                                                            <TextBlock Text="{Binding Line}" Foreground="#AAA" FontSize="11"
+                                                                       FontFamily="JetBrains Mono,Menlo,Consolas,monospace" Margin="0,1" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="PeersOverflowLine" Foreground="#888" FontSize="11" IsVisible="False" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
             </Grid>
         </TabItem>
 

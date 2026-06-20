@@ -4,18 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not a competitor. It detects host-switch events from any source on a shared Logitech Bolt receiver and fans the switch out to all other paired devices, so the whole peripheral set follows the user between hosts together.
+LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not a competitor. It detects host-switch events on a shared Logitech Bolt receiver and fans the switch out to all other paired devices on every machine in the sync group, so the whole peripheral set follows the user between hosts together.
+
+**Scope is intentionally narrow.** Anything Logi Options+ already does (pairing, unpairing, renaming, per-host friendly-name editing, hotkey binding) is out of scope. We only do the cross-device + cross-machine fan-out that Flow can't.
 
 **Trigger sources, all unified into one fan-out**:
 
 | Source | Detection mechanism |
 |---|---|
 | Easy-Switch button on keyboard | HID++ feature `0x1B04` (REPROG_CONTROLS_V4) — divert CIDs `0x00D1/D2/D3` and listen for `divertedButtonsEvent` (target host arrives in payload before disconnect) |
-| Easy-Switch button on mouse / headset / other Logi+ device | Same as above; CIDs vary slightly on cycle-button devices (see task #14) |
+| Easy-Switch button on mouse / headset / other Logi+ device | Same as above; CIDs vary slightly on cycle-button devices |
 | Mouse Flow (cursor crosses screen edge) | **Snoop Logi+'s own `0x1814 SetCurrentHost` writes** on the management interface, filtered by `swid != ours`. The "echo" the docs warn about IS our Flow detection signal. |
-| In-app hotkey | We initiate directly, no detection needed |
+| Cross-machine sync | UDP LAN broadcast / multicast announces local receiver + device state; peers correlate against their own link-state events and fan out matching siblings when a device arrives remotely |
 
-**Why this exists**: Logi Flow only triggers multi-device follow when the mouse crosses a screen edge. If the user taps Easy-Switch on the keyboard, the mouse doesn't follow. Flow's edge-detect is also flaky in practice. This app closes the gap.
+**Why this exists**: Logi Flow only triggers multi-device follow when the mouse crosses a screen edge. If the user taps Easy-Switch on the keyboard, the mouse doesn't follow. Flow's edge-detect is also flaky in practice. This app closes the gap — both within one machine and across the LAN.
 
 **Coexistence with Logi Options+ is mandatory** — design contract, not a nice-to-have. Anything that breaks Logi+ is out of scope.
 
@@ -33,9 +35,7 @@ LogiPlusSwitcher is a **companion** to Logi Options+ — not a replacement, not 
 
 ```
 LogiPlusSwitcher/
-├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface (tier-agnostic)
-│   ├── Hid/                       # IReceiverTransport, IReceiverConnection, HidApi backend,
-│   │   │                          # InputMonitoringPermission (macOS TCC helper)
+├── LogiPlusSwitcher.Core/        # protocol + Bolt model + Rx surface
 │   ├── HidPp/                     # frames, request/reply client, HidPp10 register helpers
 │   │   ├── Features/              # 0x0001 IRoot, 0x0003 DeviceInfo, 0x0005 DeviceName,
 │   │   │                          # 0x0007 DeviceFriendlyName, 0x1004 UnifiedBattery,
@@ -44,19 +44,19 @@ LogiPlusSwitcher/
 │   ├── Bolt/                      # BoltReceiver, PairedDevice (DisplayName resolver),
 │   │   │                          # ReceiverManager, ReceiverDetails, PairingBackup, WpidCatalog
 │   ├── Switcher/                  # SwitcherService (fan-out orchestrator)
+│   ├── Topology/                  # UDP/mDNS+TCP cross-machine sync, correlator
 │   ├── AppPaths.cs                # per-platform on-disk locations
 │   └── AppSettings.cs             # JSON config schema
 ├── LogiPlusSwitcher.Cli/         # headless service / diagnostic CLI (`logiplus` binary)
 ├── LogiPlusSwitcher.App/         # Avalonia 12 tray app
 │   ├── Assets/                    # tray-icon.png (+@2x), app-icon-512.png, LogiPlusSwitcher.icns
-│   ├── Licensing/                 # ILicenseService + DevAlwaysProLicenseService / FreeOnly stub
 │   ├── App.axaml(.cs)             # tray shell + bootstrap
 │   ├── TrayMenuController.cs      # dynamic menu bound to manager.Receivers cache
 │   ├── DeviceEnricher.cs          # background metadata reads on link-up
-│   ├── SettingsWindow.axaml(.cs)  # receiver/device list, opens from tray
+│   ├── SettingsWindow.axaml(.cs)  # receivers list, topology matrix, Status tab, Network tab
 │   ├── MacActivationPolicy.cs     # NSApp setActivationPolicy P/Invoke (Dock show/hide)
 │   └── AppLoggerSetup.cs          # Serilog logger factory (mirrors CLI's setup)
-└── LogiPlusSwitcher.Tests/       # xUnit (70+ tests), FakeReceiverConnection/Transport doubles
+└── LogiPlusSwitcher.Tests/       # xUnit (90+ tests), FakeReceiverConnection/Transport doubles
 ```
 
 `Directory.Build.targets` stages libhidapi alongside every project's output and publish bundle, and wraps publish output in a macOS `.app` bundle for the App project.
@@ -64,35 +64,29 @@ LogiPlusSwitcher/
 `nuget.config` pins restore to nuget.org only.
 `version.json` (Nerdbank.GitVersioning) auto-stamps assembly versions from git tags.
 
-## Reactive style + tier gating
+## Reactive style
 
-Two architectural rules apply across the codebase:
-
-1. **No CLR events on the public Core API.** State is observable via `IObservable<T>` (point events) or DynamicData's `IObservableCache<TObject, TKey>` (collections). Subjects stay private; only `.AsObservable()` is exposed. `CompositeDisposable` everywhere instead of per-field `Dispose` calls. See [feedback-dotnet-reactive-style](.claude/...) memory.
-2. **Tier gating lives at the App layer only.** Core exposes every capability unconditionally; the App's `ILicenseService` decides whether to expose Pro features in the UI. Two stub impls today: `DevAlwaysProLicenseService` (everything unlocked) and `FreeOnlyLicenseService` (testing upsell paths). See [feedback-tier-gating](.claude/...) memory.
-3. **Multi-receiver is the only Pro feature with Core ties** — the policy decision is at the App layer (`ReceiverPolicyService`), but Core has a mechanical `BoltReceiver.IsParticipating` toggle the App drives. Core never reads license state directly; it just respects the flag in `SwitcherService`.
+Architectural rule across the codebase: **no CLR events on the public Core API.** State is observable via `IObservable<T>` (point events) or DynamicData's `IObservableCache<TObject, TKey>` (collections). Subjects stay private; only `.AsObservable()` is exposed. `CompositeDisposable` everywhere instead of per-field `Dispose` calls. See [feedback-dotnet-reactive-style](.claude/...) memory.
 
 ## Topology-aware fan-out
 
-`SwitcherService` is **manager-scoped** (one per `ReceiverManager`, not per receiver). Routes switch events across all attached participating receivers by matching BLE addresses through each device's `HostBindings`:
+`SwitcherService` is **manager-scoped** (one per `ReceiverManager`, not per receiver). Routes switch events across all attached receivers by matching host identifiers through each device's `HostBindings`:
 
-1. Origin device pressed Easy-Switch to its host slot N → `targetBle = device.HostBindings[N].BluetoothAddressKey`
-2. For each device on every participating receiver, look up the slot whose binding points to `targetBle` → `CHANGE_HOST(matching_slot)`
-3. Skip the originator, non-participating receivers, devices without `CanReceiveHostSwitch`, offline devices, and siblings without a matching binding (logged + UI-surfaceable)
+1. Origin device pressed Easy-Switch to its host slot N → `targetHostId = device.HostBindings[N].HostIdentifierKey`
+2. For each device on every receiver, look up the slot whose binding points to `targetHostId` → `CHANGE_HOST(matching_slot)`
+3. Skip the originator, devices without `CanReceiveHostSwitch`, offline devices, and siblings without a matching binding (logged + UI-surfaceable)
 
 Falls back to legacy "same host index for every sibling" routing when the origin's `HostBindings` aren't populated yet (cold-start before `DeviceEnricher` has read them).
 
-`HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. Persistence to disk for offline-device bindings tracked as a follow-up.
+`HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. Persisted to disk in `AppSettings.CachedHostBindings` for offline-device bindings to survive restarts.
 
 ## App layer composition (LogiPlusSwitcher.App)
 
-- `App.axaml.cs` — bootstrap: settings load, license service, transport, manager, policy, switcher, enricher, tray controller. Sequence matters: policy must wire to manager before any receivers attach.
-- `ReceiverPolicyService` — reconciles `ILicenseService` + `AppSettings.PrimaryReceiverSerial` + `manager.Receivers` → sets `IsParticipating` per attached receiver. Fires `MultiReceiverPromptRequired` when Free + 2+ receivers + no primary chosen.
+- `App.axaml.cs` — bootstrap: settings load, transport, manager, switcher, enricher, topology service, tray controller.
 - `DeviceEnricher` — background metadata reads on link-up: feature discovery + name/serial/battery/host bindings.
-- `TrayMenuController` — builds dynamic NativeMenu from manager cache; per-receiver sub-sections with per-slot submenus; "(standby — Pro)" suffix on non-participating receivers.
-- `SettingsWindow` — three tabs: Receivers (with participation pills + "Set as primary"), Topology (cross-receiver matrix), License (key entry).
-- `MultiReceiverPrompt` — first-run-style picker when Free + multiple receivers + no primary.
-- `MacActivationPolicy` — NSApp activation policy P/Invoke to show/hide the Dock icon when settings or prompts open.
+- `TrayMenuController` — builds dynamic NativeMenu from manager cache; per-receiver sub-sections with per-slot "Switch to Host N" submenus.
+- `SettingsWindow` — tabs: General, Receivers (read-only list), Topology (cross-receiver matrix), Network (LAN sync toggle), Status (live local + peer view), Updates.
+- `MacActivationPolicy` — NSApp activation policy P/Invoke to show/hide the Dock icon when settings open.
 
 ## Build / run
 
