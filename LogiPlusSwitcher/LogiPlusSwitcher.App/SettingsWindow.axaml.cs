@@ -303,10 +303,6 @@ public partial class SettingsWindow : Window
                     Line = $"slot {d.DeviceIndex}  {d.DisplayName}  ({(d.LinkUp ? "online" : "offline")})"
                          + (d.LastKnownBattery is { } b && b.Percent.HasValue ? $"  · {b.Percent}%" : "")
                          + (d.Serial is not null ? $"  · {d.Serial}" : ""),
-                    Receiver = receiver,
-                    DeviceIndex = d.DeviceIndex,
-                    DisplayName = d.DisplayName,
-                    LinkUp = d.LinkUp,
                 })
                 .ToList();
 
@@ -380,159 +376,13 @@ public partial class SettingsWindow : Window
 
     private void OnClose(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Close();
 
+    /// <summary>
+    /// Surface hook still wired to the App layer's tray label refresh,
+    /// even though there's no in-app host-rename UI anymore. Left as a
+    /// stable callback so future refresh sources (CLI changes, settings
+    /// file edits) can fire it without touching App.axaml.cs.
+    /// </summary>
     public Action? HostNamesChanged { get; set; }
-
-    private async void OnEditGlobalHostNames(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (_settings is null) return;
-        var result = await Dialogs.HostNamesDialog.AskAsync(
-            this,
-            title: "Default host labels",
-            header: "Host labels (global default)",
-            hint: "Used everywhere unless a per-receiver override is set. " +
-                  "Empty fields fall back to 'Host N'.",
-            initial: _settings.HostNames);
-        if (result is null) return;
-        var sanitized = new[]
-        {
-            string.IsNullOrWhiteSpace(result[0]) ? "Host 1" : result[0],
-            string.IsNullOrWhiteSpace(result[1]) ? "Host 2" : result[1],
-            string.IsNullOrWhiteSpace(result[2]) ? "Host 3" : result[2],
-        };
-        _settings.HostNames = sanitized;
-        _settings.Save();
-        HostNamesChanged?.Invoke();
-        Populate();
-    }
-
-    private async void OnEditReceiverHostNames(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (_settings is null || sender is not Button btn || btn.Tag is not string serial || string.IsNullOrEmpty(serial)) return;
-
-        _settings.Receivers.TryGetValue(serial, out var rs);
-        var initial = rs?.HostNames ?? _settings.HostNames;
-        var result = await Dialogs.HostNamesDialog.AskAsync(
-            this,
-            title: $"Host labels for {serial}",
-            header: $"Host labels (override for receiver {serial})",
-            hint: "Clear all three to remove the override and fall back to the global defaults.",
-            initial: initial);
-        if (result is null) return;
-
-        // Empty-all => remove override.
-        if (result.All(string.IsNullOrWhiteSpace))
-        {
-            if (rs is not null) rs.HostNames = null;
-        }
-        else
-        {
-            rs ??= new ReceiverSettings();
-            rs.HostNames = new[]
-            {
-                string.IsNullOrWhiteSpace(result[0]) ? "Host 1" : result[0],
-                string.IsNullOrWhiteSpace(result[1]) ? "Host 2" : result[1],
-                string.IsNullOrWhiteSpace(result[2]) ? "Host 3" : result[2],
-            };
-            _settings.Receivers[serial] = rs;
-        }
-        _settings.Save();
-        Populate();
-    }
-
-    private async void OnClearAllPairings(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not string serial || _manager is null) return;
-        var receiver = _manager.Receivers.Items.FirstOrDefault(r => r.Info.Serial == serial);
-        if (receiver is null) return;
-
-        var ok = await Dialogs.ConfirmDialog.AskAsync(
-            this,
-            title: "Clear all pairings",
-            header: $"Clear ALL pairings on receiver {serial}?",
-            body: "Every paired device on this receiver will be unpaired. You'll need to re-pair " +
-                  "each one via Logi Options+ or Pair-New-Device. This is not reversible.",
-            confirmLabel: "Clear all");
-        if (!ok) return;
-
-        var status = this.FindControl<TextBlock>("StatusLine");
-        try
-        {
-            var cleared = await receiver.ClearAllPairingsAsync();
-            if (status is not null) status.Text = $"Cleared {cleared} slot(s) on {serial}.";
-        }
-        catch (Exception ex)
-        {
-            if (status is not null) status.Text = $"Clear-all failed: {ex.Message}";
-        }
-    }
-
-    private async void OnIdentifySlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
-        var status = this.FindControl<TextBlock>("StatusLine");
-        if (status is not null) status.Text = $"Identifying {slot.DisplayName}: press any key on it within 5s…";
-        try
-        {
-            var cid = await slot.Receiver.IdentifyAsync(slot.DeviceIndex, TimeSpan.FromSeconds(5));
-            if (status is not null)
-                status.Text = cid.HasValue
-                    ? $"Identified {slot.DisplayName} — CID 0x{cid.Value:X4} detected."
-                    : $"No tap detected for {slot.DisplayName} within 5s.";
-        }
-        catch (Exception ex)
-        {
-            if (status is not null) status.Text = $"Identify failed: {ex.Message}";
-        }
-    }
-
-    private async void OnRenameSlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
-        var newName = await Dialogs.TextPromptDialog.AskAsync(
-            this,
-            title: "Rename device",
-            prompt: $"New name for {slot.DisplayName} (slot {slot.DeviceIndex})",
-            hint: "Stored in the receiver's BOLT_DEVICE_NAME register. Logi Options+ will see the new name.",
-            initial: slot.DisplayName);
-        if (string.IsNullOrWhiteSpace(newName)) return;
-
-        var status = this.FindControl<TextBlock>("StatusLine");
-        try
-        {
-            var ok = await slot.Receiver.RenameDeviceAsync(slot.DeviceIndex, newName.Trim());
-            if (status is not null)
-                status.Text = ok ? $"Renamed slot {slot.DeviceIndex} → {newName}" : "Rename failed (firmware rejected).";
-        }
-        catch (Exception ex)
-        {
-            if (status is not null) status.Text = $"Rename failed: {ex.Message}";
-        }
-    }
-
-    private async void OnUnpairSlot(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not SlotRow slot || slot.Receiver is null) return;
-        var ok = await Dialogs.ConfirmDialog.AskAsync(
-            this,
-            title: "Unpair device",
-            header: $"Unpair {slot.DisplayName}?",
-            body: $"Slot {slot.DeviceIndex} on receiver {slot.Receiver.Info.Serial} will be cleared. " +
-                  "You'll need to re-pair the device via Logi Options+ or Pair-New-Device.",
-            confirmLabel: "Unpair");
-        if (!ok) return;
-
-        var status = this.FindControl<TextBlock>("StatusLine");
-        try
-        {
-            var success = await slot.Receiver.UnpairAsync(slot.DeviceIndex);
-            if (status is not null)
-                status.Text = success ? $"Unpaired slot {slot.DeviceIndex}." : "Unpair failed (firmware rejected).";
-        }
-        catch (Exception ex)
-        {
-            if (status is not null) status.Text = $"Unpair failed: {ex.Message}";
-        }
-    }
 
     public sealed class ReceiverRow
     {
@@ -545,12 +395,6 @@ public partial class SettingsWindow : Window
     public sealed class SlotRow
     {
         public string Line { get; set; } = "";
-        public BoltReceiver? Receiver { get; set; }
-        public byte DeviceIndex { get; set; }
-        public string DisplayName { get; set; } = "";
-        public bool LinkUp { get; set; }
-        public bool CanIdentify => LinkUp;
-        public bool CanRename => LinkUp;
     }
 
     public sealed class TopologyRow

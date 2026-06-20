@@ -208,7 +208,6 @@ public sealed class TrayMenuController : IDisposable
         private readonly CompositeDisposable _subDisposables = new();
         private readonly Dictionary<byte, NativeMenuItem> _slotItems = new();
         private readonly NativeMenuItem _headerItem;
-        private readonly NativeMenuItem _clearAllItem;
         private readonly NativeMenuItemSeparator _trailingSeparator;
 
         public NativeMenuItem[] RootItems { get; }
@@ -221,19 +220,11 @@ public sealed class TrayMenuController : IDisposable
 
             _headerItem = new NativeMenuItem(FormatReceiverHeader(receiver)) { IsEnabled = false };
 
-            _clearAllItem = new NativeMenuItem("Clear all pairings…");
-            _clearAllItem.Click += async (_, _) =>
-            {
-                _logger.LogInformation("User picked Clear all pairings on {Serial}", _receiver.Info.Serial);
-                await _receiver.ClearAllPairingsAsync();
-            };
-
             _trailingSeparator = new NativeMenuItemSeparator();
 
             RootItems =
             [
                 _headerItem,
-                _clearAllItem,
                 _trailingSeparator,
             ];
         }
@@ -307,25 +298,6 @@ public sealed class TrayMenuController : IDisposable
                 };
                 sub.Items.Add(switchTo);
             }
-            sub.Items.Add(new NativeMenuItemSeparator());
-
-            var identify = new NativeMenuItem("Identify");
-            identify.Click += async (_, _) =>
-            {
-                _logger.LogInformation("User clicked Identify on slot {Slot}", device.DeviceIndex);
-                await _receiver.IdentifyAsync(device.DeviceIndex);
-            };
-            sub.Items.Add(identify);
-
-            sub.Items.Add(new NativeMenuItemSeparator());
-
-            var unpair = new NativeMenuItem("Unpair…");
-            unpair.Click += async (_, _) =>
-            {
-                _logger.LogInformation("User unpaired slot {Slot}", device.DeviceIndex);
-                await _receiver.UnpairAsync(device.DeviceIndex);
-            };
-            sub.Items.Add(unpair);
 
             item.Menu = sub;
             return item;
@@ -350,11 +322,11 @@ public sealed class TrayMenuController : IDisposable
         private void InsertSlotItemInOrder(NativeMenuItem item)
         {
             // We rely on NativeMenu items already added by AddReceiverSection.
-            // The header lives at index 0, slots in between, then clear/separator.
-            // Find the position right before _clearAllItem.
-            var owner = FindMenuContaining(_clearAllItem);
+            // The header lives at index 0, slots in between, then the trailing
+            // separator. Insert each new slot immediately before that separator.
+            var owner = FindMenuContaining(_trailingSeparator);
             if (owner is null) return;
-            var insertAt = owner.Items.IndexOf(_clearAllItem);
+            var insertAt = owner.Items.IndexOf(_trailingSeparator);
             owner.Items.Insert(insertAt, item);
         }
 

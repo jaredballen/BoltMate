@@ -47,13 +47,10 @@
         <!-- Receivers tab -->
         <TabItem Header="Receivers">
             <Grid Margin="8" RowDefinitions="Auto,*,Auto">
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                    <StackPanel Grid.Column="0" Spacing="4">
-                        <TextBlock Text="Receivers and devices" FontSize="16" FontWeight="Bold" />
-                        <TextBlock x:Name="StatusLine" Foreground="#888" />
-                    </StackPanel>
-                    <Button Grid.Column="1" Content="Edit host labels…" Click="OnEditGlobalHostNames" VerticalAlignment="Top" />
-                </Grid>
+                <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,8">
+                    <TextBlock Text="Receivers and devices" FontSize="16" FontWeight="Bold" />
+                    <TextBlock x:Name="StatusLine" Foreground="#888" />
+                </StackPanel>
 
                 <Border Grid.Row="1" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
                     <ScrollViewer>
@@ -62,43 +59,16 @@
                                 <DataTemplate DataType="app:SettingsWindow+ReceiverRow">
                                     <Border Padding="12" Margin="0,0,0,1" Background="#16FFFFFF">
                                         <StackPanel Spacing="6">
-                                            <Grid ColumnDefinitions="*,Auto">
-                                                <StackPanel Grid.Column="0" Spacing="2">
-                                                    <TextBlock Text="{Binding Header}" FontWeight="Bold" />
-                                                    <TextBlock Text="{Binding SubLine}" FontSize="12" Foreground="#999" />
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                                    <Button Content="Hosts…"
-                                                            Click="OnEditReceiverHostNames"
-                                                            Tag="{Binding Serial}" />
-                                                    <Button Content="Clear all pairings"
-                                                            Foreground="#E57373"
-                                                            Click="OnClearAllPairings"
-                                                            Tag="{Binding Serial}" />
-                                                </StackPanel>
-                                            </Grid>
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Text="{Binding Header}" FontWeight="Bold" />
+                                                <TextBlock Text="{Binding SubLine}" FontSize="12" Foreground="#999" />
+                                            </StackPanel>
                                             <ItemsControl ItemsSource="{Binding Slots}" Margin="12,4,0,0">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="app:SettingsWindow+SlotRow">
-                                                        <Grid ColumnDefinitions="*,Auto" Margin="0,1">
-                                                            <TextBlock Grid.Column="0" Text="{Binding Line}"
-                                                                       VerticalAlignment="Center"
-                                                                       FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
-                                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                                                <Button Content="Identify"
-                                                                        IsEnabled="{Binding CanIdentify}"
-                                                                        Click="OnIdentifySlot"
-                                                                        Tag="{Binding}" />
-                                                                <Button Content="Rename…"
-                                                                        IsEnabled="{Binding CanRename}"
-                                                                        Click="OnRenameSlot"
-                                                                        Tag="{Binding}" />
-                                                                <Button Content="Unpair"
-                                                                        Foreground="#E57373"
-                                                                        Click="OnUnpairSlot"
-                                                                        Tag="{Binding}" />
-                                                            </StackPanel>
-                                                        </Grid>
+                                                        <TextBlock Text="{Binding Line}"
+                                                                   Margin="0,1"
+                                                                   FontFamily="JetBrains Mono,Menlo,Consolas,monospace" FontSize="12" />
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
