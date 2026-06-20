@@ -67,3 +67,4 @@ nunit-*.xml
 
 # Per-developer MSBuild overrides (e.g. local libhidapi paths)
 Directory.Build.props
+.claude/
