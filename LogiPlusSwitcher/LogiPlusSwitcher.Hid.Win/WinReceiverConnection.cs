@@ -121,12 +121,12 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                 _logger.LogDebug("HidD_SetOutputReport failed (err 0x{Err:X}, rid 0x{Rid:X2}); falling back to WriteFile",
                     err, reportId);
                 WriteFileSync(target, buf, bytes.Length);
-                _logger.LogDebug("WinHid OUT (WriteFile, rid 0x{Rid:X2}, {Len}B): {Hex}",
+                _logger.LogTrace("WinHid OUT (WriteFile, rid 0x{Rid:X2}, {Len}B): {Hex}",
                     reportId, bytes.Length, Convert.ToHexString(bytes));
             }
             else
             {
-                _logger.LogDebug("WinHid OUT (HidD,      rid 0x{Rid:X2}, {Len}B): {Hex}",
+                _logger.LogTrace("WinHid OUT (HidD,      rid 0x{Rid:X2}, {Len}B): {Hex}",
                     reportId, bytes.Length, Convert.ToHexString(bytes));
             }
         }
@@ -200,7 +200,7 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                 var managed = new byte[bytesRead];
                 Marshal.Copy(buf, managed, 0, (int)bytesRead);
 
-                _logger.LogDebug("WinHid IN  ({Label}, {Len}B): {Hex}",
+                _logger.LogTrace("WinHid IN  ({Label}, {Len}B): {Hex}",
                     label, bytesRead, Convert.ToHexString(managed));
 
                 // Windows' HID class driver can concatenate multiple queued
