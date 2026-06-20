@@ -121,6 +121,13 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                 _logger.LogDebug("HidD_SetOutputReport failed (err 0x{Err:X}, rid 0x{Rid:X2}); falling back to WriteFile",
                     err, reportId);
                 WriteFileSync(target, buf, bytes.Length);
+                _logger.LogDebug("WinHid OUT (WriteFile, rid 0x{Rid:X2}, {Len}B): {Hex}",
+                    reportId, bytes.Length, Convert.ToHexString(bytes));
+            }
+            else
+            {
+                _logger.LogDebug("WinHid OUT (HidD,      rid 0x{Rid:X2}, {Len}B): {Hex}",
+                    reportId, bytes.Length, Convert.ToHexString(bytes));
             }
         }
         finally { Marshal.FreeHGlobal(buf); }
@@ -140,6 +147,7 @@ internal sealed class WinReceiverConnection : IReceiverConnection
         var buf = Marshal.AllocHGlobal(bufferSize);
         var ovlPtr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.NATIVE_OVERLAPPED>());
         var ev = NativeMethods.CreateEventW(IntPtr.Zero, manualReset: true, initialState: false, name: null);
+        _logger.LogInformation("WinHid read loop started ({Label}, buffer={Buf}B)", label, bufferSize);
         try
         {
             while (!_stopping)
@@ -164,21 +172,21 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                     }
                 }
 
-                var waitRes = NativeMethods.WaitForSingleObject(ev, 500);
-                if (waitRes == NativeMethods.WAIT_TIMEOUT)
-                {
-                    if (_stopping)
-                    {
-                        try { NativeMethods.CancelIoEx(handle, ovlPtr); } catch { }
-                        return;
-                    }
-                    continue;
-                }
+                // Block until the I/O completes OR Stop() cancels it via
+                // CancelIoEx. INFINITE wait — the only ways out are completion
+                // or cancellation. (Previous code used a 500ms timeout +
+                // continue, which leaked overlapped operations by issuing a
+                // new ReadFile while the previous was still pending.)
+                NativeMethods.WaitForSingleObject(ev, NativeMethods.INFINITE);
 
                 if (!NativeMethods.GetOverlappedResult(handle, ovlPtr, out var bytesRead, wait: false))
                 {
                     var err = Marshal.GetLastWin32Error();
-                    if (err == NativeMethods.ERROR_OPERATION_ABORTED) return;
+                    if (err == NativeMethods.ERROR_OPERATION_ABORTED)
+                    {
+                        _logger.LogInformation("WinHid read loop cancelled ({Label})", label);
+                        return;
+                    }
                     if (err == NativeMethods.ERROR_DEVICE_NOT_CONNECTED)
                     {
                         _readErrors.OnNext(new System.ComponentModel.Win32Exception(err, $"{label}: device disconnected"));
@@ -192,8 +200,11 @@ internal sealed class WinReceiverConnection : IReceiverConnection
                 var managed = new byte[bytesRead];
                 Marshal.Copy(buf, managed, 0, (int)bytesRead);
 
+                _logger.LogDebug("WinHid IN  ({Label}): {Hex}", label, Convert.ToHexString(managed));
+
                 var frame = HidPpFrame.TryParse(managed);
                 if (frame is { } f) _frames.OnNext(f);
+                else _logger.LogDebug("WinHid IN  ({Label}): unparsable, dropping", label);
             }
         }
         catch (Exception ex)
@@ -205,6 +216,7 @@ internal sealed class WinReceiverConnection : IReceiverConnection
             Marshal.FreeHGlobal(buf);
             Marshal.FreeHGlobal(ovlPtr);
             try { NativeMethods.CloseHandle(ev); } catch { }
+            _logger.LogInformation("WinHid read loop exited ({Label})", label);
         }
     }
 
