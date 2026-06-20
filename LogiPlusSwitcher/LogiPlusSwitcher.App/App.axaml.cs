@@ -24,6 +24,7 @@ public partial class App : Application
     private ReceiverManager? _manager;
     private SwitcherService? _switcher;
     private TrayMenuController? _trayController;
+    private TrayIconStatusController? _trayStatus;
     private UpdateService? _updates;
     private UdpTopologyService? _topology;
     private MdnsTcpChannel? _mdnsTcp;
@@ -182,17 +183,18 @@ public partial class App : Application
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
         {
             _trayController = new TrayMenuController(menu, _manager,
-                _loggerFactory.CreateLogger<TrayMenuController>(), _settings)
+                _loggerFactory.CreateLogger<TrayMenuController>())
             {
+                OnStatusClicked = OpenSettings,
                 OnSettingsClicked = OpenSettings,
-                OnCheckForUpdatesClicked = () => _ = CheckForUpdatesNowAsync(),
                 OnAboutClicked = ShowAbout,
             };
             _disposables.Add(_trayController);
 
-            // Theme-aware tray icon — black on light menubars, white on dark.
-            _disposables.Add(new TrayIconThemeWatcher(trays[0],
-                _loggerFactory.CreateLogger<TrayIconThemeWatcher>()));
+            // Tray icon owns its image + theme + connection-health badge.
+            _trayStatus = new TrayIconStatusController(trays[0],
+                _loggerFactory.CreateLogger<TrayIconStatusController>());
+            _disposables.Add(_trayStatus);
         }
         else
         {
@@ -232,7 +234,12 @@ public partial class App : Application
             _topology = null;
         }
 
-        if (!_settings.Topology.Enabled) return;
+        if (!_settings.Topology.Enabled)
+        {
+            _trayController?.Bind(null);
+            _trayStatus?.Bind(null);
+            return;
+        }
 
         var machineId = _settings.Topology.MachineId;
         if (string.IsNullOrWhiteSpace(machineId))
@@ -246,6 +253,8 @@ public partial class App : Application
             _loggerFactory.CreateLogger<UdpTopologyService>());
         _topology.Start();
         _disposables.Add(_topology);
+        _trayController?.Bind(_topology);
+        _trayStatus?.Bind(_topology);
 
         if (_settings.Topology.UseMdnsTcp)
         {
