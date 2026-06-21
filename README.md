@@ -48,7 +48,7 @@ Tier enforcement happens at the App layer; Core has no `if (paid)` branches — 
 ## Build
 
 ```sh
-cd BoltMate
+cd src
 dotnet restore
 dotnet build
 dotnet test
@@ -102,7 +102,7 @@ CI for self-hosted Mac + Windows runners is in `.github/workflows/ci.yml`; relea
 ## Solution layout
 
 ```
-BoltMate/
+src/
 ├── BoltMate.Core/        # protocol + Bolt model + Rx surface
 │   ├── Hid/                       # transport (libhidapi) + connection
 │   ├── HidPp/                     # frame primitives, request/reply client

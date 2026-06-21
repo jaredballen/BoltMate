@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, macOS]
     defaults:
       run:
-        working-directory: BoltMate
+        working-directory: src
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +54,7 @@ jobs:
     runs-on: [self-hosted, Windows]
     defaults:
       run:
-        working-directory: BoltMate
+        working-directory: src
         shell: pwsh
     steps:
       - uses: actions/checkout@v4

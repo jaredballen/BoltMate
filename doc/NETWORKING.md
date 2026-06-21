@@ -13,7 +13,7 @@ sceptical users can use it to verify the app isn't doing anything nefarious.
   history, or anything from your other applications.
 - Every network feature can be disabled in Settings → Network.
 - The full source for this is at
-  [`BoltMate.Core/Topology/`](../BoltMate/BoltMate.Core/Topology/).
+  [`BoltMate.Core/Topology/`](../src/BoltMate.Core/Topology/).
 
 ---
 
@@ -41,7 +41,7 @@ That's the entire network story. **No other feature uses the network.**
 ## Configuration knobs
 
 All persisted in your `settings.json` (path varies by OS — see
-[`AppPaths.cs`](../BoltMate/BoltMate.Core/AppPaths.cs)):
+[`AppPaths.cs`](../src/BoltMate.Core/AppPaths.cs)):
 
 | Field | Default | What it controls |
 |---|---|---|
@@ -97,7 +97,7 @@ spacing. All repeats carry the same `Seq`; peers dedup by `(MachineId, Seq)`.
 ```
 
 **Every field is observable in the source:** see
-[`ReceiverAnnouncement.cs`](../BoltMate/BoltMate.Core/Topology/ReceiverAnnouncement.cs).
+[`ReceiverAnnouncement.cs`](../src/BoltMate.Core/Topology/ReceiverAnnouncement.cs).
 
 #### What this payload reveals about you
 

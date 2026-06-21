@@ -34,7 +34,7 @@ BoltMate is a **companion** to Logi Options+ — not a replacement, not a compet
 ## Solution layout
 
 ```
-BoltMate/
+src/
 ├── BoltMate.Core/        # protocol + Bolt model + Rx surface
 │   ├── HidPp/                     # frames, request/reply client, HidPp10 register helpers
 │   │   ├── Features/              # 0x0001 IRoot, 0x0003 DeviceInfo, 0x0005 DeviceName,
@@ -90,7 +90,7 @@ Falls back to legacy "same host index for every sibling" routing when the origin
 
 ## Build / run
 
-From `BoltMate/` (the solution directory):
+From `src/` (the solution directory):
 
 ```sh
 dotnet restore
