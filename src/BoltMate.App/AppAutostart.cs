@@ -30,7 +30,11 @@ public static class AppAutostart
 
     public static AutostartResult Uninstall() => AutostartManager.Uninstall(Label);
 
+    public static AutostartResult Disable() => AutostartManager.Disable(Label);
+
     public static bool IsInstalled() => AutostartManager.IsInstalled(Label);
+
+    public static bool IsLoaded() => AutostartManager.IsLoaded(Label);
 
     /// <summary>
     /// Refuse to register a `dotnet run` build — those will look for a DLL

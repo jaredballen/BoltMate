@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
@@ -11,6 +12,7 @@ using BoltMate.App.Updates;
 using Microsoft.Extensions.Logging.Abstractions;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
+using BoltMate.Core.Permissions;
 
 namespace BoltMate.App;
 
@@ -28,6 +30,7 @@ public partial class SettingsWindow : Window
 
     private readonly ReceiverManager? _manager;
     private readonly AppSettings? _settings;
+    private IPermissionsService? _permissions;
     private readonly CompositeDisposable _disposables = new();
     private UpdateService? _updates;
     private DispatcherTimer? _statusTimer;
@@ -85,10 +88,12 @@ public partial class SettingsWindow : Window
 
     public SettingsWindow(
         ReceiverManager manager,
-        AppSettings settings) : this()
+        AppSettings settings,
+        IPermissionsService permissions) : this()
     {
         _manager = manager;
         _settings = settings;
+        _permissions = permissions;
 
         var localList = this.FindControl<ItemsControl>("LocalDevicesList");
         if (localList is not null) localList.ItemsSource = _localDevices;
@@ -101,6 +106,12 @@ public partial class SettingsWindow : Window
         RefreshLaunchAtLogin();
         RefreshTelemetryToggle();
         StartStatusTimer();
+
+        // Live-bind the Login Items checkbox to the service. User toggling
+        // BoltMate off in System Settings → General → Login Items propagates
+        // here within the service's polling interval.
+        _disposables.Add(_permissions.Autostart.IsGrantedChanged
+            .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
     }
 
     /// <summary>
@@ -214,31 +225,43 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var installed = AppAutostart.IsInstalled();
+        var granted = _permissions?.Autostart.IsGranted ?? AppAutostart.IsLoaded();
         _suppressLaunchAtLoginEvent = true;
-        toggle.IsChecked = installed;
+        toggle.IsChecked = granted;
         toggle.IsEnabled = true;
         _suppressLaunchAtLoginEvent = false;
         if (detail is not null)
-            detail.Text = installed
+            detail.Text = granted
                 ? "Registered. BoltMate will start automatically when you log in."
                 : "Off. Launch manually from Applications / Start Menu.";
     }
 
-    private void OnLaunchAtLoginChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnLaunchAtLoginChanged(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_suppressLaunchAtLoginEvent) return;
         if (sender is not CheckBox cb) return;
+        if (_permissions is null) return;
 
         var detail = this.FindControl<TextBlock>("LaunchAtLoginDetail");
         var want = cb.IsChecked == true;
-        var result = want ? AppAutostart.Install() : AppAutostart.Uninstall();
-        if (detail is not null) detail.Text = result.Message;
-        if (!result.Success)
+        cb.IsEnabled = false;
+        try
         {
-            _suppressLaunchAtLoginEvent = true;
-            cb.IsChecked = !want;
-            _suppressLaunchAtLoginEvent = false;
+            var ok = want
+                ? await _permissions.Autostart.GrantAsync()
+                : await _permissions.Autostart.RevokeAsync();
+            if (!ok)
+            {
+                _suppressLaunchAtLoginEvent = true;
+                cb.IsChecked = !want;
+                _suppressLaunchAtLoginEvent = false;
+                if (detail is not null)
+                    detail.Text = $"Could not {(want ? "enable" : "disable")} launch-at-login.";
+            }
+        }
+        finally
+        {
+            cb.IsEnabled = true;
         }
     }
 

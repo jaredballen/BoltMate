@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using BoltMate.App.Permissions;
 using BoltMate.Core;
-using BoltMate.Hid.IOKit;
+using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -63,15 +67,13 @@ public partial class WelcomeWindow : Window
     public const string PermissionNetwork = "network";
     public const string PermissionInputMonitoring = "input-monitoring";
 
-    // How long we wait between issuing a Grant request and re-checking the
-    // permission status. Long enough for the OS prompt to surface AND for
-    // the user to make a decision in many cases — but we also re-check on
-    // window focus regain so a slow user doesn't get penalised.
-    private static readonly TimeSpan PromptSettleDelay = TimeSpan.FromMilliseconds(2000);
-
     private readonly AppSettings _settings;
+    private readonly IPermissionsService _permissions;
     private readonly ILogger _log;
     private readonly bool _isFirstRun;
+    private readonly CompositeDisposable _disposables = new();
+    private readonly CancellationTokenSource _grantCts = new();
+    private IDisposable? _currentPageSubscription;
 
     // Flips to true on the happy path (Done / Open BoltMate button). The
     // Closing handler uses this to distinguish "user finished" from "user
@@ -85,12 +87,13 @@ public partial class WelcomeWindow : Window
     /// </summary>
     public event Action? WelcomeCompleted;
 
-    /// <summary>Designer-only ctor. Real usage goes through the (AppSettings, …) ctor.</summary>
-    public WelcomeWindow() : this(new AppSettings(), isFirstRun: true, NullLogger.Instance) { }
+    /// <summary>Designer-only ctor. Real usage goes through the (AppSettings, IPermissionsService, …) ctor.</summary>
+    public WelcomeWindow() : this(new AppSettings(), new PermissionsService(), isFirstRun: true, NullLogger.Instance) { }
 
-    public WelcomeWindow(AppSettings settings, bool isFirstRun = true, ILogger? log = null)
+    public WelcomeWindow(AppSettings settings, IPermissionsService permissions, bool isFirstRun = true, ILogger? log = null)
     {
         _settings = settings;
+        _permissions = permissions;
         _isFirstRun = isFirstRun;
         _log = log ?? NullLogger.Instance;
         InitializeComponent();
@@ -107,6 +110,10 @@ public partial class WelcomeWindow : Window
             // again. Without the guard we'd recurse to stack overflow (and
             // we crashed exactly like this when macOS sent a Quit AppleEvent
             // after the Input Monitoring grant required us to relaunch).
+            _currentPageSubscription?.Dispose();
+            _grantCts.Cancel();
+            _grantCts.Dispose();
+            _disposables.Dispose();
             if (_completedSuccessfully || _quitting) return;
             if (_isFirstRun)
             {
@@ -215,7 +222,41 @@ public partial class WelcomeWindow : Window
         }
         var target = this.FindControl<Grid>(controlName);
         if (target is not null) target.IsVisible = true;
+
+        // Resubscribe the page-scoped permission watcher. While a primer or
+        // refusal page is visible we listen to the relevant IPermission and:
+        //   • refresh the status line on every emit
+        //   • auto-advance when it flips to Granted (user toggled in System
+        //     Settings, or hit Allow on the OS prompt without us seeing return)
+        _currentPageSubscription?.Dispose();
+        _currentPageSubscription = SubscribePageWatcher(controlName);
+
         UpdateStatusLineForCurrentPage();
+    }
+
+    private IDisposable? SubscribePageWatcher(string pageName)
+    {
+        var permission = pageName switch
+        {
+            "PageNetworkPrimer" or "PageNetworkRefusal" => _permissions.Network,
+            "PageInputMonitoringPrimer" or "PageInputMonitoringRefusal" => _permissions.InputMonitoring,
+            _ => null,
+        };
+        if (permission is null) return null;
+
+        // Service's polling timer runs on the UI dispatcher, so emits arrive
+        // on the UI thread already — no ObserveOn needed.
+        return permission.IsGrantedChanged
+            .Subscribe(granted =>
+            {
+                UpdateStatusLineForCurrentPage();
+                if (granted)
+                {
+                    _log.LogInformation("Auto-advance: {Permission} granted while on {Page}", permission.Name, pageName);
+                    SaveCheckpoint(permission.Name);
+                    AdvanceToNextRequiredPermissionOrDone();
+                }
+            });
     }
 
     private static readonly string[] AllPageNames =
@@ -245,44 +286,38 @@ public partial class WelcomeWindow : Window
         // Network is required on Mac + Windows.
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
-            NetworkPermission.Invalidate();
-            var net = NetworkPermission.Check();
+            _permissions.Refresh();
             var alreadyShown = _primersShownThisSession.Contains(PermissionNetwork);
-            // On first-run we ALWAYS show the network primer at least once,
-            // UNLESS the persisted checkpoint says we already completed it
-            // in a prior session (e.g. macOS killed us mid-flow for HID
-            // grant relaunch).
-            // NetworkPermission.Check on macOS is unreliable before TCC has
-            // decided (it can return Granted while the prompt hasn't actually
-            // appeared yet), so a Check-only gate would skip the primer
-            // entirely on the user's first launch.
+            // On first-run we still show the network primer at least once
+            // even when already Granted, so users see the explainer copy and
+            // know what the LAN traffic is for. Skip if a prior session
+            // already completed this step.
             var requireShow = _isFirstRun && !alreadyShown && !_settings.NetworkStepCompleted;
-            if (requireShow || net.Status != NetworkPermission.Status.Granted)
+            if (requireShow || !_permissions.Network.IsGranted)
             {
-                _log.LogInformation("Permission gate: network = {Status}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
-                    net.Status, _isFirstRun, alreadyShown, _settings.NetworkStepCompleted);
+                _log.LogInformation("Permission gate: network granted={Granted}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
+                    _permissions.Network.IsGranted, _isFirstRun, alreadyShown, _settings.NetworkStepCompleted);
                 _primersShownThisSession.Add(PermissionNetwork);
                 ShowPage("PageNetworkPrimer");
                 return;
             }
-            SaveCheckpoint("network"); // we're past the network step
+            SaveCheckpoint("network");
         }
 
         // HID (Input Monitoring) is Mac-only.
         if (OperatingSystem.IsMacOS())
         {
-            var im = InputMonitoringPermission.Check();
             var alreadyShown = _primersShownThisSession.Contains(PermissionInputMonitoring);
             var requireShow = _isFirstRun && !alreadyShown && !_settings.InputMonitoringStepCompleted;
-            if (requireShow || im != InputMonitoringPermission.Status.Granted)
+            if (requireShow || !_permissions.InputMonitoring.IsGranted)
             {
-                _log.LogInformation("Permission gate: input-monitoring = {Status}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
-                    im, _isFirstRun, alreadyShown, _settings.InputMonitoringStepCompleted);
+                _log.LogInformation("Permission gate: input-monitoring granted={Granted}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
+                    _permissions.InputMonitoring.IsGranted, _isFirstRun, alreadyShown, _settings.InputMonitoringStepCompleted);
                 _primersShownThisSession.Add(PermissionInputMonitoring);
                 ShowPage("PageInputMonitoringPrimer");
                 return;
             }
-            SaveCheckpoint("input-monitoring"); // we're past the HID step
+            SaveCheckpoint("input-monitoring");
         }
 
         _log.LogInformation("Permission gate: all required permissions granted — Done");
@@ -309,7 +344,7 @@ public partial class WelcomeWindow : Window
     private async void OnNetworkPrimerGrant(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User tapped Grant on network primer");
-        await RequestNetworkAndAdvance(refusalIfDenied: true);
+        await GrantOrRefuseAsync(_permissions.Network, refusalPage: "PageNetworkRefusal", primerButton: "NetworkPrimerGrantButton");
     }
 
     private void OnNetworkPrimerNotNow(object? sender, RoutedEventArgs e)
@@ -323,9 +358,7 @@ public partial class WelcomeWindow : Window
     private async void OnNetworkRefusalGrant(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User tapped Grant on network refusal");
-        // Try again from the refusal page. If still denied, stay on
-        // refusal (don't bounce to primer — that's a worse UX).
-        await RequestNetworkAndAdvance(refusalIfDenied: false);
+        await GrantOrRefuseAsync(_permissions.Network, refusalPage: null, primerButton: "NetworkRefusalGrantButton");
     }
 
     // ---- HID primer ----------------------------------------------------
@@ -333,7 +366,7 @@ public partial class WelcomeWindow : Window
     private async void OnInputMonitoringPrimerGrant(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User tapped Grant on HID primer");
-        await RequestInputMonitoringAndAdvance(refusalIfDenied: true);
+        await GrantOrRefuseAsync(_permissions.InputMonitoring, refusalPage: "PageInputMonitoringRefusal", primerButton: "InputMonitoringPrimerGrantButton");
     }
 
     private void OnInputMonitoringPrimerNotNow(object? sender, RoutedEventArgs e)
@@ -347,7 +380,7 @@ public partial class WelcomeWindow : Window
     private async void OnInputMonitoringRefusalGrant(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User tapped Grant on HID refusal");
-        await RequestInputMonitoringAndAdvance(refusalIfDenied: false);
+        await GrantOrRefuseAsync(_permissions.InputMonitoring, refusalPage: null, primerButton: "InputMonitoringRefusalGrantButton");
     }
 
     // ---- Quit (refusal pages) ------------------------------------------
@@ -389,86 +422,37 @@ public partial class WelcomeWindow : Window
     }
 
     // ====================================================================
-    // Permission request helpers
+    // Permission grant helpers
     // ====================================================================
 
-    private async Task RequestNetworkAndAdvance(bool refusalIfDenied)
+    /// <summary>
+    /// Common Grant-button handler. Disables the button while
+    /// <see cref="IPermission.GrantAsync"/> drives the permission toward
+    /// Granted — GrantAsync itself awaits the underlying observable until
+    /// it flips, so no per-call polling delay is needed here. Cancellation
+    /// is wired to the window-scoped <see cref="_grantCts"/> so navigating
+    /// away or closing the wizard tears the in-flight call down cleanly.
+    /// </summary>
+    private async Task GrantOrRefuseAsync(IPermission permission, string? refusalPage, string primerButton)
     {
-        var grantBtn = this.FindControl<Button>(refusalIfDenied
-            ? "NetworkPrimerGrantButton"
-            : "NetworkRefusalGrantButton");
-        var statusLine = this.FindControl<TextBlock>(refusalIfDenied
-            ? "NetworkPrimerStatusLine"
-            : "NetworkRefusalStatusLine");
-
+        var grantBtn = this.FindControl<Button>(primerButton);
         if (grantBtn is not null) grantBtn.IsEnabled = false;
-        if (statusLine is not null) statusLine.Text = "Requesting Local Network access…";
 
-        var requested = await Task.Run(NetworkPermission.Request);
-        _log.LogInformation("NetworkPermission.Request returned {Result}", requested);
-
-        await Task.Delay(PromptSettleDelay);
-
-        NetworkPermission.Invalidate();
-        var result = NetworkPermission.Check();
-        _log.LogInformation("Post-request network status: {Status} ({Detail})", result.Status, result.Detail);
+        bool granted = false;
+        try
+        {
+            granted = await permission.GrantAsync(_grantCts.Token);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "GrantAsync threw for {Permission}", permission.Name);
+        }
 
         if (grantBtn is not null) grantBtn.IsEnabled = true;
-        if (statusLine is not null) statusLine.Text = result.Detail;
 
-        if (result.Status == NetworkPermission.Status.Granted)
+        if (!granted && refusalPage is not null && CurrentPageName() != refusalPage)
         {
-            // Network is good — proceed to next required permission, or
-            // Done if nothing else.
-            AdvanceToNextRequiredPermissionOrDone();
-        }
-        else if (refusalIfDenied)
-        {
-            ShowPage("PageNetworkRefusal");
-            var refusalLine = this.FindControl<TextBlock>("NetworkRefusalStatusLine");
-            if (refusalLine is not null) refusalLine.Text = result.Detail;
-        }
-        // else: stay on refusal page (we're already there)
-    }
-
-    private async Task RequestInputMonitoringAndAdvance(bool refusalIfDenied)
-    {
-        var grantBtn = this.FindControl<Button>(refusalIfDenied
-            ? "InputMonitoringPrimerGrantButton"
-            : "InputMonitoringRefusalGrantButton");
-        var statusLine = this.FindControl<TextBlock>(refusalIfDenied
-            ? "InputMonitoringPrimerStatusLine"
-            : "InputMonitoringRefusalStatusLine");
-
-        if (grantBtn is not null) grantBtn.IsEnabled = false;
-        if (statusLine is not null) statusLine.Text = "Requesting HID device access…";
-
-        // IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) — official Apple
-        // API for "prompt the user for HID access". Foreground first so the
-        // TCC dialog can attach to our window.
-        MacActivationPolicy.ShowDockIcon();
-        await Task.Delay(100);
-        var requested = await Task.Run(InputMonitoringPermission.Request);
-        _log.LogInformation("InputMonitoringPermission.Request returned {Result}", requested);
-
-        await Task.Delay(PromptSettleDelay);
-
-        var status = InputMonitoringPermission.Check();
-        _log.LogInformation("Post-request HID status: {Status}", status);
-
-        if (grantBtn is not null) grantBtn.IsEnabled = true;
-        if (statusLine is not null)
-            statusLine.Text = HidStatusToDetail(status);
-
-        if (status == InputMonitoringPermission.Status.Granted)
-        {
-            AdvanceToNextRequiredPermissionOrDone();
-        }
-        else if (refusalIfDenied)
-        {
-            ShowPage("PageInputMonitoringRefusal");
-            var refusalLine = this.FindControl<TextBlock>("InputMonitoringRefusalStatusLine");
-            if (refusalLine is not null) refusalLine.Text = HidStatusToDetail(status);
+            ShowPage(refusalPage);
         }
     }
 
@@ -484,24 +468,27 @@ public partial class WelcomeWindow : Window
             case "PageNetworkPrimer":
             case "PageNetworkRefusal":
                 {
-                    NetworkPermission.Invalidate();
-                    var res = NetworkPermission.Check();
                     var line = this.FindControl<TextBlock>(
                         pageName == "PageNetworkPrimer"
                             ? "NetworkPrimerStatusLine"
                             : "NetworkRefusalStatusLine");
-                    if (line is not null) line.Text = res.Detail;
+                    if (line is not null)
+                        line.Text = _permissions.Network.IsGranted
+                            ? "Local Network access: granted"
+                            : "Local Network access: denied";
                     break;
                 }
             case "PageInputMonitoringPrimer":
             case "PageInputMonitoringRefusal":
                 {
-                    var status = InputMonitoringPermission.Check();
                     var line = this.FindControl<TextBlock>(
                         pageName == "PageInputMonitoringPrimer"
                             ? "InputMonitoringPrimerStatusLine"
                             : "InputMonitoringRefusalStatusLine");
-                    if (line is not null) line.Text = HidStatusToDetail(status);
+                    if (line is not null)
+                        line.Text = _permissions.InputMonitoring.IsGranted
+                            ? "HID device access: granted"
+                            : "HID device access: denied";
                     break;
                 }
         }
@@ -516,15 +503,6 @@ public partial class WelcomeWindow : Window
         }
         return null;
     }
-
-    private static string HidStatusToDetail(InputMonitoringPermission.Status status) => status switch
-    {
-        InputMonitoringPermission.Status.Granted        => "HID device access: granted",
-        InputMonitoringPermission.Status.Denied         => "HID device access: denied",
-        InputMonitoringPermission.Status.Unknown        => "HID device access: pending (check System Settings if no prompt appeared)",
-        InputMonitoringPermission.Status.NotApplicable  => "HID device access: not applicable on this OS",
-        _                                               => "HID device access: unknown",
-    };
 
     private void ApplyAutostartFromToggle()
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace BoltMate.Hid.IOKit;
@@ -82,6 +83,24 @@ public static class InputMonitoringPermission
         catch (EntryPointNotFoundException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the macOS Privacy &amp; Security → Input Monitoring pane so the
+    /// user can re-enable BoltMate after a previous denial. No-op on
+    /// non-macOS platforms.
+    /// </summary>
+    public static void OpenSystemSettings()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+        try
+        {
+            Process.Start("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent");
+        }
+        catch
+        {
+            // best-effort
         }
     }
 }

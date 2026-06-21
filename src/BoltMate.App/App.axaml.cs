@@ -7,10 +7,12 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using DynamicData;
+using BoltMate.App.Permissions;
 using BoltMate.App.Updates;
 using BoltMate.App.Welcome;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
+using BoltMate.Core.Permissions;
 using BoltMate.Core.Switcher;
 using BoltMate.Core.Topology;
 using BoltMate.Hid.Abstractions;
@@ -32,7 +34,7 @@ public partial class App : Application
     private TopologyCorrelator? _correlator;
     private AppSettings _settings = new();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
-    private PermissionStatusService? _permissions;
+    private IPermissionsService? _permissions;
 
     // Tracks whether we have already nagged the user with a notification
     // during THIS run. Re-fires after a relaunch; we deliberately don't
@@ -99,6 +101,11 @@ public partial class App : Application
         _settings = AppSettings.Load();
         _settings.Topology.Enabled = true;
 
+        // Permissions service is constructed once per process and shared by
+        // every consumer (welcome wizard, tray badge, settings status tab).
+        // Owns a 2s polling timer; pushes deltas to per-permission observables.
+        _permissions = new PermissionsService(_loggerFactory);
+
         // ====================================================================
         // First-run gate
         // ====================================================================
@@ -135,6 +142,7 @@ public partial class App : Application
         MacActivationPolicy.ShowDockIcon();
 
         _welcomeWindow = new WelcomeWindow(_settings,
+            _permissions!,
             isFirstRun: true,
             log: _loggerFactory.CreateLogger<WelcomeWindow>());
         _welcomeWindow.WelcomeCompleted += () =>
@@ -346,20 +354,27 @@ public partial class App : Application
 
     private void StartPermissionWatchdog(ILogger log)
     {
-        _permissions = new PermissionStatusService();
+        // Service is constructed earlier in OnFrameworkInitializationCompletedCore
+        // (so the welcome wizard can use it). Watchdog is the consumer that
+        // wires permission state into the tray badge + notification.
+        if (_permissions is null) return;
         _disposables.Add(_permissions);
-        _permissions.Start();
 
-        _disposables.Add(_permissions.Observe()
-            .Subscribe(s => Dispatcher.UIThread.Post(() => OnPermissionStatusChanged(s, log))));
+        var combined = _permissions.Network.IsGrantedChanged
+            .CombineLatest(_permissions.InputMonitoring.IsGrantedChanged,
+                (net, im) => (net && im) ? OverallStatus.AllGood : OverallStatus.AnyDenied)
+            .DistinctUntilChanged();
+
+        _disposables.Add(combined.Subscribe(overall =>
+            Dispatcher.UIThread.Post(() => OnPermissionOverallChanged(overall, log))));
     }
 
-    private void OnPermissionStatusChanged(PermissionStatus s, ILogger log)
+    private void OnPermissionOverallChanged(OverallStatus overall, ILogger log)
     {
-        _trayStatus?.SetPermissionStatus(s.Overall);
-        _trayController?.SetPermissionStatus(s.Overall);
+        _trayStatus?.SetPermissionStatus(overall);
+        _trayController?.SetPermissionStatus(overall);
 
-        if (s.Overall == OverallStatus.AnyDenied && !_notificationDeliveredThisSession)
+        if (overall == OverallStatus.AnyDenied && !_notificationDeliveredThisSession)
         {
             _notificationDeliveredThisSession = true;
             var posted = LocalNotifications.TryPost(
@@ -379,16 +394,19 @@ public partial class App : Application
     /// </summary>
     private void OpenWelcomeToFirstUngranted()
     {
-        var snap = _permissions?.Current ?? default;
         string primerId = WelcomeWindow.PermissionNetwork;
-        if (snap.Network == PermissionState.Denied || snap.Network == PermissionState.Unknown)
-            primerId = WelcomeWindow.PermissionNetwork;
-        else if (snap.InputMonitoring == PermissionState.Denied || snap.InputMonitoring == PermissionState.Unknown)
-            primerId = WelcomeWindow.PermissionInputMonitoring;
+        if (_permissions is not null)
+        {
+            if (!_permissions.Network.IsGranted)
+                primerId = WelcomeWindow.PermissionNetwork;
+            else if (!_permissions.InputMonitoring.IsGranted)
+                primerId = WelcomeWindow.PermissionInputMonitoring;
+        }
 
         if (_welcomeWindow is null || !_welcomeWindow.IsVisible)
         {
             _welcomeWindow = new WelcomeWindow(_settings,
+                _permissions ?? new PermissionsService(_loggerFactory),
                 isFirstRun: false,
                 log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a
@@ -481,7 +499,7 @@ public partial class App : Application
         // and are instant.
         if (_settingsWindow is null)
         {
-            _settingsWindow = new SettingsWindow(_manager, _settings)
+            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!)
             {
                 HostNamesChanged = () => _trayController?.RefreshHostLabels(),
                 TopologyChanged = ApplyTopologySettings,

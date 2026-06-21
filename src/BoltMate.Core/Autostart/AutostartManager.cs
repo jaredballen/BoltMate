@@ -56,6 +56,51 @@ public static class AutostartManager
 
     public static bool IsInstalled(string label) => Status(label).Installed;
 
+    /// <summary>
+    /// True when the autostart entry is currently active — i.e. launchd /
+    /// Task Scheduler will run it at next login. Distinct from "installed":
+    /// on macOS, System Settings → Login Items toggles the LOADED state
+    /// without deleting the plist, so the right runtime probe is Loaded,
+    /// not Installed.
+    /// </summary>
+    public static bool IsLoaded(string label) => Status(label).Loaded;
+
+    /// <summary>
+    /// Inverse of <see cref="Install"/>'s load step: instructs launchd /
+    /// Task Scheduler to stop running this label at login, but leaves the
+    /// underlying registration (plist / scheduled task) on disk. This
+    /// mirrors what the macOS System Settings → Login Items toggle does
+    /// when the user flips an entry off, so re-enabling stays as a single
+    /// launchctl/schtasks call instead of needing a rewrite.
+    /// </summary>
+    public static AutostartResult Disable(string label)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return DisableMac(label);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return DisableWindows(label);
+        return AutostartResult.Unsupported();
+    }
+
+    private static AutostartResult DisableMac(string label)
+    {
+        var plistPath = MacPlistPath(label);
+        if (!File.Exists(plistPath))
+            return new AutostartResult(true, "Not installed; nothing to disable.", plistPath);
+        var (code, output) = Run("launchctl", $"unload \"{plistPath}\"", ignoreFailure: true);
+        // launchctl unload returns non-zero when the job isn't loaded —
+        // treat that as "already disabled".
+        return new AutostartResult(true, code == 0 ? $"Unloaded {label}" : output, plistPath);
+    }
+
+    private static AutostartResult DisableWindows(string label)
+    {
+        var (code, output) = Run("schtasks", $"/change /tn \"{label}\" /disable", ignoreFailure: true);
+        if (code != 0 && output.Contains("ERROR: The system cannot find"))
+            return new AutostartResult(true, "Not installed; nothing to disable.");
+        return new AutostartResult(code == 0, output);
+    }
+
     // ---------- macOS ----------
 
     public static string MacPlistPath(string label)

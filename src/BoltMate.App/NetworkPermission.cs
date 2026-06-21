@@ -167,27 +167,62 @@ public static class NetworkPermission
 
     private static Result CheckMac()
     {
-        // Best signal we have without Apple private API: try to send a 1-byte
-        // UDP datagram to the topology multicast group. macOS returns an
-        // EHOSTUNREACH (HostUnreachable) or "permission denied" SocketError
-        // when Local Network access is denied for the app.
+        // Multi-probe for reliability. macOS Sequoia behavior:
+        //   • A UDP send to multicast SUCCEEDS locally even when TCC denies
+        //     Local Network — kernel drops the packet at the discovery layer.
+        //     So a send-only probe false-positives Granted on revoked apps.
+        //   • Joining a multicast group (IP_ADD_MEMBERSHIP) on 224.0.0.251 is
+        //     gated by Local Network TCC and returns EACCES when denied.
+        //   • Sending a broadcast to 255.255.255.255 with SO_BROADCAST=1 is
+        //     also TCC-gated and returns EACCES.
+        // Both signals together give us the cleanest read; we report Denied if
+        // EITHER fails with a deny-shaped error. Any unexpected throw is
+        // logged via Trace and returned as Unknown.
+        bool joinedMulticast = false;
         try
         {
             using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            s.MulticastLoopback = true;
-            s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Parse("239.255.41.42"), 41420));
+            s.Bind(new IPEndPoint(IPAddress.Any, 0));
+            var mcast = new MulticastOption(IPAddress.Parse("224.0.0.251"));
+            s.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, mcast);
+            joinedMulticast = true;
+        }
+        catch (SocketException ex) when (
+            ex.SocketErrorCode == SocketError.AccessDenied ||
+            ex.SocketErrorCode == SocketError.HostUnreachable ||
+            ex.SocketErrorCode == SocketError.NetworkUnreachable)
+        {
+            Trace.WriteLine($"NetworkPermission.CheckMac multicast-join denied: {ex.SocketErrorCode}");
+            return new Result(Status.Denied, "Local Network access: denied");
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"NetworkPermission.CheckMac multicast-join error: {ex.Message}");
+            return new Result(Status.Unknown, "Local Network access: unknown");
+        }
+
+        try
+        {
+            using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            s.EnableBroadcast = true;
+            s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Broadcast, 41420));
             return new Result(Status.Granted, "Local Network access: granted");
         }
         catch (SocketException ex) when (
-            ex.SocketErrorCode == SocketError.HostUnreachable ||
             ex.SocketErrorCode == SocketError.AccessDenied ||
-            ex.SocketErrorCode == SocketError.NetworkUnreachable)
+            ex.SocketErrorCode == SocketError.HostUnreachable)
         {
+            Trace.WriteLine($"NetworkPermission.CheckMac broadcast denied: {ex.SocketErrorCode}");
             return new Result(Status.Denied, "Local Network access: denied");
         }
-        catch
+        catch (Exception ex)
         {
-            return new Result(Status.Unknown, "Local Network access: unknown");
+            Trace.WriteLine($"NetworkPermission.CheckMac broadcast error: {ex.Message}");
+            // If multicast-join succeeded but broadcast threw an unrelated
+            // error, assume granted — group-join is the stronger signal.
+            return joinedMulticast
+                ? new Result(Status.Granted, "Local Network access: granted")
+                : new Result(Status.Unknown, "Local Network access: unknown");
         }
     }
 
