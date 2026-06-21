@@ -5,6 +5,8 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoltMate.App;
 
@@ -23,6 +25,13 @@ public static class NetworkPermission
     }
 
     public sealed record Result(Status Status, string Detail);
+
+    /// <summary>
+    /// Diagnostic logger. Defaults to NullLogger — the App layer sets this
+    /// to a real Serilog-backed ILogger at startup so every probe + grant
+    /// decision is captured in the on-disk log.
+    /// </summary>
+    public static ILogger Log { get; set; } = NullLogger.Instance;
 
     private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(10);
     private static Result? _cached;
@@ -118,8 +127,9 @@ public static class NetworkPermission
             //   AccessDenied / HostUnreachable: TCC has decided "deny" (no
             //     prompt re-fires for that decision; user must open Settings).
             //   NetworkUnreachable: no live network interface — also no prompt.
-            // We log via Trace because we have no ILogger handle in this static.
-            Trace.WriteLine($"NetworkPermission.Request: SocketException {ex.SocketErrorCode} ({ex.Message})");
+            Log.LogWarning(
+                "RequestMac: multicast send failed — SocketError={Code} message={Message}",
+                ex.SocketErrorCode, ex.Message);
             return false;
         }
     }
@@ -145,22 +155,24 @@ public static class NetworkPermission
         var exe = Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrEmpty(exe))
         {
-            Trace.WriteLine("NetworkPermission.RequestWindows: could not resolve own exe path");
+            Log.LogWarning("RequestWindows: could not resolve own exe path; opening Settings");
             OpenSystemSettings();
             return false;
         }
 
         var action = QueryFirewallRuleAction(exe);
+        Log.LogInformation("RequestWindows: pre-action firewall rule for {Exe} = {Action}", exe, action);
         if (action == FirewallAction.Allow) return true;
 
         if (action == FirewallAction.Block)
         {
             if (!TryRemoveFirewallRulesForExe(exe))
             {
-                Trace.WriteLine("NetworkPermission.RequestWindows: could not remove existing Block rule — opening Settings");
+                Log.LogWarning("RequestWindows: could not remove existing Block rule for {Exe} — opening Settings", exe);
                 OpenSystemSettings();
                 return false;
             }
+            Log.LogInformation("RequestWindows: removed existing Block rule(s) for {Exe} — re-binding to re-trigger prompt", exe);
         }
 
         // Bind an inbound listener. The first bind from an unknown process
@@ -171,13 +183,16 @@ public static class NetworkPermission
         {
             using var listener = new TcpListener(IPAddress.Any, 41420);
             listener.Start();
+            Log.LogInformation("RequestWindows: TcpListener bound on 41420 — holding 5s for OS prompt");
             System.Threading.Thread.Sleep(5000);
             listener.Stop();
             return true;
         }
         catch (SocketException ex)
         {
-            Trace.WriteLine($"NetworkPermission.RequestWindows: listener bind failed ({ex.SocketErrorCode})");
+            Log.LogWarning(
+                "RequestWindows: listener bind failed — SocketError={Code} message={Message}; opening Settings",
+                ex.SocketErrorCode, ex.Message);
             OpenSystemSettings();
             return false;
         }
@@ -200,7 +215,7 @@ public static class NetworkPermission
                     System.Reflection.BindingFlags.GetProperty, null, policy, null);
                 if (rules is not System.Collections.IEnumerable iter) return FirewallAction.None;
 
-                bool sawAllow = false, sawBlock = false;
+                int matched = 0, allowed = 0, blocked = 0, disabled = 0, outbound = 0;
                 foreach (var rule in iter)
                 {
                     if (rule is null) continue;
@@ -209,25 +224,29 @@ public static class NetworkPermission
                         System.Reflection.BindingFlags.GetProperty, null, rule, null) as string;
                     if (string.IsNullOrEmpty(appName)) continue;
                     if (!string.Equals(appName, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+                    matched++;
 
                     var dirObj = rt.InvokeMember("Direction",
                         System.Reflection.BindingFlags.GetProperty, null, rule, null);
-                    if (Convert.ToInt32(dirObj) != 1 /* NET_FW_RULE_DIR_IN */) continue;
+                    if (Convert.ToInt32(dirObj) != 1 /* NET_FW_RULE_DIR_IN */) { outbound++; continue; }
 
                     var enabledObj = rt.InvokeMember("Enabled",
                         System.Reflection.BindingFlags.GetProperty, null, rule, null);
-                    if (enabledObj is bool b && !b) continue;
+                    if (enabledObj is bool b && !b) { disabled++; continue; }
 
                     var actObj = rt.InvokeMember("Action",
                         System.Reflection.BindingFlags.GetProperty, null, rule, null);
                     var act = Convert.ToInt32(actObj);
-                    if (act == 1 /* NET_FW_ACTION_ALLOW */) sawAllow = true;
-                    else if (act == 0 /* NET_FW_ACTION_BLOCK */) sawBlock = true;
+                    if (act == 1 /* NET_FW_ACTION_ALLOW */) allowed++;
+                    else if (act == 0 /* NET_FW_ACTION_BLOCK */) blocked++;
                 }
 
-                // Allow wins if anything allows; Block only when no Allow.
-                if (sawAllow) return FirewallAction.Allow;
-                if (sawBlock) return FirewallAction.Block;
+                Log.LogDebug(
+                    "QueryFirewallRuleAction({Exe}): matched={Matched} allow={Allowed} block={Blocked} disabled={Disabled} outbound-only={Outbound}",
+                    exePath, matched, allowed, blocked, disabled, outbound);
+
+                if (allowed > 0) return FirewallAction.Allow;
+                if (blocked > 0) return FirewallAction.Block;
                 return FirewallAction.None;
             }
             finally
@@ -237,7 +256,7 @@ public static class NetworkPermission
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"NetworkPermission.QueryFirewallRuleAction failed: {ex.Message}");
+            Log.LogWarning(ex, "QueryFirewallRuleAction failed for {Exe}", exePath);
             return FirewallAction.None;
         }
     }
@@ -275,9 +294,13 @@ public static class NetworkPermission
                     }
                 }
 
-                if (toRemove.Count == 0) return false;
+                if (toRemove.Count == 0)
+                {
+                    Log.LogDebug("TryRemoveFirewallRulesForExe({Exe}): no rules to remove", exePath);
+                    return false;
+                }
 
-                bool anyFailed = false;
+                int removed = 0, failed = 0;
                 var rulesType = rules.GetType();
                 foreach (var name in toRemove)
                 {
@@ -285,14 +308,25 @@ public static class NetworkPermission
                     {
                         rulesType.InvokeMember("Remove",
                             System.Reflection.BindingFlags.InvokeMethod, null, rules, new object[] { name });
+                        removed++;
+                    }
+                    catch (UnauthorizedAccessException ex)
+                    {
+                        Log.LogWarning(
+                            "TryRemoveFirewallRulesForExe: machine-wide rule \"{Name}\" requires admin to remove ({Message})",
+                            name, ex.Message);
+                        failed++;
                     }
                     catch (Exception ex)
                     {
-                        Trace.WriteLine($"NetworkPermission.TryRemove: Rules.Remove(\"{name}\") failed: {ex.Message}");
-                        anyFailed = true;
+                        Log.LogWarning(ex, "TryRemoveFirewallRulesForExe: Rules.Remove(\"{Name}\") threw", name);
+                        failed++;
                     }
                 }
-                return !anyFailed;
+                Log.LogInformation(
+                    "TryRemoveFirewallRulesForExe({Exe}): removed={Removed} failed={Failed} of {Total}",
+                    exePath, removed, failed, toRemove.Count);
+                return failed == 0 && removed > 0;
             }
             finally
             {
@@ -301,7 +335,7 @@ public static class NetworkPermission
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"NetworkPermission.TryRemoveFirewallRulesForExe failed: {ex.Message}");
+            Log.LogWarning(ex, "TryRemoveFirewallRulesForExe failed for {Exe}", exePath);
             return false;
         }
     }
@@ -359,12 +393,14 @@ public static class NetworkPermission
             ex.SocketErrorCode == SocketError.HostUnreachable ||
             ex.SocketErrorCode == SocketError.NetworkUnreachable)
         {
-            Trace.WriteLine($"NetworkPermission.CheckMac multicast-join denied: {ex.SocketErrorCode}");
+            Log.LogInformation(
+                "CheckMac: multicast-join denied — SocketError={Code} → Denied",
+                ex.SocketErrorCode);
             return new Result(Status.Denied, "Local Network access: denied");
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"NetworkPermission.CheckMac multicast-join error: {ex.Message}");
+            Log.LogWarning(ex, "CheckMac: multicast-join unexpected error → Unknown");
             return new Result(Status.Unknown, "Local Network access: unknown");
         }
 
@@ -373,23 +409,29 @@ public static class NetworkPermission
             using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             s.EnableBroadcast = true;
             s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Broadcast, 41420));
+            Log.LogDebug("CheckMac: multicast-join + broadcast both succeeded → Granted");
             return new Result(Status.Granted, "Local Network access: granted");
         }
         catch (SocketException ex) when (
             ex.SocketErrorCode == SocketError.AccessDenied ||
             ex.SocketErrorCode == SocketError.HostUnreachable)
         {
-            Trace.WriteLine($"NetworkPermission.CheckMac broadcast denied: {ex.SocketErrorCode}");
+            Log.LogInformation(
+                "CheckMac: broadcast denied — SocketError={Code} → Denied",
+                ex.SocketErrorCode);
             return new Result(Status.Denied, "Local Network access: denied");
         }
         catch (Exception ex)
         {
-            Trace.WriteLine($"NetworkPermission.CheckMac broadcast error: {ex.Message}");
             // If multicast-join succeeded but broadcast threw an unrelated
             // error, assume granted — group-join is the stronger signal.
-            return joinedMulticast
-                ? new Result(Status.Granted, "Local Network access: granted")
-                : new Result(Status.Unknown, "Local Network access: unknown");
+            if (joinedMulticast)
+            {
+                Log.LogDebug(ex, "CheckMac: broadcast threw post-join; trusting join → Granted");
+                return new Result(Status.Granted, "Local Network access: granted");
+            }
+            Log.LogWarning(ex, "CheckMac: broadcast threw with no positive prior signal → Unknown");
+            return new Result(Status.Unknown, "Local Network access: unknown");
         }
     }
 
@@ -402,7 +444,11 @@ public static class NetworkPermission
         {
             var profileName = TryGetActiveProfile();
             if (profileName is null)
+            {
+                Log.LogWarning("CheckWindows: NLM returned no active profile → Unknown");
                 return new Result(Status.Unknown, "Network profile: unknown");
+            }
+            Log.LogDebug("CheckWindows: NLM profile = {Profile}", profileName);
 
             if (string.Equals(profileName, "Private", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(profileName, "Domain", StringComparison.OrdinalIgnoreCase))
@@ -412,9 +458,15 @@ public static class NetworkPermission
             {
                 var exe = Process.GetCurrentProcess().MainModule?.FileName;
                 if (string.IsNullOrEmpty(exe))
+                {
+                    Log.LogWarning("CheckWindows: could not resolve own exe path → Unknown");
                     return new Result(Status.Unknown, "Network: Public (could not resolve own exe)");
+                }
 
                 var action = QueryFirewallRuleAction(exe);
+                Log.LogInformation(
+                    "CheckWindows: profile=Public exe={Exe} firewall={Action}",
+                    exe, action);
                 return action switch
                 {
                     FirewallAction.Allow => new Result(Status.Granted, "Network: Public + firewall allowed"),
@@ -423,10 +475,12 @@ public static class NetworkPermission
                 };
             }
 
+            Log.LogInformation("CheckWindows: unrecognised profile name '{Profile}' → Unknown", profileName);
             return new Result(Status.Unknown, $"Network: {profileName}");
         }
-        catch
+        catch (Exception ex)
         {
+            Log.LogWarning(ex, "CheckWindows threw → Unknown");
             return new Result(Status.Unknown, "Network profile: unknown");
         }
     }

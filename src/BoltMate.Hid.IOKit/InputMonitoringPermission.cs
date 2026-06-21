@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoltMate.Hid.IOKit;
 
@@ -31,6 +33,13 @@ public static class InputMonitoringPermission
         NotApplicable = 99,
     }
 
+    /// <summary>
+    /// Diagnostic logger. Defaults to NullLogger — the App layer sets this
+    /// to a real Serilog-backed ILogger at startup so every IOHIDCheckAccess
+    /// and IOHIDRequestAccess call is captured in the on-disk log.
+    /// </summary>
+    public static ILogger Log { get; set; } = NullLogger.Instance;
+
     [DllImport("/System/Library/Frameworks/IOKit.framework/IOKit",
         EntryPoint = "IOHIDCheckAccess", CallingConvention = CallingConvention.Cdecl)]
     private static extern uint IOHIDCheckAccess(uint requestType);
@@ -50,15 +59,19 @@ public static class InputMonitoringPermission
             return Status.NotApplicable;
         try
         {
-            var result = IOHIDCheckAccess(RequestTypeListenEvent);
-            return (Status)result;
+            var raw = IOHIDCheckAccess(RequestTypeListenEvent);
+            var status = (Status)raw;
+            Log.LogDebug("Check: IOHIDCheckAccess returned {Raw} → {Status}", raw, status);
+            return status;
         }
-        catch (DllNotFoundException)
+        catch (DllNotFoundException ex)
         {
+            Log.LogWarning(ex, "Check: IOKit.framework not loadable → NotApplicable");
             return Status.NotApplicable;
         }
-        catch (EntryPointNotFoundException)
+        catch (EntryPointNotFoundException ex)
         {
+            Log.LogWarning(ex, "Check: IOHIDCheckAccess entry point missing → NotApplicable");
             return Status.NotApplicable;
         }
     }
@@ -74,14 +87,18 @@ public static class InputMonitoringPermission
             return true;
         try
         {
-            return IOHIDRequestAccess(RequestTypeListenEvent);
+            var ok = IOHIDRequestAccess(RequestTypeListenEvent);
+            Log.LogInformation("Request: IOHIDRequestAccess returned {Result}", ok);
+            return ok;
         }
-        catch (DllNotFoundException)
+        catch (DllNotFoundException ex)
         {
+            Log.LogWarning(ex, "Request: IOKit.framework not loadable → false");
             return false;
         }
-        catch (EntryPointNotFoundException)
+        catch (EntryPointNotFoundException ex)
         {
+            Log.LogWarning(ex, "Request: IOHIDRequestAccess entry point missing → false");
             return false;
         }
     }

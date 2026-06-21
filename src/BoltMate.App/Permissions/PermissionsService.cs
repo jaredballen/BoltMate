@@ -38,6 +38,12 @@ public sealed class PermissionsService : IPermissionsService
         var lf = loggerFactory ?? NullLoggerFactory.Instance;
         _log = lf.CreateLogger<PermissionsService>();
 
+        // Pipe app-scoped loggers into the static permission helpers so
+        // every IOHIDCheckAccess / SocketException / firewall-rule decision
+        // lands in the Serilog file. Default is NullLogger; set once.
+        NetworkPermission.Log = lf.CreateLogger(typeof(NetworkPermission).FullName!);
+        InputMonitoringPermission.Log = lf.CreateLogger(typeof(InputMonitoringPermission).FullName!);
+
         _network = new NetworkPermissionImpl(lf.CreateLogger<NetworkPermissionImpl>());
         _inputMonitoring = OperatingSystem.IsMacOS()
             ? new InputMonitoringPermissionImpl(lf.CreateLogger<InputMonitoringPermissionImpl>())
