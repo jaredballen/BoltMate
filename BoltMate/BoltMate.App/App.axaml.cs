@@ -138,8 +138,7 @@ public partial class App : Application
         _welcomeWindow.WelcomeCompleted += () =>
         {
             // After the wizard finishes, run normal bootstrap THEN open the
-            // Settings window to the Status tab. The Settings window is
-            // pre-warmed inside ContinueBootstrap so OpenSettings is instant.
+            // Settings window to the Status tab.
             Dispatcher.UIThread.Post(() =>
             {
                 ContinueBootstrap(log);
@@ -147,8 +146,17 @@ public partial class App : Application
                 OpenSettings(SettingsWindow.TabStatus);
             });
         };
-        _welcomeWindow.Show();
-        _welcomeWindow.Activate();
+
+        // Defer the Show() call until after framework-init returns and the
+        // message loop is running. On Windows this is required — calling
+        // Show() synchronously inside OnFrameworkInitializationCompleted
+        // silently drops the window because the desktop lifetime hasn't
+        // finished registering top-level window hosting yet.
+        Dispatcher.UIThread.Post(() =>
+        {
+            _welcomeWindow.Show();
+            _welcomeWindow.Activate();
+        }, DispatcherPriority.Loaded);
     }
 
     private void ContinueBootstrap(ILogger log)
@@ -291,28 +299,12 @@ public partial class App : Application
             log.LogWarning("TrayIcon not found at framework init; dynamic menu wiring skipped");
         }
 
-        // Pre-warm the SettingsWindow so the first user-triggered open is
-        // instant. We never tear the window down between open / close —
-        // the Closing handler in SettingsWindow cancels the close and hides
-        // the window instead. Permanent teardown happens via Hibernate() in
-        // the desktop Exit handler below.
-        _settingsWindow = new SettingsWindow(_manager, _settings)
-        {
-            HostNamesChanged = () => _trayController?.RefreshHostLabels(),
-            TopologyChanged = ApplyTopologySettings,
-            PeerAnnouncementsProvider = () =>
-                _topology is null
-                    ? Array.Empty<BoltMate.Core.Topology.ReceiverAnnouncement>()
-                    : _topology.LatestPeerAnnouncements,
-            PeerStatsProvider = () =>
-                _topology is null
-                    ? Array.Empty<BoltMate.Core.Topology.PeerStats>()
-                    : _topology.PeerSnapshot,
-            SendStatsProvider = () =>
-                _topology is null ? (0L, 0L) : _topology.SendStats,
-            OnHidden = () => MacActivationPolicy.HideDockIcon(),
-        };
-
+        // SettingsWindow is constructed lazily on first OpenSettings() call.
+        // The pre-warm pattern (construct here, keep alive) caused a visible
+        // window-flash on Windows because Avalonia briefly realizes the OS
+        // window even when Show() is never called. The Closing-handler in
+        // SettingsWindow still cancels-and-hides after first open, so all
+        // subsequent opens remain instant — only the very first is slow.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktopLife)
         {
             desktopLife.Exit += (_, _) => _settingsWindow?.Hibernate();
@@ -452,7 +444,30 @@ public partial class App : Application
 
     private void OpenSettings(string? initialTab = null)
     {
-        if (_settingsWindow is null) return;
+        if (_manager is null) return;
+
+        // Lazy-construct the SettingsWindow on first open. The Closing handler
+        // inside it cancels-and-hides, so subsequent opens reuse this instance
+        // and are instant.
+        if (_settingsWindow is null)
+        {
+            _settingsWindow = new SettingsWindow(_manager, _settings)
+            {
+                HostNamesChanged = () => _trayController?.RefreshHostLabels(),
+                TopologyChanged = ApplyTopologySettings,
+                PeerAnnouncementsProvider = () =>
+                    _topology is null
+                        ? Array.Empty<BoltMate.Core.Topology.ReceiverAnnouncement>()
+                        : _topology.LatestPeerAnnouncements,
+                PeerStatsProvider = () =>
+                    _topology is null
+                        ? Array.Empty<BoltMate.Core.Topology.PeerStats>()
+                        : _topology.PeerSnapshot,
+                SendStatsProvider = () =>
+                    _topology is null ? (0L, 0L) : _topology.SendStats,
+                OnHidden = () => MacActivationPolicy.HideDockIcon(),
+            };
+        }
 
         // Show the dock icon for the duration of the settings window so users
         // who Cmd-Tab can find us. Restore accessory mode in OnHidden.
