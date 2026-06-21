@@ -448,11 +448,24 @@ public partial class WelcomeWindow : Window
             _log.LogWarning(ex, "GrantAsync threw for {Permission}", permission.Name);
         }
 
-        if (grantBtn is not null) grantBtn.IsEnabled = true;
-
-        if (!granted && refusalPage is not null && CurrentPageName() != refusalPage)
+        // After the await, the window may have started closing — macOS sends
+        // a Quit AppleEvent after an HID grant to force a relaunch with the
+        // new entitlement. Touching FindControl / ShowPage on a closing
+        // window throws on Avalonia 12 (XPlatHandle disposed), and because
+        // this method runs as the continuation of an async void event
+        // handler, an uncaught throw aborts the process. Guard everything.
+        if (_quitting || _completedSuccessfully) return;
+        try
         {
-            ShowPage(refusalPage);
+            if (grantBtn is not null) grantBtn.IsEnabled = true;
+            if (!granted && refusalPage is not null && CurrentPageName() != refusalPage)
+            {
+                ShowPage(refusalPage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "GrantOrRefuseAsync post-await UI update threw — window likely closing");
         }
     }
 
