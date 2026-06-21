@@ -351,85 +351,90 @@ public sealed class UdpTopologyService : IDisposable
 
     private ReceiverAnnouncement BuildAnnouncement(ulong seq)
     {
+        var receivers = _manager.Receivers.Items.ToList();
         var ann = new ReceiverAnnouncement
         {
             MachineId = _machineId,
             Hostname = _hostname,
             Timestamp = DateTimeOffset.UtcNow.ToString("O"),
             Seq = seq,
+            ReceiverCount = receivers.Count,
+            LastSwitchEvent = ConsumePendingSwitchEvent(),
         };
         // Mutual ack — echo the last Seq we saw from every known peer so they
         // can measure their outbound packet loss to us.
         foreach (var (peerId, lastSeq) in _lastSeenSeq)
             ann.Acks.Add(new PeerAck { MachineId = peerId, LastSeq = lastSeq });
-        foreach (var receiver in _manager.Receivers.Items)
+        // Always-broadcast: even with zero receivers, we ship an envelope so
+        // peers see "BoltMate is alive on machine X". Coordinator-only mode.
+        foreach (var receiver in receivers)
         {
-            // Prefer the receiver's own identifier read (GetReceiverDetailsAsync
-            // via RECEIVER_INFO 0xB5 sub-register 0x03). NB: we call the field
-            // "HostIdentifier" historically but it is NOT a real BLE MAC —
-            // it's Logitech's proprietary 2.4GHz pairing identifier (rename
-            // tracked separately). If that read didn't succeed (timed out /
-            // firmware refused / not called yet), fall back to the identifier
-            // any connected device has stored for ITS current host slot — same
-            // per-receiver value the peer side matches against via HostBindings.
-            var ble = receiver.HostIdentifierKey ?? InferReceiverBleFromDevices(receiver);
-
             var entry = new ReceiverAnnouncementEntry
             {
                 Serial = receiver.Info.Serial,
-                HostIdentifierHex = ble,
             };
+            // Include every paired device — link state goes in the entry.
+            // Peers prune on host-name match, not on link state.
             foreach (var device in receiver.Devices.Items)
             {
-                if (!device.LinkUp) continue;
-                var entryDevice = new OnlineDeviceEntry
+                var entryDevice = new DeviceEntry
                 {
                     Slot = device.DeviceIndex,
                     WpidHex = device.Wpid.ToString("X4"),
+                    Serial = device.Serial,
                     Name = device.DisplayName,
+                    LinkUp = device.LinkUp,
                     CurrentHost = device.LastKnownCurrentHost,
                 };
-                // Ship the device's full per-host-slot identifiers. This is
-                // what lets the peer correlator route fan-out by matching
-                // identifiers between the moving device's CurrentHost and
-                // local siblings' HostBindings — no receiver-level identifier
-                // dependency.
                 foreach (var (hostIdx, binding) in device.HostBindings)
                 {
-                    entryDevice.HostBindings.Add(new DeviceHostBindingEntry
+                    entryDevice.SlotMap.Add(new DeviceSlotEntry
                     {
                         HostIndex = hostIdx,
                         Paired = binding.Paired,
-                        IdentifierHex = binding.HostIdentifierKey,
-                        ReceiverName = binding.ReceiverName,
+                        HostName = binding.ReceiverName,
                     });
                 }
-                entry.OnlineDevices.Add(entryDevice);
+                if (device.LastKnownBattery is { } bat)
+                {
+                    entryDevice.Battery = new BatteryEntry
+                    {
+                        Percent = bat.Percent,
+                        State = (byte)bat.State,
+                        ExternalPower = bat.ExternalPower,
+                        Level = bat.Level.HasValue ? (byte)bat.Level.Value : null,
+                    };
+                }
+                entry.Devices.Add(entryDevice);
             }
             ann.Receivers.Add(entry);
         }
         return ann;
     }
 
-    /// <summary>
-    /// Returns the receiver's per-pairing identifier as seen from a connected
-    /// device's perspective. Each device's <c>HostBindings[currentHost]</c>
-    /// records the very same byte sequence the receiver-side
-    /// <c>RECEIVER_INFO</c> read produces — but it's accessible per-device
-    /// even when the receiver-level read failed. Returns the first match
-    /// across all online devices.
-    /// </summary>
-    private static string? InferReceiverBleFromDevices(Bolt.BoltReceiver receiver)
+    private SwitchEvent? ConsumePendingSwitchEvent()
     {
-        foreach (var d in receiver.Devices.Items)
-        {
-            if (!d.LinkUp) continue;
-            if (d.LastKnownCurrentHost is not byte currentHost) continue;
-            if (!d.HostBindings.TryGetValue(currentHost, out var binding)) continue;
-            if (binding.HostIdentifierKey is { } ble) return ble;
-        }
-        return null;
+        // Pulled once into the next outbound announcement. Subsequent
+        // broadcasts will carry null until the next local switch fires.
+        return System.Threading.Interlocked.Exchange(ref _pendingSwitchEvent, null);
     }
+
+    /// <summary>
+    /// Records a local host-switch event so the next outbound announcement
+    /// surfaces it as <see cref="ReceiverAnnouncement.LastSwitchEvent"/>.
+    /// Called by the App layer on local Easy-Switch press / Flow snoop.
+    /// </summary>
+    public void RecordLocalSwitchEvent(string? deviceSerial, string targetHostName)
+    {
+        System.Threading.Interlocked.Exchange(ref _pendingSwitchEvent, new SwitchEvent
+        {
+            DeviceSerial = deviceSerial,
+            TargetHostName = targetHostName,
+            Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+        });
+    }
+
+    private SwitchEvent? _pendingSwitchEvent;
 
     /// <summary>Per-interface broadcast endpoints + the multicast group endpoint.</summary>
     private IEnumerable<IPEndPoint> AllEndpoints()

@@ -420,9 +420,23 @@ public partial class App : Application
 
         _correlator = new TopologyCorrelator(_manager, _switcher,
             _topology.Announcements,
-            TimeSpan.FromSeconds(_settings.Topology.CorrelationWindowSeconds),
+            System.Net.Dns.GetHostName(),
             _loggerFactory.CreateLogger<TopologyCorrelator>());
         _disposables.Add(_correlator);
+
+        // Wire local fan-out → switch-event broadcast. Whenever the switcher
+        // moves a device (Easy-Switch press / Flow snoop / user request),
+        // tell the topology service to surface the intent in its next
+        // outgoing announcement so peers can fan their own siblings.
+        var topology = _topology;
+        _disposables.Add(_switcher.FanOuts.Subscribe(ev =>
+        {
+            if (ev.Target.HostBindings.TryGetValue(ev.TargetHost, out var binding)
+                && !string.IsNullOrWhiteSpace(binding.ReceiverName))
+            {
+                topology.RecordLocalSwitchEvent(ev.Target.Serial, binding.ReceiverName);
+            }
+        }));
     }
 
     private void OpenSettings(string? initialTab = null)

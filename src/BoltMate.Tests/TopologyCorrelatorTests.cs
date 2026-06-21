@@ -10,14 +10,13 @@ using Xunit;
 namespace BoltMate.Tests;
 
 /// <summary>
-/// Exercises the link-lost -> remote-announcement correlation that drives
-/// cross-machine fan-out. We feed synthetic <see cref="ReceiverAnnouncement"/>s
-/// into the correlator via a Subject so the test never needs a real socket.
+/// Coverage for the topology correlator's prune filter and the switch-event
+/// driven cross-machine fan-out.
 /// </summary>
 public class TopologyCorrelatorTests
 {
-    private static byte[] BleA => [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5];
-    private static byte[] BleB => [0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5];
+    private const string LocalHost = "local-mac";
+    private const string PeerHost = "peer-pc";
 
     private sealed class Fixture : IDisposable
     {
@@ -27,15 +26,17 @@ public class TopologyCorrelatorTests
         public List<FanOutEvent> FanOuts { get; } = new();
         public Subject<ReceiverAnnouncement> Announcements { get; } = new();
         public TopologyCorrelator Correlator { get; }
+        public List<ReceiverAnnouncement> Filtered { get; } = new();
         private readonly IDisposable _sub;
+        private readonly IDisposable _filteredSub;
 
-        public Fixture(TimeSpan? window = null)
+        public Fixture(string localHost = LocalHost)
         {
             Manager = new ReceiverManager(Transport, autoStart: false);
             Switcher = new SwitcherService(Manager);
             _sub = Switcher.FanOuts.Subscribe(ev => FanOuts.Add(ev));
-            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements,
-                window ?? TimeSpan.FromSeconds(3));
+            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements, localHost);
+            _filteredSub = Correlator.FilteredAnnouncements.Subscribe(a => Filtered.Add(a));
         }
 
         public BoltReceiver AddReceiver(string path = "/test/bolt-0", string serial = "SER-0")
@@ -46,7 +47,7 @@ public class TopologyCorrelatorTests
         }
 
         public PairedDevice SeedDevice(BoltReceiver receiver, byte slot, ushort wpid,
-            params (byte hostIndex, byte[]? ble, string? hostName)[] bindings)
+            params (byte hostIndex, string? hostName)[] bindings)
         {
             var d = receiver.EnsureSlot(slot);
             d.ChangeHostIndex = 0x09;
@@ -56,8 +57,8 @@ public class TopologyCorrelatorTests
             if (bindings.Length > 0)
             {
                 var dict = new Dictionary<byte, HostBinding>();
-                foreach (var (h, ble, hostName) in bindings)
-                    dict[h] = new HostBinding(h, ble is not null || hostName is not null, ble, hostName);
+                foreach (var (h, hostName) in bindings)
+                    dict[h] = new HostBinding(h, Paired: hostName is not null, HostIdentifier: null, ReceiverName: hostName);
                 d.HostBindings = dict;
             }
             return d;
@@ -66,6 +67,7 @@ public class TopologyCorrelatorTests
         public void Dispose()
         {
             _sub.Dispose();
+            _filteredSub.Dispose();
             Correlator.Dispose();
             Announcements.Dispose();
             Switcher.Dispose();
@@ -73,120 +75,198 @@ public class TopologyCorrelatorTests
         }
     }
 
+    private static DeviceEntry MakeDevice(string serial, params (byte slot, string host)[] slotMap)
+    {
+        var d = new DeviceEntry { Serial = serial, WpidHex = "AAAA", Slot = 1, LinkUp = true };
+        foreach (var (slot, host) in slotMap)
+            d.SlotMap.Add(new DeviceSlotEntry { HostIndex = slot, Paired = true, HostName = host });
+        return d;
+    }
+
     [Fact]
-    public void LinkLost_then_remote_announcement_with_matching_wpid_triggers_fan_out()
+    public void Prune_drops_devices_whose_slot_map_does_not_reference_our_host()
+    {
+        var source = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-1",
+                    Devices =
+                    {
+                        MakeDevice("D-A", (0, "other-1"), (1, "other-2")),
+                        MakeDevice("D-B", (0, LocalHost), (1, PeerHost)),
+                    },
+                },
+            },
+        };
+
+        var pruned = TopologyCorrelator.Prune(source, LocalHost);
+
+        Assert.NotNull(pruned);
+        var receiver = Assert.Single(pruned!.Receivers);
+        var dev = Assert.Single(receiver.Devices);
+        Assert.Equal("D-B", dev.Serial);
+    }
+
+    [Fact]
+    public void Prune_drops_receivers_with_no_surviving_devices()
+    {
+        var source = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-empty",
+                    Devices = { MakeDevice("D-A", (0, "other")), },
+                },
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-good",
+                    Devices = { MakeDevice("D-B", (0, LocalHost)), },
+                },
+            },
+        };
+
+        var pruned = TopologyCorrelator.Prune(source, LocalHost);
+
+        Assert.NotNull(pruned);
+        var receiver = Assert.Single(pruned!.Receivers);
+        Assert.Equal("REM-good", receiver.Serial);
+    }
+
+    [Fact]
+    public void Prune_returns_null_when_no_device_references_us()
+    {
+        var source = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Devices = { MakeDevice("D-A", (0, "other")), },
+                },
+            },
+        };
+
+        Assert.Null(TopologyCorrelator.Prune(source, LocalHost));
+    }
+
+    [Fact]
+    public void Announcement_with_switch_event_to_peer_triggers_cross_machine_fan_out()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
-        // Mouse 0xAAAA — will be the originator that leaves us.
-        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
-        // Keyboard 0xBBBB on slot 1->BleB. Should follow when correlator fires.
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
+        // Local keyboard with a slot for the peer host — eligible to follow.
+        f.SeedDevice(r, 1, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
 
-        // Simulate link-lost for the mouse: use BoltReceiver's notification path.
-        InjectLinkLost(f, r, mouse);
-
-        // Now the remote machine emits an announcement saying mouse 0xAAAA is online there,
-        // on a receiver whose BLE matches BleB.
         f.Announcements.OnNext(new ReceiverAnnouncement
         {
-            MachineId = "remote",
-            Hostname = "remote-mac",
-            Receivers = new List<ReceiverAnnouncementEntry>
+            Hostname = PeerHost,
+            Receivers =
             {
-                new()
+                new ReceiverAnnouncementEntry
                 {
-                    Serial = "REMOTE-SER",
-                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
-                    OnlineDevices = new List<OnlineDeviceEntry>
+                    Serial = "REM-1",
+                    Devices =
                     {
-                        new() { Slot = 1, WpidHex = "AAAA" }
-                    }
-                }
-            }
+                        // A shared device (different physical device from
+                        // keyboard) that references us — passes the filter.
+                        MakeDevice("D-shared", (0, LocalHost), (1, PeerHost)),
+                    },
+                },
+            },
+            LastSwitchEvent = new SwitchEvent
+            {
+                DeviceSerial = "D-shared",
+                TargetHostName = PeerHost,
+                Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+            },
         });
 
-        Assert.Single(f.FanOuts);
-        var ev = f.FanOuts[0];
-        Assert.Equal((byte)2, ev.Target.DeviceIndex);     // keyboard
-        Assert.Equal((byte)1, ev.TargetHost);             // its slot mapped to BleB
+        Assert.Single(f.Filtered);
+        var ev = Assert.Single(f.FanOuts);
+        Assert.Equal((byte)1, ev.Target.DeviceIndex);
+        Assert.Equal((byte)1, ev.TargetHost);
         Assert.Equal(FanOutSource.RemoteTopology, ev.Source);
     }
 
     [Fact]
-    public void Announcement_without_matching_lost_wpid_is_ignored()
+    public void Announcement_with_switch_event_targeting_us_does_not_fan_out()
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
+        f.SeedDevice(r, 1, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
 
         f.Announcements.OnNext(new ReceiverAnnouncement
         {
-            MachineId = "remote",
-            Receivers = new List<ReceiverAnnouncementEntry>
+            Hostname = PeerHost,
+            Receivers =
             {
-                new()
+                new ReceiverAnnouncementEntry
                 {
-                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
-                    OnlineDevices = new List<OnlineDeviceEntry>
-                    {
-                        new() { Slot = 1, WpidHex = "AAAA" }
-                    }
-                }
-            }
+                    Devices = { MakeDevice("D-shared", (0, LocalHost), (1, PeerHost)), },
+                },
+            },
+            LastSwitchEvent = new SwitchEvent
+            {
+                DeviceSerial = "D-shared",
+                TargetHostName = LocalHost, // arriving on US
+                Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+            },
         });
 
+        Assert.Single(f.Filtered);
         Assert.Empty(f.FanOuts);
     }
 
     [Fact]
-    public void LinkLost_expires_after_correlation_window()
+    public void Announcement_without_switch_event_does_not_fan_out_but_passes_filter()
     {
-        using var f = new Fixture(window: TimeSpan.FromMilliseconds(50));
+        using var f = new Fixture();
         var r = f.AddReceiver();
-        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (1, BleB, "remote-mac"));
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (1, BleB, "remote-mac"));
-
-        InjectLinkLost(f, r, mouse);
-        Thread.Sleep(120); // window expires
+        f.SeedDevice(r, 1, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
 
         f.Announcements.OnNext(new ReceiverAnnouncement
         {
-            MachineId = "remote",
-            Receivers = new List<ReceiverAnnouncementEntry>
+            Hostname = PeerHost,
+            Receivers =
             {
-                new()
+                new ReceiverAnnouncementEntry
                 {
-                    HostIdentifierHex = Convert.ToHexString(BleB).ToLowerInvariant(),
-                    OnlineDevices = new List<OnlineDeviceEntry>
-                    {
-                        new() { Slot = 1, WpidHex = "AAAA" }
-                    }
-                }
-            }
+                    Devices = { MakeDevice("D-shared", (0, LocalHost), (1, PeerHost)), },
+                },
+            },
+            LastSwitchEvent = null,
         });
 
+        Assert.Single(f.Filtered);
         Assert.Empty(f.FanOuts);
     }
 
-    /// <summary>
-    /// Forces a link-lost event through BoltReceiver by injecting a DJ_PAIRING
-    /// frame with the link-lost flag set. Mirrors how the real notification
-    /// pump processes 0x41 frames.
-    /// </summary>
-    private void InjectLinkLost(Fixture f, BoltReceiver receiver, PairedDevice device)
+    [Fact]
+    public void Announcement_pruned_to_empty_does_not_emit_filtered()
     {
-        var bytes = new byte[7];
-        bytes[0] = 0x10;
-        bytes[1] = device.DeviceIndex;
-        bytes[2] = 0x41; // sub-id
-        bytes[3] = 0x00;
-        bytes[4] = 0x40; // link lost flag (bit 0x40)
-        bytes[5] = (byte)(device.Wpid & 0xFF);
-        bytes[6] = (byte)((device.Wpid >> 8) & 0xFF);
-        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        using var f = new Fixture();
+        f.Announcements.OnNext(new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Devices = { MakeDevice("D-X", (0, "other")), },
+                },
+            },
+            LastSwitchEvent = new SwitchEvent { TargetHostName = "other" },
+        });
 
-        var session = f.Transport.Sessions.First(s => s.Info.Path == receiver.Info.Path);
-        session.LastConnection.Inject(frame);
+        Assert.Empty(f.Filtered);
+        Assert.Empty(f.FanOuts);
     }
 }

@@ -467,9 +467,10 @@ public partial class SettingsWindow : Window
         {
             foreach (var rentry in ann.Receivers)
             {
-                if (rentry.OnlineDevices.Count == 0) continue;
-                foreach (var od in rentry.OnlineDevices)
+                if (rentry.Devices.Count == 0) continue;
+                foreach (var od in rentry.Devices)
                 {
+                    if (!od.LinkUp) continue;
                     var name = string.IsNullOrEmpty(od.Name) ? "(no name)" : od.Name;
                     deviceLines.Add(new PeerDeviceRow
                     {
