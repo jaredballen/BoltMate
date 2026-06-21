@@ -192,14 +192,23 @@ public sealed class PermissionsService : IPermissionsService
             var pre = NetworkPermission.Check();
             if (pre.Status == NetworkPermission.Status.Granted) return Task.CompletedTask;
 
-            if (pre.Status == NetworkPermission.Status.Denied)
+            // Mac vs Win semantics for "Denied" differ:
+            //   • Mac: Denied means the user explicitly toggled off in TCC.
+            //     Request() can't re-prompt; only System Settings can fix.
+            //   • Win: Denied just means "no Allow firewall rule yet" (or a
+            //     Block rule that RequestWindows knows how to remove + retry).
+            //     The Request flow IS the right path — it binds an inbound
+            //     listener to trigger the Defender "Allow access" prompt.
+            // Routing both to OpenSystemSettings would dump Win users into
+            // the full firewall control panel instead of the simple prompt.
+            if (OperatingSystem.IsMacOS() && pre.Status == NetworkPermission.Status.Denied)
             {
-                Log.LogInformation("Network already denied — opening System Settings");
+                Log.LogInformation("Mac: Local Network already denied — opening System Settings");
                 NetworkPermission.OpenSystemSettings();
                 return Task.CompletedTask;
             }
 
-            Log.LogInformation("Network undecided — issuing Request");
+            Log.LogInformation("Network not Granted (status={Status}) — dispatching Request", pre.Status);
             return Task.Run(() => NetworkPermission.Request(), ct);
         }
     }
