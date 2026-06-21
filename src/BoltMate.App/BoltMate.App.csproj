@@ -2,6 +2,13 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <!--
+      Project name is BoltMate.App for filesystem clarity (multiple BoltMate.*
+      projects in the solution), but the user-facing binary should be just
+      "BoltMate" — that's what shows up in Windows Defender Firewall, Task
+      Manager → Startup, Activity Monitor on Mac, etc.
+    -->
+    <AssemblyName>BoltMate</AssemblyName>
+    <!--
       net10.0 needed by FluentAvaloniaUI 3.0.0, which is the version that
       targets Avalonia 12.x. The rest of the solution stays on net9.0; only
       this app head bumps so the WinUI-style NavigationView shell can ship.

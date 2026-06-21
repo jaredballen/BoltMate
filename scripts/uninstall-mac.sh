@@ -28,8 +28,10 @@ done
 say() { echo "→ $*"; }
 
 say "Killing running processes"
-pkill -f BoltMate.App 2>/dev/null || true
-pkill -f BoltMate.Cli 2>/dev/null || true
+# Match anywhere "BoltMate" appears in the command line — covers the new
+# "BoltMate" binary inside Contents/MacOS as well as legacy "BoltMate.App"
+# paths during the transition.
+pkill -f BoltMate 2>/dev/null || true
 pkill -f boltmate 2>/dev/null || true
 sleep 1
 

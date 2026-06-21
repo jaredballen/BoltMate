@@ -14,8 +14,11 @@ namespace BoltMate.App;
 /// </summary>
 public static class AppAutostart
 {
+    // Mac launchd label stays in reverse-DNS form (identifier, not display).
+    // Windows entry name is what shows in Task Manager → Startup, so it
+    // should match the user-facing app name.
     private const string MacLabel = "com.jaredballen.boltmate.app";
-    private const string WindowsTaskName = "BoltMate.App";
+    private const string WindowsTaskName = "BoltMate";
 
     public static string Label =>
         RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? WindowsTaskName : MacLabel;

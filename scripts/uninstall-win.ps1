@@ -27,13 +27,14 @@ Get-Process -Name 'boltmate'  | Stop-Process -Force
 Start-Sleep -Seconds 1
 
 Say "Removing autostart entries (HKCU Run registry + legacy scheduled tasks)"
-# New backend: HKCU\Software\Microsoft\Windows\CurrentVersion\Run values.
-foreach ($name in 'BoltMate.App','BoltMate.Cli','BoltMate') {
+# Current backend: HKCU\Software\Microsoft\Windows\CurrentVersion\Run values.
+# Cleans both the current "BoltMate" name and the legacy "BoltMate.App" /
+# "BoltMate.Cli" entries so transitional installs leave nothing behind.
+foreach ($name in 'BoltMate','BoltMate.App','BoltMate.Cli') {
     reg.exe delete 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run' /v $name /f 2>&1 | Out-Null
 }
-# Legacy backend: scheduled tasks (cleanup for installs created before the
-# switch to HKCU Run). Safe to run when nothing is registered.
-foreach ($name in 'BoltMate.App','BoltMate.Cli','BoltMate') {
+# Legacy backend: scheduled tasks (no longer created; cleanup only).
+foreach ($name in 'BoltMate','BoltMate.App','BoltMate.Cli') {
     schtasks /delete /tn $name /f 2>&1 | Out-Null
 }
 
