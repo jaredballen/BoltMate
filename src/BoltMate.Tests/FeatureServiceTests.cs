@@ -21,7 +21,7 @@ public class FeatureServiceTests
                     parameters: [
                         65,    // 65% SoC
                         0x04,  // level mask (good)
-                        0x01,  // status: charging
+                        0x01,  // charging status: charging (short reply caps here)
                     ]);
                 conn.Inject(reply);
             }

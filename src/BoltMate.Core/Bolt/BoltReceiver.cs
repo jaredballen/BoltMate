@@ -25,6 +25,7 @@ public sealed class BoltReceiver : IDisposable
     private readonly SourceCache<PairedDevice, byte> _devicesCache;
     private readonly Subject<DivertedButtonsNotification> _hostSwitchPressed = new();
     private readonly Subject<ChangeHostWriteSnoop> _flowHostSwitchDetected = new();
+    private readonly Subject<BatteryStatusEvent> _batteryStatusChanged = new();
     private readonly Subject<HidPpFrame> _rawFrames = new();
     private readonly Subject<PairedDevice> _linkEstablished = new();
     private readonly Subject<PairedDevice> _linkLost = new();
@@ -80,6 +81,17 @@ public sealed class BoltReceiver : IDisposable
     /// Stream of foreign <c>SetCurrentHost</c> writes — Logi Options+ doing a
     /// Mouse Flow handover that we want to fan out to siblings.
     /// </summary>
+    /// <summary>
+    /// Device-pushed battery state updates. Fires when feature 0x1004 emits
+    /// its notification — cable plug/unplug, level threshold crossings,
+    /// charge complete. The carried <see cref="BatteryStatusEvent.Status"/>
+    /// has already been written through to the originating slot's
+    /// <see cref="PairedDevice.LastKnownBattery"/>; subscribers can use it
+    /// for derived state (UI, network broadcast, etc.).
+    /// </summary>
+    public IObservable<BatteryStatusEvent> BatteryStatusChanged =>
+        _batteryStatusChanged.AsObservable();
+
     public IObservable<ChangeHostWriteSnoop> FlowHostSwitches =>
         _flowHostSwitchDetected.AsObservable();
 
@@ -116,6 +128,7 @@ public sealed class BoltReceiver : IDisposable
         _disposables.Add((IDisposable)Devices);
         _disposables.Add(_hostSwitchPressed);
         _disposables.Add(_flowHostSwitchDetected);
+        _disposables.Add(_batteryStatusChanged);
         _disposables.Add(_rawFrames);
         _disposables.Add(_linkEstablished);
         _disposables.Add(_linkLost);
@@ -809,6 +822,15 @@ public sealed class BoltReceiver : IDisposable
             && ChangeHostWriteSnoop.TryParse(frame, changeHostIndex, _client.SwId, out var snoop))
         {
             _flowHostSwitchDetected.OnNext(snoop);
+            return;
+        }
+
+        if (slot.UnifiedBatteryIndex is { } batteryIndex
+            && BatteryStatusEvent.TryParse(frame, batteryIndex, out var batteryEvent))
+        {
+            slot.LastKnownBattery = batteryEvent.Status;
+            RefreshSlot(slot.DeviceIndex);
+            _batteryStatusChanged.OnNext(batteryEvent);
         }
     }
 }

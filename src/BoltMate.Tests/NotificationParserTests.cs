@@ -1,4 +1,5 @@
 using BoltMate.Core.HidPp;
+using BoltMate.Core.HidPp.Features;
 using BoltMate.Core.HidPp.Notifications;
 using Xunit;
 
@@ -127,5 +128,58 @@ public class NotificationParserTests
 
         var frame = HidPpFrame.TryParse(bytes)!.Value;
         Assert.False(ChangeHostWriteSnoop.TryParse(frame, changeHostFeatureIndex: 0x09, ourSwId: HidPpConstants.OurSwId, out _));
+    }
+
+    [Fact]
+    public void BatteryStatusEvent_decodes_long_notification_with_external_power()
+    {
+        // Long report on slot 1, feature index 0x0B (our cached 0x1004 idx),
+        // fn=0 swid=0, payload = 47% / level=good / charging / ext-power.
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01; // device index
+        bytes[2] = 0x0B; // feature index
+        bytes[3] = 0x00; // fn=0 swid=0 → notification
+        bytes[4] = 47;   // state of charge
+        bytes[5] = 0x04; // level mask = good
+        bytes[6] = 0x01; // charging status = charging
+        bytes[7] = 0x01; // external power present
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.True(BatteryStatusEvent.TryParse(frame, unifiedBatteryFeatureIndex: 0x0B, out var note));
+        Assert.Equal((byte)1, note.DeviceIndex);
+        Assert.Equal((byte?)47, note.Status.Percent);
+        Assert.True(note.Status.Charging);
+        Assert.True(note.Status.ExternalPower);
+        Assert.Equal(BatteryLevel.Good, note.Status.Level);
+        Assert.Equal(ChargingState.Charging, note.Status.State);
+    }
+
+    [Fact]
+    public void BatteryStatusEvent_rejects_wrong_feature_index()
+    {
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x0C; // wrong feature index (not our cached 0x1004)
+        bytes[3] = 0x00;
+        bytes[4] = 80;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.False(BatteryStatusEvent.TryParse(frame, unifiedBatteryFeatureIndex: 0x0B, out _));
+    }
+
+    [Fact]
+    public void BatteryStatusEvent_rejects_response_frames_with_nonzero_swid()
+    {
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x0B;
+        bytes[3] = (byte)((1 << 4) | HidPpConstants.OurSwId); // fn=1, swid=ours
+        bytes[4] = 80;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.False(BatteryStatusEvent.TryParse(frame, unifiedBatteryFeatureIndex: 0x0B, out _));
     }
 }
