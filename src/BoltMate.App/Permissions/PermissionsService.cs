@@ -242,26 +242,28 @@ public sealed class PermissionsService : IPermissionsService
         // is install-time concern; runtime "is autostart on?" = loaded state.
         protected override bool ProbeOs() => AppAutostart.IsLoaded();
 
-        protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
+        protected override async Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
         {
             if (target)
             {
                 if (!AppAutostart.CanRegister())
                 {
                     Log.LogWarning("Autostart not registrable in current process layout");
-                    return Task.CompletedTask;
+                    return;
                 }
-                var result = AppAutostart.Install();
+                // AppAutostart.Install shells out to launchctl / reg.exe and
+                // can take tens of ms — push it off the UI thread so the
+                // welcome wizard stays responsive while it runs.
+                var result = await Task.Run(AppAutostart.Install, ct);
                 Log.LogInformation("Autostart install: success={Success} message={Message}",
                     result.Success, result.Message);
             }
             else
             {
-                var result = AppAutostart.Disable();
+                var result = await Task.Run(AppAutostart.Disable, ct);
                 Log.LogInformation("Autostart disable: success={Success} message={Message}",
                     result.Success, result.Message);
             }
-            return Task.CompletedTask;
         }
     }
 

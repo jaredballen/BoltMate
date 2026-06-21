@@ -328,13 +328,13 @@ public partial class WelcomeWindow : Window
     // Page button handlers
     // ====================================================================
 
-    private void OnWelcomeGetStarted(object? sender, RoutedEventArgs e)
+    private async void OnWelcomeGetStarted(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User clicked Get started");
         // Apply the autostart toggle NOW (not on the Done page) so that if a
         // permission prompt later forces the app to relaunch (macOS HID
         // grant), the user's choice has already taken effect at the OS level.
-        ApplyAutostartFromToggle();
+        await ApplyAutostartFromToggleAsync();
         SaveCheckpoint("welcome");
         AdvanceToNextRequiredPermissionOrDone();
     }
@@ -395,7 +395,7 @@ public partial class WelcomeWindow : Window
 
     // ---- Done ----------------------------------------------------------
 
-    private void OnDoneOpen(object? sender, RoutedEventArgs e)
+    private async void OnDoneOpen(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User tapped Open BoltMate (Done)");
         _completedSuccessfully = true;
@@ -405,7 +405,7 @@ public partial class WelcomeWindow : Window
         // touched).
         if (_isFirstRun)
         {
-            ApplyAutostartFromToggle();
+            await ApplyAutostartFromToggleAsync();
             try
             {
                 _settings.HasShownWelcome = true;
@@ -504,7 +504,7 @@ public partial class WelcomeWindow : Window
         return null;
     }
 
-    private void ApplyAutostartFromToggle()
+    private async Task ApplyAutostartFromToggleAsync()
     {
         var toggle = this.FindControl<CheckBox>("WelcomeAutostartToggle");
         var want = toggle?.IsChecked == true;
@@ -515,7 +515,10 @@ public partial class WelcomeWindow : Window
         }
         try
         {
-            var result = want ? AppAutostart.Install() : AppAutostart.Uninstall();
+            // Off the UI thread: launchctl / reg.exe spawn child processes
+            // that can take 10s of ms each. Keeping it sync froze the
+            // welcome window on Win during the Get-Started click.
+            var result = await Task.Run(() => want ? AppAutostart.Install() : AppAutostart.Uninstall());
             _log.LogInformation("Autostart {Action}: success={Ok} message={Msg}",
                 want ? "install" : "uninstall", result.Success, result.Message);
         }

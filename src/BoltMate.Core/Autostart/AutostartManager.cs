@@ -93,14 +93,6 @@ public static class AutostartManager
         return new AutostartResult(true, code == 0 ? $"Unloaded {label}" : output, plistPath);
     }
 
-    private static AutostartResult DisableWindows(string label)
-    {
-        var (code, output) = Run("schtasks", $"/change /tn \"{label}\" /disable", ignoreFailure: true);
-        if (code != 0 && output.Contains("ERROR: The system cannot find"))
-            return new AutostartResult(true, "Not installed; nothing to disable.");
-        return new AutostartResult(code == 0, output);
-    }
-
     // ---------- macOS ----------
 
     public static string MacPlistPath(string label)
@@ -192,44 +184,62 @@ public static class AutostartManager
 
     // ---------- Windows ----------
 
+    // Backend: HKCU\Software\Microsoft\Windows\CurrentVersion\Run via reg.exe.
+    // Earlier impl used Task Scheduler — schtasks /sc onlogon required admin
+    // and produced visible console flashes during the welcome flow. HKCU Run
+    // is per-user, writable without elevation, and the de-facto standard for
+    // consumer Win apps.
+    //
+    // Mapping to AutostartStatus on Win: Installed = Loaded = registry value
+    // exists. There's no disabled-but-present state in the Run key (the
+    // Task Manager → Startup apps toggle lives in a separate StartupApproved
+    // tree owned by user-facing UX, not us).
+    private const string WindowsRunKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
     private static AutostartResult InstallWindows(
         string label,
         string programPath,
         IReadOnlyList<string> programArgs)
     {
-        // schtasks /tr quoting is awful — needs nested double-quotes escaped
-        // with backslashes. Build the full command-line first.
+        // reg.exe /d expects the data string. Quote the exe path and append
+        // any args so logon launches the binary with the right command line.
         var sb = new StringBuilder();
-        sb.Append("\\\"").Append(programPath).Append("\\\"");
+        sb.Append('"').Append(programPath).Append('"');
         foreach (var a in programArgs)
             sb.Append(' ').Append(a);
-        var taskCommand = sb.ToString();
+        var commandLine = sb.ToString();
 
-        var args = $"/create /tn \"{label}\" /tr \"{taskCommand}\" /sc onlogon /rl limited /f";
-        var (code, output) = Run("schtasks", args);
+        // reg.exe quoting: wrap the /d value in double quotes; embedded
+        // quotes get escaped as \".
+        var escapedData = commandLine.Replace("\"", "\\\"");
+        var args = $"add \"{WindowsRunKey}\" /v \"{label}\" /t REG_SZ /d \"{escapedData}\" /f";
+        var (code, output) = Run("reg.exe", args);
         if (code != 0)
-            return new AutostartResult(false, $"schtasks /create failed: {output}");
+            return new AutostartResult(false, $"reg add failed: {output}");
 
-        // Fire it now so the user doesn't have to log out/in.
-        Run("schtasks", $"/run /tn \"{label}\"", ignoreFailure: true);
-        return new AutostartResult(true, $"Scheduled task '{label}' installed.");
+        return new AutostartResult(true, $"Registered in HKCU Run key as '{label}'.");
     }
 
     private static AutostartResult UninstallWindows(string label)
     {
-        var (code, output) = Run("schtasks", $"/delete /tn \"{label}\" /f", ignoreFailure: true);
-        // schtasks returns non-zero when the task doesn't exist — treat as success.
-        if (code != 0 && output.Contains("ERROR: The system cannot find"))
+        var (code, output) = Run("reg.exe", $"delete \"{WindowsRunKey}\" /v \"{label}\" /f", ignoreFailure: true);
+        // reg delete returns non-zero when the value is absent — treat as success.
+        if (code != 0 && (output.Contains("unable to find", StringComparison.OrdinalIgnoreCase) ||
+                          output.Contains("system was unable", StringComparison.OrdinalIgnoreCase)))
             return new AutostartResult(true, "Not installed; nothing to do.");
         return new AutostartResult(code == 0, output);
     }
 
     private static AutostartStatus StatusWindows(string label)
     {
-        var (code, output) = Run("schtasks", $"/query /tn \"{label}\" /v /fo list", ignoreFailure: true);
-        var installed = code == 0 && !string.IsNullOrWhiteSpace(output);
-        return new AutostartStatus(installed, installed, output.Trim());
+        var (code, output) = Run("reg.exe", $"query \"{WindowsRunKey}\" /v \"{label}\"", ignoreFailure: true);
+        // reg query exits 0 + prints the label + REG_SZ when present.
+        var present = code == 0 && output.Contains(label, StringComparison.OrdinalIgnoreCase);
+        return new AutostartStatus(present, present, output.Trim());
     }
+
+    // No disabled-but-present state in HKCU Run — Disable == Uninstall.
+    private static AutostartResult DisableWindows(string label) => UninstallWindows(label);
 
     // ---------- helpers ----------
 
@@ -240,6 +250,9 @@ public static class AutostartManager
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            // Explicit: suppress the console window that would otherwise flash
+            // when launching reg.exe / launchctl / etc. from a GUI app.
+            CreateNoWindow = true,
         };
         try
         {
