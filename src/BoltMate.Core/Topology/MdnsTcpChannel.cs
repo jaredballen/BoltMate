@@ -68,6 +68,28 @@ public sealed class MdnsTcpChannel : IDisposable
     /// </summary>
     public IObservable<TransportHealth> MdnsHealth => _mdnsHealth.AsObservable();
 
+    // TCP backchannel health. Tracks "Bonjour discovered N peer(s) but we
+    // can't open the TCP port to them" — a different failure mode from a
+    // blocked discovery: discovery works but the per-port firewall rule
+    // on the peer rejects the connection.
+    private long _tcpConnectAttempts;
+    private long _tcpConnectFailures;
+    private DateTimeOffset _lastTcpConnectSuccess;
+    private DateTimeOffset _lastPeerDiscovered;
+    private string? _lastTcpFailureMessage;
+    private readonly System.Reactive.Subjects.BehaviorSubject<TransportHealth> _tcpHealth;
+    private TransportState _lastTcpState = TransportState.Unknown;
+    private static readonly TimeSpan TcpConnectGrace = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Health of the TCP backchannel used to deliver announcements
+    /// reliably between Bonjour-discovered peers. Independent from
+    /// <see cref="MdnsHealth"/> so we can distinguish "Bonjour discovery
+    /// works but the peer's TCP port is blocked" from "Bonjour itself
+    /// is broken."
+    /// </summary>
+    public IObservable<TransportHealth> TcpHealth => _tcpHealth.AsObservable();
+
     public MdnsTcpChannel(
         UdpTopologyService udp,
         TopologySettings settings,
@@ -80,7 +102,54 @@ public sealed class MdnsTcpChannel : IDisposable
         _logger = logger ?? NullLogger<MdnsTcpChannel>.Instance;
         _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
             TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
+        _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
+            TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet"));
         _disposables.Add(_mdnsHealth);
+        _disposables.Add(_tcpHealth);
+    }
+
+    private string TcpEndpointLabel() => $"TCP backchannel (port {_settings.TcpPort})";
+
+    private void EmitTcpHealth(TransportState state, string detail)
+    {
+        if (_lastTcpState == state) return;
+        _lastTcpState = state;
+        _tcpHealth.OnNext(new TransportHealth(state, TcpEndpointLabel(), detail, DateTimeOffset.UtcNow));
+    }
+
+    private void RecomputeTcpHealth()
+    {
+        // No peers discovered yet → can't say whether we'd reach them.
+        if (_lastPeerDiscovered == default)
+        {
+            EmitTcpHealth(TransportState.Unknown, "no Bonjour peers discovered yet");
+            return;
+        }
+
+        // Currently-connected client count is the strongest positive signal.
+        var connected = 0;
+        foreach (var c in _peerClients.Values) if (c.Connected) connected++;
+        if (connected > 0)
+        {
+            EmitTcpHealth(TransportState.Healthy,
+                $"connected to {connected} peer{(connected == 1 ? "" : "s")} via TCP");
+            return;
+        }
+
+        // No connection right now. If it's been long enough since the first
+        // discovery for at least one connect attempt to have settled, call it
+        // Blocked — otherwise we're still mid-attempt.
+        var sinceDiscover = DateTimeOffset.UtcNow - _lastPeerDiscovered;
+        if (sinceDiscover < TcpConnectGrace)
+        {
+            EmitTcpHealth(TransportState.Unknown, $"connect attempts in flight ({sinceDiscover.TotalSeconds:F0}s since discovery)");
+            return;
+        }
+
+        EmitTcpHealth(TransportState.Blocked,
+            $"discovered peer(s) via Bonjour but couldn't open TCP port {_settings.TcpPort}. " +
+            "The peer likely has a firewall inbound rule blocking the port — verify BoltMate is allowed through Windows Defender Firewall / macOS Local Network access on that machine. " +
+            (_lastTcpFailureMessage is null ? "" : $"Last error: {_lastTcpFailureMessage}"));
     }
 
     private string MdnsEndpointLabel() =>
@@ -197,6 +266,7 @@ public sealed class MdnsTcpChannel : IDisposable
                 try { _serviceDiscovery?.QueryServiceInstances(NormaliseServiceName(_settings.MdnsServiceType)); }
                 catch { /* best effort */ }
                 RecomputeMdnsHealth();
+                RecomputeTcpHealth();
             }, null, dueTime: TimeSpan.FromSeconds(5), period: TimeSpan.FromSeconds(10));
 
             _logger.LogInformation("MdnsTcp: mDNS publisher started ({Service}, instance {Instance}, TCP {Port})",
@@ -354,7 +424,12 @@ public sealed class MdnsTcpChannel : IDisposable
             if (endpoint is null) return;
             if (string.IsNullOrEmpty(peerMachineId) || peerMachineId == _machineId) return;
 
+            // Stamp the first time we observed a peer via Bonjour. After the
+            // TcpConnectGrace window has elapsed without a successful
+            // connect, TcpHealth flips to Blocked.
+            if (_lastPeerDiscovered == default) _lastPeerDiscovered = DateTimeOffset.UtcNow;
             EnsureClientFor(peerMachineId, endpoint);
+            RecomputeTcpHealth();
         }
         catch (Exception ex)
         {
@@ -369,18 +444,24 @@ public sealed class MdnsTcpChannel : IDisposable
 
         _ = Task.Run(async () =>
         {
+            System.Threading.Interlocked.Increment(ref _tcpConnectAttempts);
             try
             {
                 var client = new TcpClient { NoDelay = true };
                 await client.ConnectAsync(endpoint.Address, endpoint.Port, _cts.Token).ConfigureAwait(false);
                 _peerClients[peerMachineId] = client;
+                _lastTcpConnectSuccess = DateTimeOffset.UtcNow;
                 _logger.LogInformation("MdnsTcp: outbound TCP connected to peer {Machine} at {Endpoint}",
                     peerMachineId, endpoint);
+                RecomputeTcpHealth();
             }
             catch (Exception ex)
             {
+                System.Threading.Interlocked.Increment(ref _tcpConnectFailures);
+                _lastTcpFailureMessage = ex.Message;
                 _logger.LogDebug(ex, "MdnsTcp: connect to peer {Machine} at {Endpoint} failed",
                     peerMachineId, endpoint);
+                RecomputeTcpHealth();
             }
         });
     }
