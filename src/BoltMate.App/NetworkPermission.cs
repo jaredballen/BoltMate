@@ -437,51 +437,51 @@ public static class NetworkPermission
 
     private static Result CheckWindows()
     {
-        // Two-axis read: NLM profile category AND firewall rule action for
-        // our exe. Private/Domain profiles allow discovery by default — no
-        // rule needed. Public requires an explicit Allow rule.
+        // Source of truth on Windows is the firewall rule for our exe, NOT
+        // the NLM profile category. Earlier impl returned Granted whenever
+        // the profile was Private or Domain — but Windows Defender Firewall
+        // still prompts the user on the FIRST inbound bind even on Private,
+        // because no rule exists for the exe yet. That meant the welcome
+        // wizard auto-advanced past the Network primer, then the Defender
+        // prompt fired moments later when topology service bound a UDP
+        // listener — exactly the surprise we're trying to avoid.
+        //
+        // New behavior:
+        //   • Allow rule exists  → Granted
+        //   • Block rule exists  → Denied (user / IT explicitly denied)
+        //   • No rule yet        → Denied so the wizard surfaces the primer
+        //                          and the Grant flow can trigger the prompt
+        //                          deliberately before topology binds.
+        // Profile is captured in the Detail string for diagnostics but is
+        // no longer a gate.
         try
         {
             var profileName = TryGetActiveProfile();
-            if (profileName is null)
+            Log.LogDebug("CheckWindows: NLM profile = {Profile}", profileName ?? "unknown");
+
+            var exe = Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(exe))
             {
-                Log.LogWarning("CheckWindows: NLM returned no active profile → Unknown");
-                return new Result(Status.Unknown, "Network profile: unknown");
-            }
-            Log.LogDebug("CheckWindows: NLM profile = {Profile}", profileName);
-
-            if (string.Equals(profileName, "Private", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(profileName, "Domain", StringComparison.OrdinalIgnoreCase))
-                return new Result(Status.Granted, $"Network: {profileName} (allowed by default)");
-
-            if (string.Equals(profileName, "Public", StringComparison.OrdinalIgnoreCase))
-            {
-                var exe = Process.GetCurrentProcess().MainModule?.FileName;
-                if (string.IsNullOrEmpty(exe))
-                {
-                    Log.LogWarning("CheckWindows: could not resolve own exe path → Unknown");
-                    return new Result(Status.Unknown, "Network: Public (could not resolve own exe)");
-                }
-
-                var action = QueryFirewallRuleAction(exe);
-                Log.LogInformation(
-                    "CheckWindows: profile=Public exe={Exe} firewall={Action}",
-                    exe, action);
-                return action switch
-                {
-                    FirewallAction.Allow => new Result(Status.Granted, "Network: Public + firewall allowed"),
-                    FirewallAction.Block => new Result(Status.Denied,  "Network: Public + firewall blocks"),
-                    _                    => new Result(Status.Denied,  "Network: Public (no firewall rule yet)"),
-                };
+                Log.LogWarning("CheckWindows: could not resolve own exe path → Unknown");
+                return new Result(Status.Unknown, "Network: could not resolve own exe");
             }
 
-            Log.LogInformation("CheckWindows: unrecognised profile name '{Profile}' → Unknown", profileName);
-            return new Result(Status.Unknown, $"Network: {profileName}");
+            var action = QueryFirewallRuleAction(exe);
+            Log.LogInformation(
+                "CheckWindows: profile={Profile} exe={Exe} firewall={Action}",
+                profileName ?? "unknown", exe, action);
+
+            return action switch
+            {
+                FirewallAction.Allow => new Result(Status.Granted, $"Network: firewall allow rule present ({profileName ?? "?"})"),
+                FirewallAction.Block => new Result(Status.Denied,  $"Network: firewall blocks BoltMate ({profileName ?? "?"})"),
+                _                    => new Result(Status.Denied,  $"Network: no firewall rule yet ({profileName ?? "?"})"),
+            };
         }
         catch (Exception ex)
         {
             Log.LogWarning(ex, "CheckWindows threw → Unknown");
-            return new Result(Status.Unknown, "Network profile: unknown");
+            return new Result(Status.Unknown, "Network: probe failed");
         }
     }
 
