@@ -51,6 +51,18 @@ public sealed class UdpTopologyService : IDisposable
     // Send-side counters — increments for every attempt; errors are SocketExceptions.
     private long _sendAttempts;
     private long _sendErrors;
+    // Self-echo tracking — every outbound packet stamps its seq into
+    // _outboundTracking; if the same seq comes back through HandleInbound
+    // with our own MachineId, we mark the outcome "echoed". Outcomes outside
+    // the echo window flip to "lost" during the broadcast tick sweep. The
+    // health observable derives Healthy/Blocked from the recent outcomes.
+    private sealed record OutboundTrack(DateTimeOffset SentAt);
+    private readonly ConcurrentDictionary<ulong, OutboundTrack> _outboundTracking = new();
+    private readonly ConcurrentQueue<bool> _recentOutcomes = new();
+    private const int OutcomeWindowSize = 30;
+    private static readonly TimeSpan EchoWindow = TimeSpan.FromMilliseconds(500);
+    private const double HealthyEchoRateThreshold = 0.4;
+    private readonly System.Reactive.Subjects.BehaviorSubject<TransportHealth> _udpHealth;
     private UdpClient? _socket;
     private CancellationTokenSource? _cts;
     private IPAddress? _multicastAddress;
@@ -68,6 +80,16 @@ public sealed class UdpTopologyService : IDisposable
     /// <summary>Send-side counters: total attempts, total errors (SocketException etc).</summary>
     public (long Attempts, long Errors) SendStats =>
         (Interlocked.Read(ref _sendAttempts), Interlocked.Read(ref _sendErrors));
+
+    /// <summary>
+    /// Self-echo health of the UDP/multicast transport. Derived from the rate
+    /// at which our own outbound packets bounce back through the receive
+    /// socket within <see cref="EchoWindow"/>. <see cref="TransportState.Blocked"/>
+    /// catches the macOS Local Network TCC silent-drop case and the Win
+    /// firewall inbound block — neither throws on send but neither echoes
+    /// back either.
+    /// </summary>
+    public IObservable<TransportHealth> UdpHealth => _udpHealth.AsObservable();
 
     /// <summary>Snapshot of per-peer observability for the diagnostics UI.</summary>
     public IReadOnlyCollection<PeerStats> PeerSnapshot => _peerStats.Values.ToArray();
@@ -99,7 +121,66 @@ public sealed class UdpTopologyService : IDisposable
         _machineId = machineId;
         _hostname = SafeHostname();
         _logger = logger ?? NullLogger<UdpTopologyService>.Instance;
+        _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
+            TransportHealth.Unknown(
+                $"{_settings.MulticastGroup}:{_settings.Port}",
+                "no broadcasts emitted yet"));
         _disposables.Add(_announcements);
+        _disposables.Add(_udpHealth);
+    }
+
+    private TransportState _lastUdpState = TransportState.Unknown;
+
+    private void EmitUdpHealth(TransportState state, string detail)
+    {
+        if (_lastUdpState == state) return;
+        _lastUdpState = state;
+        _udpHealth.OnNext(new TransportHealth(
+            state,
+            $"{_settings.MulticastGroup}:{_settings.Port}",
+            detail,
+            DateTimeOffset.UtcNow));
+    }
+
+    private void RecomputeUdpHealth()
+    {
+        var outcomes = _recentOutcomes.ToArray();
+        if (outcomes.Length < 3)
+        {
+            EmitUdpHealth(TransportState.Unknown, $"waiting for outbound to settle ({outcomes.Length}/3)");
+            return;
+        }
+        var echoed = 0;
+        foreach (var o in outcomes) if (o) echoed++;
+        var rate = (double)echoed / outcomes.Length;
+        if (rate >= HealthyEchoRateThreshold)
+        {
+            EmitUdpHealth(TransportState.Healthy,
+                $"{echoed}/{outcomes.Length} recent broadcasts echoed back ({rate * 100:F0}%)");
+        }
+        else
+        {
+            EmitUdpHealth(TransportState.Blocked,
+                $"only {echoed}/{outcomes.Length} recent broadcasts echoed back. " +
+                "Multicast loopback is being dropped — check Local Network permission (macOS) or firewall inbound rule (Windows).");
+        }
+    }
+
+    private void SweepExpiredOutbound()
+    {
+        var cutoff = DateTimeOffset.UtcNow - EchoWindow;
+        var changed = false;
+        foreach (var kv in _outboundTracking)
+        {
+            if (kv.Value.SentAt > cutoff) continue;
+            if (_outboundTracking.TryRemove(kv.Key, out _))
+            {
+                _recentOutcomes.Enqueue(false);
+                while (_recentOutcomes.Count > OutcomeWindowSize) _recentOutcomes.TryDequeue(out _);
+                changed = true;
+            }
+        }
+        if (changed) RecomputeUdpHealth();
     }
 
     /// <summary>Opens the socket, starts the broadcast timer and the receive loop. Idempotent.</summary>
@@ -114,6 +195,10 @@ public sealed class UdpTopologyService : IDisposable
             _socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             _socket.Client.Bind(new IPEndPoint(IPAddress.Any, _settings.Port));
             _socket.EnableBroadcast = true;
+            // Self-echo health detection depends on receiving our own
+            // multicast sends back through the same socket. Default is
+            // already on for most platforms, but set explicitly to be sure.
+            _socket.MulticastLoopback = true;
 
             if (_settings.UseMulticast && IPAddress.TryParse(_settings.MulticastGroup, out var mcast))
             {
@@ -218,6 +303,7 @@ public sealed class UdpTopologyService : IDisposable
                 var payload = BuildAnnouncement(seq);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                 try { _outgoing.OnNext(payload); } catch { /* observers must not block sends */ }
+                _outboundTracking[seq] = new OutboundTrack(DateTimeOffset.UtcNow);
                 var endpoints = AllEndpoints();
 
                 // N× repeats — same Seq each time. Peers dedup.
@@ -247,6 +333,11 @@ public sealed class UdpTopologyService : IDisposable
             {
                 _logger.LogWarning(ex, "Topology broadcast tick failed");
             }
+
+            // After every tick, age out outbound seqs that didn't get an
+            // echo within EchoWindow. They count as "lost" outcomes — which
+            // is the signal that multicast is being dropped silently.
+            SweepExpiredOutbound();
 
             sleep:
             // Cadence: tighter while inside a burst window, otherwise normal.
@@ -298,7 +389,20 @@ public sealed class UdpTopologyService : IDisposable
 
     private void HandleInbound(ReceiverAnnouncement announcement, string channel)
     {
-        if (announcement.MachineId == _machineId) return; // own packet bouncing back
+        if (announcement.MachineId == _machineId)
+        {
+            // Own packet bouncing back — invaluable signal: it tells us the
+            // OS actually let the multicast out AND the receive socket is
+            // seeing local-network traffic. Mark this seq as echoed, then
+            // re-derive health.
+            if (_outboundTracking.TryRemove(announcement.Seq, out _))
+            {
+                _recentOutcomes.Enqueue(true);
+                while (_recentOutcomes.Count > OutcomeWindowSize) _recentOutcomes.TryDequeue(out _);
+                RecomputeUdpHealth();
+            }
+            return;
+        }
 
         var key = announcement.MachineId;
         if (_lastSeenSeq.TryGetValue(key, out var lastSeq) && announcement.Seq <= lastSeq)
