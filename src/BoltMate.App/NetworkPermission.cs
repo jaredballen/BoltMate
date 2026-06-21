@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -125,19 +126,182 @@ public static class NetworkPermission
 
     private static bool RequestWindows()
     {
-        // Windows has no per-app local-network TCC prompt. The closest
-        // analogue is the firewall dialog that fires the FIRST time a process
-        // opens a UDP listening socket on a Public profile — that happens
-        // later when the topology service starts. Best we can do from the
-        // welcome wizard is route the user to the OS Network settings so
-        // they can flip to a Private profile if needed.
+        // Windows Defender Firewall fires the "Allow access" prompt the FIRST
+        // time an unknown process opens an inbound listening socket on the
+        // active profile. Subsequent binds reuse whatever rule the user
+        // committed last time — Allow / Block — without re-prompting.
+        //
+        // Mac-style Grant flow on Windows:
+        //   1. If we already have an Allow rule for this exe → no-op
+        //   2. If we have a Block rule → try to delete it (per-user rules
+        //      are removable without admin; machine-wide are not). Then
+        //      fall through to bind so the prompt re-fires.
+        //   3. If no rule exists → bind a TcpListener for a few seconds to
+        //      surface the OS prompt.
+        //   4. If we can't delete a Block rule → open the Windows Defender
+        //      Firewall pane so the user can toggle the entry by hand.
+        if (!OperatingSystem.IsWindows()) return false;
+
+        var exe = Process.GetCurrentProcess().MainModule?.FileName;
+        if (string.IsNullOrEmpty(exe))
+        {
+            Trace.WriteLine("NetworkPermission.RequestWindows: could not resolve own exe path");
+            OpenSystemSettings();
+            return false;
+        }
+
+        var action = QueryFirewallRuleAction(exe);
+        if (action == FirewallAction.Allow) return true;
+
+        if (action == FirewallAction.Block)
+        {
+            if (!TryRemoveFirewallRulesForExe(exe))
+            {
+                Trace.WriteLine("NetworkPermission.RequestWindows: could not remove existing Block rule — opening Settings");
+                OpenSystemSettings();
+                return false;
+            }
+        }
+
+        // Bind an inbound listener. The first bind from an unknown process
+        // triggers the prompt. We keep the listener up briefly so the user
+        // has time to click Allow — the polling service notices the new
+        // rule and auto-advances independently.
         try
         {
-            Process.Start(new ProcessStartInfo("ms-settings:network") { UseShellExecute = true });
+            using var listener = new TcpListener(IPAddress.Any, 41420);
+            listener.Start();
+            System.Threading.Thread.Sleep(5000);
+            listener.Stop();
             return true;
         }
-        catch
+        catch (SocketException ex)
         {
+            Trace.WriteLine($"NetworkPermission.RequestWindows: listener bind failed ({ex.SocketErrorCode})");
+            OpenSystemSettings();
+            return false;
+        }
+    }
+
+    private enum FirewallAction { None, Allow, Block }
+
+    private static FirewallAction QueryFirewallRuleAction(string exePath)
+    {
+        if (!OperatingSystem.IsWindows()) return FirewallAction.None;
+        try
+        {
+            var type = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (type is null) return FirewallAction.None;
+            var policy = Activator.CreateInstance(type);
+            if (policy is null) return FirewallAction.None;
+            try
+            {
+                var rules = type.InvokeMember("Rules",
+                    System.Reflection.BindingFlags.GetProperty, null, policy, null);
+                if (rules is not System.Collections.IEnumerable iter) return FirewallAction.None;
+
+                bool sawAllow = false, sawBlock = false;
+                foreach (var rule in iter)
+                {
+                    if (rule is null) continue;
+                    var rt = rule.GetType();
+                    var appName = rt.InvokeMember("ApplicationName",
+                        System.Reflection.BindingFlags.GetProperty, null, rule, null) as string;
+                    if (string.IsNullOrEmpty(appName)) continue;
+                    if (!string.Equals(appName, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var dirObj = rt.InvokeMember("Direction",
+                        System.Reflection.BindingFlags.GetProperty, null, rule, null);
+                    if (Convert.ToInt32(dirObj) != 1 /* NET_FW_RULE_DIR_IN */) continue;
+
+                    var enabledObj = rt.InvokeMember("Enabled",
+                        System.Reflection.BindingFlags.GetProperty, null, rule, null);
+                    if (enabledObj is bool b && !b) continue;
+
+                    var actObj = rt.InvokeMember("Action",
+                        System.Reflection.BindingFlags.GetProperty, null, rule, null);
+                    var act = Convert.ToInt32(actObj);
+                    if (act == 1 /* NET_FW_ACTION_ALLOW */) sawAllow = true;
+                    else if (act == 0 /* NET_FW_ACTION_BLOCK */) sawBlock = true;
+                }
+
+                // Allow wins if anything allows; Block only when no Allow.
+                if (sawAllow) return FirewallAction.Allow;
+                if (sawBlock) return FirewallAction.Block;
+                return FirewallAction.None;
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(policy);
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"NetworkPermission.QueryFirewallRuleAction failed: {ex.Message}");
+            return FirewallAction.None;
+        }
+    }
+
+    private static bool TryRemoveFirewallRulesForExe(string exePath)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            var type = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (type is null) return false;
+            var policy = Activator.CreateInstance(type);
+            if (policy is null) return false;
+            try
+            {
+                var rules = type.InvokeMember("Rules",
+                    System.Reflection.BindingFlags.GetProperty, null, policy, null);
+                if (rules is null) return false;
+
+                // Collect names first — can't modify collection mid-enumerate.
+                var toRemove = new List<string>();
+                if (rules is System.Collections.IEnumerable iter)
+                {
+                    foreach (var rule in iter)
+                    {
+                        if (rule is null) continue;
+                        var rt = rule.GetType();
+                        var appName = rt.InvokeMember("ApplicationName",
+                            System.Reflection.BindingFlags.GetProperty, null, rule, null) as string;
+                        if (string.IsNullOrEmpty(appName)) continue;
+                        if (!string.Equals(appName, exePath, StringComparison.OrdinalIgnoreCase)) continue;
+                        var name = rt.InvokeMember("Name",
+                            System.Reflection.BindingFlags.GetProperty, null, rule, null) as string;
+                        if (!string.IsNullOrEmpty(name)) toRemove.Add(name);
+                    }
+                }
+
+                if (toRemove.Count == 0) return false;
+
+                bool anyFailed = false;
+                var rulesType = rules.GetType();
+                foreach (var name in toRemove)
+                {
+                    try
+                    {
+                        rulesType.InvokeMember("Remove",
+                            System.Reflection.BindingFlags.InvokeMethod, null, rules, new object[] { name });
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.WriteLine($"NetworkPermission.TryRemove: Rules.Remove(\"{name}\") failed: {ex.Message}");
+                        anyFailed = true;
+                    }
+                }
+                return !anyFailed;
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(policy);
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"NetworkPermission.TryRemoveFirewallRulesForExe failed: {ex.Message}");
             return false;
         }
     }
@@ -156,7 +320,10 @@ public static class NetworkPermission
             }
             else if (OperatingSystem.IsWindows())
             {
-                Process.Start(new ProcessStartInfo("ms-settings:network") { UseShellExecute = true });
+                // Allowed apps pane in classic Control Panel — most direct
+                // path for the user to toggle our app's network access.
+                // ms-settings has no per-app firewall deep-link as of Win 11.
+                Process.Start(new ProcessStartInfo("control.exe", "firewall.cpl") { UseShellExecute = true });
             }
         }
         catch
@@ -228,10 +395,9 @@ public static class NetworkPermission
 
     private static Result CheckWindows()
     {
-        // Heuristic: locate an "Up" interface that has a default gateway.
-        // If we can name one and it's classified Private, broadcast/multicast
-        // is allowed. If only a Public interface is present, Windows blocks
-        // most discovery traffic by default — surface that to the user.
+        // Two-axis read: NLM profile category AND firewall rule action for
+        // our exe. Private/Domain profiles allow discovery by default — no
+        // rule needed. Public requires an explicit Allow rule.
         try
         {
             var profileName = TryGetActiveProfile();
@@ -240,10 +406,22 @@ public static class NetworkPermission
 
             if (string.Equals(profileName, "Private", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(profileName, "Domain", StringComparison.OrdinalIgnoreCase))
-                return new Result(Status.Granted, $"Network: {profileName} (OK)");
+                return new Result(Status.Granted, $"Network: {profileName} (allowed by default)");
 
             if (string.Equals(profileName, "Public", StringComparison.OrdinalIgnoreCase))
-                return new Result(Status.Denied, "Network: Public (discovery blocked)");
+            {
+                var exe = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exe))
+                    return new Result(Status.Unknown, "Network: Public (could not resolve own exe)");
+
+                var action = QueryFirewallRuleAction(exe);
+                return action switch
+                {
+                    FirewallAction.Allow => new Result(Status.Granted, "Network: Public + firewall allowed"),
+                    FirewallAction.Block => new Result(Status.Denied,  "Network: Public + firewall blocks"),
+                    _                    => new Result(Status.Denied,  "Network: Public (no firewall rule yet)"),
+                };
+            }
 
             return new Result(Status.Unknown, $"Network: {profileName}");
         }
