@@ -1,0 +1,41 @@
+{
+  "folders": [
+    { "path": "." }
+  ],
+  "settings": {
+    "dotnet.defaultSolution": "src/BoltMate.sln",
+    "omnisharp.useModernNet": true,
+    "files.exclude": {
+      "**/bin": true,
+      "**/obj": true,
+      "**/.vs": true
+    },
+    "search.exclude": {
+      "**/bin": true,
+      "**/obj": true,
+      "**/*.lock.json": true
+    },
+    "files.associations": {
+      "*.axaml": "xml",
+      "*.csproj": "xml",
+      "*.props": "xml",
+      "*.targets": "xml"
+    },
+    "chat.agent.enabled": true,
+    "chat.agent.maxRequests": 25,
+    "chat.tools.autoApprove": true,
+    "github.copilot.chat.codesearch.enabled": true,
+    "github.copilot.nextEditSuggestions.enabled": true
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-dotnettools.csdevkit",
+      "ms-dotnettools.csharp",
+      "ms-dotnettools.vscode-dotnet-runtime",
+      "avaloniateam.vscode-avalonia",
+      "github.copilot",
+      "github.copilot-chat",
+      "editorconfig.editorconfig"
+    ]
+  }
+}
