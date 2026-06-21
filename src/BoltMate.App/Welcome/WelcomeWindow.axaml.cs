@@ -249,12 +249,23 @@ public partial class WelcomeWindow : Window
         return permission.IsGrantedChanged
             .Subscribe(granted =>
             {
-                UpdateStatusLineForCurrentPage();
-                if (granted)
+                if (_quitting || _completedSuccessfully) return;
+                try
                 {
-                    _log.LogInformation("Auto-advance: {Permission} granted while on {Page}", permission.Name, pageName);
-                    SaveCheckpoint(permission.Name);
-                    AdvanceToNextRequiredPermissionOrDone();
+                    UpdateStatusLineForCurrentPage();
+                    if (granted)
+                    {
+                        _log.LogInformation("Auto-advance: {Permission} granted while on {Page}", permission.Name, pageName);
+                        SaveCheckpoint(permission.Name);
+                        AdvanceToNextRequiredPermissionOrDone();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Page watcher lambda must never escape — Rx routes
+                    // exceptions to the scheduler which can tear the
+                    // process down during teardown.
+                    _log.LogWarning(ex, "Page watcher swallowed for {Permission}", permission.Name);
                 }
             });
     }

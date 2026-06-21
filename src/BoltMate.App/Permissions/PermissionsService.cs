@@ -51,12 +51,23 @@ public sealed class PermissionsService : IPermissionsService
         _autostart = new AutostartPermissionImpl(lf.CreateLogger<AutostartPermissionImpl>());
 
         _timer = new DispatcherTimer { Interval = PollInterval };
-        _timer.Tick += (_, _) => Refresh();
+        _timer.Tick += OnTick;
         _timer.Start();
+    }
+
+    private void OnTick(object? sender, EventArgs e)
+    {
+        // Tick may fire one more time after Stop() if it was already queued
+        // on the dispatcher. Disposed subjects would throw on OnNext —
+        // catch everything so the dispatcher loop doesn't tear the process
+        // down during shutdown.
+        try { Refresh(); }
+        catch (Exception ex) { _log.LogWarning(ex, "Refresh swallowed during shutdown race"); }
     }
 
     public void Refresh()
     {
+        if (_disposed) return;
         _network.PollAndPublish();
         _inputMonitoring.PollAndPublish();
         _autostart.PollAndPublish();
@@ -80,6 +91,7 @@ public sealed class PermissionsService : IPermissionsService
     {
         private readonly BehaviorSubject<bool> _subject;
         protected readonly ILogger Log;
+        private bool _disposed;
 
         protected PermissionBase(string name, ILogger log)
         {
@@ -156,6 +168,7 @@ public sealed class PermissionsService : IPermissionsService
 
         public void PollAndPublish()
         {
+            if (_disposed) return;
             bool next;
             try { next = ProbeOs(); }
             catch (Exception ex)
@@ -163,14 +176,23 @@ public sealed class PermissionsService : IPermissionsService
                 Log.LogWarning(ex, "Probe threw for {Name}", Name);
                 return;
             }
-            if (next != _subject.Value)
+            try
             {
-                Log.LogInformation("Permission {Name} → {Granted}", Name, next);
-                _subject.OnNext(next);
+                if (next != _subject.Value)
+                {
+                    Log.LogInformation("Permission {Name} → {Granted}", Name, next);
+                    _subject.OnNext(next);
+                }
             }
+            catch (ObjectDisposedException) { /* shutdown race — swallow */ }
+            catch (Exception ex) { Log.LogWarning(ex, "PollAndPublish OnNext threw for {Name}", Name); }
         }
 
-        public void Dispose() => _subject.Dispose();
+        public void Dispose()
+        {
+            _disposed = true;
+            try { _subject.Dispose(); } catch { /* idempotent */ }
+        }
     }
 
     internal sealed class NetworkPermissionImpl : PermissionBase

@@ -24,11 +24,35 @@ class Program
         if (!TryAcquireInstanceLock())
             return;
 
+        // Last-resort unhandled exception sink so we always get a written
+        // record of what threw — without these hooks, Avalonia / .NET
+        // route fatal exceptions to the OS crash reporter only.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            TryWriteCrashRecord("UnhandledException", e.ExceptionObject as Exception);
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            TryWriteCrashRecord("UnobservedTaskException", e.Exception);
+            e.SetObserved();
+        };
+
         // macOS: set NSProcessInfo.processName BEFORE Avalonia bootstraps so
         // its native menu builder picks up the right title. Without this the
         // app menu reads "Avalonia Application".
         MacActivationPolicy.SetProcessName("BoltMate");
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    private static void TryWriteCrashRecord(string kind, Exception? ex)
+    {
+        try
+        {
+            var dir = AppPaths.LogsDirectory;
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"boltmate-crash-{DateTime.Now:yyyyMMdd-HHmmss-fff}.log");
+            File.WriteAllText(path,
+                $"BoltMate.App {kind} @ {DateTime.UtcNow:O}\n\n{ex}\n");
+        }
+        catch { /* best-effort */ }
     }
 
     private static bool TryAcquireInstanceLock()
