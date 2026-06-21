@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -101,14 +102,22 @@ public partial class WelcomeWindow : Window
         // silently — the rest of the app is already running.
         Closing += (_, _) =>
         {
-            if (_completedSuccessfully) return;
+            // Guard against re-entry. QuitApp -> desktop.Shutdown() will fire
+            // Close on every window, causing this Closing handler to fire
+            // again. Without the guard we'd recurse to stack overflow (and
+            // we crashed exactly like this when macOS sent a Quit AppleEvent
+            // after the Input Monitoring grant required us to relaunch).
+            if (_completedSuccessfully || _quitting) return;
             if (_isFirstRun)
             {
+                _quitting = true;
                 _log.LogInformation("Welcome wizard dismissed without completion — quitting app");
                 QuitApp();
             }
         };
     }
+
+    private bool _quitting;
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
@@ -189,6 +198,12 @@ public partial class WelcomeWindow : Window
     /// for the first one that is currently NOT granted. If every required
     /// permission is already granted, jumps to Done.
     /// </summary>
+    // Once a primer has been shown in this WelcomeWindow session we don't
+    // re-present it even if the user hasn't granted yet — they advance via
+    // Grant/Not-now buttons. Without this tracking the Check()-based gate
+    // could loop the user back to the same primer after they tap Grant.
+    private readonly HashSet<string> _primersShownThisSession = new();
+
     private void AdvanceToNextRequiredPermissionOrDone()
     {
         // Network is required on Mac + Windows.
@@ -196,9 +211,18 @@ public partial class WelcomeWindow : Window
         {
             NetworkPermission.Invalidate();
             var net = NetworkPermission.Check();
-            if (net.Status != NetworkPermission.Status.Granted)
+            var alreadyShown = _primersShownThisSession.Contains(PermissionNetwork);
+            // On first-run we ALWAYS show the network primer at least once.
+            // NetworkPermission.Check on macOS is unreliable before TCC has
+            // decided (it can return Granted while the prompt hasn't actually
+            // appeared yet), so a Check-only gate would skip the primer
+            // entirely on the user's first launch.
+            var requireShow = _isFirstRun && !alreadyShown;
+            if (requireShow || net.Status != NetworkPermission.Status.Granted)
             {
-                _log.LogInformation("Permission gate: network = {Status} — showing primer", net.Status);
+                _log.LogInformation("Permission gate: network = {Status}, firstRun={First}, alreadyShown={Shown} — showing primer",
+                    net.Status, _isFirstRun, alreadyShown);
+                _primersShownThisSession.Add(PermissionNetwork);
                 ShowPage("PageNetworkPrimer");
                 return;
             }
@@ -208,9 +232,13 @@ public partial class WelcomeWindow : Window
         if (OperatingSystem.IsMacOS())
         {
             var im = InputMonitoringPermission.Check();
-            if (im != InputMonitoringPermission.Status.Granted)
+            var alreadyShown = _primersShownThisSession.Contains(PermissionInputMonitoring);
+            var requireShow = _isFirstRun && !alreadyShown;
+            if (requireShow || im != InputMonitoringPermission.Status.Granted)
             {
-                _log.LogInformation("Permission gate: input-monitoring = {Status} — showing primer", im);
+                _log.LogInformation("Permission gate: input-monitoring = {Status}, firstRun={First}, alreadyShown={Shown} — showing primer",
+                    im, _isFirstRun, alreadyShown);
+                _primersShownThisSession.Add(PermissionInputMonitoring);
                 ShowPage("PageInputMonitoringPrimer");
                 return;
             }
