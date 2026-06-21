@@ -105,19 +105,23 @@ public partial class WelcomeWindow : Window
         // silently — the rest of the app is already running.
         Closing += (_, _) =>
         {
-            // Guard against re-entry. QuitApp -> desktop.Shutdown() will fire
-            // Close on every window, causing this Closing handler to fire
-            // again. Without the guard we'd recurse to stack overflow (and
-            // we crashed exactly like this when macOS sent a Quit AppleEvent
-            // after the Input Monitoring grant required us to relaunch).
+            // Re-entry guard MUST come first. QuitApp -> desktop.Shutdown()
+            // fires Close on every window, which re-enters this handler. If
+            // we let it past, the second pass calls Cancel/Dispose on an
+            // already-disposed CancellationTokenSource and throws
+            // ObjectDisposedException out of the dispatcher — that's
+            // exactly the SIGABRT crash that recurred through the
+            // HID-grant forced quit.
+            if (_quitting || _completedSuccessfully) return;
+            _quitting = true;
+
             _currentPageSubscription?.Dispose();
-            _grantCts.Cancel();
-            _grantCts.Dispose();
+            try { _grantCts.Cancel(); } catch (ObjectDisposedException) { /* belt + suspenders */ }
+            try { _grantCts.Dispose(); } catch (ObjectDisposedException) { }
             _disposables.Dispose();
-            if (_completedSuccessfully || _quitting) return;
+
             if (_isFirstRun)
             {
-                _quitting = true;
                 _log.LogInformation("Welcome wizard dismissed without completion — quitting app");
                 QuitApp();
             }
