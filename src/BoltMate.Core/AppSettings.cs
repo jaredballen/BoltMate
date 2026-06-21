@@ -20,26 +20,6 @@ public sealed class AppSettings
     public Dictionary<string, ReceiverSettings> Receivers { get; set; } = new();
 
     /// <summary>
-    /// Persisted host-binding cache — keyed by receiver serial, then device
-    /// index, then host slot. Lets us populate the topology view immediately
-    /// on startup before any device wakes up. Refreshed on every link-up.
-    /// </summary>
-    public Dictionary<string, Dictionary<byte, Dictionary<byte, PersistedHostBinding>>> CachedHostBindings { get; set; }
-        = new();
-
-    /// <summary>
-    /// Cached receiver-level identifier (the 6-byte value read from
-    /// RECEIVER_INFO 0x03 — the receiver's per-installation pairing id).
-    /// Keyed by receiver HID path. Lets us populate
-    /// <see cref="Bolt.BoltReceiver.HostIdentifier"/> immediately on
-    /// startup before <see cref="Bolt.BoltReceiver.GetReceiverDetailsAsync"/>
-    /// completes — critical for cross-machine topology announcements when a
-    /// device first arrives on a host before any other device has enriched
-    /// to provide an inference target.
-    /// </summary>
-    public Dictionary<string, string> CachedReceiverIdentifiers { get; set; } = new();
-
-    /// <summary>
     /// Has the first-run welcome / permission-priming wizard finished? Set to
     /// true by <c>WelcomeWindow</c> when the user clicks "Open BoltMate" on
     /// the final page. We deliberately do NOT cache per-permission grant state
@@ -104,14 +84,6 @@ public sealed class ReceiverSettings
 
     /// <summary>Override host names just for this receiver (null = use global).</summary>
     public string[]? HostNames { get; set; }
-}
-
-/// <summary>JSON-serializable mirror of <see cref="Bolt.HostBinding"/> for persistence.</summary>
-public sealed class PersistedHostBinding
-{
-    public bool Paired { get; set; }
-    public string? HostIdentifierHex { get; set; }
-    public string? ReceiverName { get; set; }
 }
 
 /// <summary>
@@ -197,6 +169,5 @@ public sealed class TopologySettings
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ReceiverSettings))]
-[JsonSerializable(typeof(PersistedHostBinding))]
 [JsonSerializable(typeof(TopologySettings))]
 internal partial class AppSettingsContext : JsonSerializerContext { }

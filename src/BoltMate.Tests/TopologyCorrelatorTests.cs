@@ -46,7 +46,7 @@ public class TopologyCorrelatorTests
         }
 
         public PairedDevice SeedDevice(BoltReceiver receiver, byte slot, ushort wpid,
-            params (byte hostIndex, byte[]? ble)[] bindings)
+            params (byte hostIndex, byte[]? ble, string? hostName)[] bindings)
         {
             var d = receiver.EnsureSlot(slot);
             d.ChangeHostIndex = 0x09;
@@ -56,8 +56,8 @@ public class TopologyCorrelatorTests
             if (bindings.Length > 0)
             {
                 var dict = new Dictionary<byte, HostBinding>();
-                foreach (var (h, ble) in bindings)
-                    dict[h] = new HostBinding(h, ble is not null, ble, null);
+                foreach (var (h, ble, hostName) in bindings)
+                    dict[h] = new HostBinding(h, ble is not null || hostName is not null, ble, hostName);
                 d.HostBindings = dict;
             }
             return d;
@@ -79,9 +79,9 @@ public class TopologyCorrelatorTests
         using var f = new Fixture();
         var r = f.AddReceiver();
         // Mouse 0xAAAA — will be the originator that leaves us.
-        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (0, BleA), (1, BleB));
+        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
         // Keyboard 0xBBBB on slot 1->BleB. Should follow when correlator fires.
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA), (1, BleB));
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
 
         // Simulate link-lost for the mouse: use BoltReceiver's notification path.
         InjectLinkLost(f, r, mouse);
@@ -118,7 +118,7 @@ public class TopologyCorrelatorTests
     {
         using var f = new Fixture();
         var r = f.AddReceiver();
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA), (1, BleB));
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, BleA, "host-A"), (1, BleB, "remote-mac"));
 
         f.Announcements.OnNext(new ReceiverAnnouncement
         {
@@ -144,8 +144,8 @@ public class TopologyCorrelatorTests
     {
         using var f = new Fixture(window: TimeSpan.FromMilliseconds(50));
         var r = f.AddReceiver();
-        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (1, BleB));
-        f.SeedDevice(r, 2, wpid: 0xBBBB, (1, BleB));
+        var mouse = f.SeedDevice(r, 1, wpid: 0xAAAA, (1, BleB, "remote-mac"));
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (1, BleB, "remote-mac"));
 
         InjectLinkLost(f, r, mouse);
         Thread.Sleep(120); // window expires

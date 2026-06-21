@@ -97,39 +97,14 @@ public sealed class TopologyCorrelator : IDisposable
 
                 // Cross-receiver matching is layered:
                 //   1) Per-pairing identifier (works when sibling pairings
-                //      share the destination's per-pair token — i.e. all
-                //      devices paired in the same Logi+ session).
-                //   2) Receiver friendly name (Logi+ writes the OS hostname
-                //      into each device's host slot at pairing — stable
-                //      across re-pair sessions because the hostname doesn't
-                //      change). Used as fallback when (1) misses.
-                // We collect BOTH from the local originator so the fan-out
-                // can use whichever matches each sibling.
-                string? destinationReceiverName = null;
-                // Device-side resolution of the target identifier. Each
-                // receiver writes its own identifier into the device's slot
-                // table at pairing time — so the IDENTIFIER VALUES STORED ON
-                // A DEVICE DIFFER PER RECEIVER (i.e. mouse paired separately
-                // from keyboard ends up with different per-host values even
-                // though they sit on the same physical Mac+Win receivers).
-                //
-                // To get an identifier siblings will recognize, we use the
-                // LOCAL originator's view: the device that just left us is
-                // still cached in this BoltReceiver with its HostBindings
-                // populated. Index those bindings by the REMOTE-announced
-                // CurrentHost — that's the destination slot the originator
-                // moved to, and our local read of that slot's identifier is
-                // the value our siblings have for the same destination
-                // (because we wrote it into them at OUR pairing time).
-                string? targetIdentifier = null;
+                // Resolve the destination host NAME the device just moved to —
+                // the OS hostname recorded in its host-slot table at pairing
+                // time. We prefer the LOCAL originator's view (more recent +
+                // populated by DeviceEnricher), and fall back to whatever
+                // the remote announcement carried for that slot.
+                string? destinationHostName = null;
                 if (dev.CurrentHost is { } cur)
                 {
-                    // Find local originator across attached receivers. Re-pair
-                    // operations leave stale wpid entries on the receiver
-                    // (slots where the device was previously paired but never
-                    // unpaired cleanly). Those entries lack populated
-                    // HostBindings and would short-circuit our lookup. Prefer
-                    // an entry that has bindings; fall back to any if none do.
                     PairedDevice? localOrig = null;
                     PairedDevice? localOrigFallback = null;
                     foreach (var rcv in _manager.Receivers.Items)
@@ -146,29 +121,26 @@ public sealed class TopologyCorrelator : IDisposable
                     if (localOrig is not null &&
                         localOrig.HostBindings.TryGetValue(cur, out var localBinding))
                     {
-                        if (localBinding.HostIdentifier is { Length: 6 } id)
-                            targetIdentifier = Convert.ToHexString(id).ToLowerInvariant();
-                        destinationReceiverName ??= localBinding.ReceiverName;
+                        destinationHostName ??= localBinding.ReceiverName;
                     }
-
-                    // Fall back to the remote announcement's view if local
-                    // originator HostBindings aren't populated yet.
                     foreach (var b in dev.HostBindings)
                     {
                         if (b.HostIndex != cur) continue;
-                        if (string.IsNullOrEmpty(targetIdentifier) && !string.IsNullOrEmpty(b.IdentifierHex))
-                            targetIdentifier = b.IdentifierHex.ToLowerInvariant();
-                        destinationReceiverName ??= b.ReceiverName;
+                        destinationHostName ??= b.ReceiverName;
                         break;
                     }
                 }
-                targetIdentifier ??= receiver.HostIdentifierHex?.ToLowerInvariant();
-                if (string.IsNullOrEmpty(targetIdentifier))
+                // Fallback to the announcing machine's hostname — for any
+                // device whose stored host name happens to match the OS
+                // hostname of the peer (the common case when peers haven't
+                // been individually renamed).
+                if (string.IsNullOrWhiteSpace(destinationHostName))
+                    destinationHostName = announcement.Hostname;
+                if (string.IsNullOrWhiteSpace(destinationHostName))
                 {
                     _logger.LogWarning(
-                        "Topology: wpid {Wpid} matched in announcement from {Machine} but no target identifier resolvable (device.CurrentHost={Ch}, device.HostBindings.Count={Bc}, receiver.HostIdentifierHex={Ri}) — fan-out skipped",
-                        wpid.ToString("X4"), announcement.Hostname,
-                        dev.CurrentHost, dev.HostBindings.Count, receiver.HostIdentifierHex);
+                        "Topology: wpid {Wpid} matched in announcement from {Machine} but no destination host name resolvable (device.CurrentHost={Ch}) — fan-out skipped",
+                        wpid.ToString("X4"), announcement.Hostname, dev.CurrentHost);
                     continue;
                 }
 
@@ -177,10 +149,10 @@ public sealed class TopologyCorrelator : IDisposable
                 _pendingLost.TryRemove(wpid, out _);
 
                 _logger.LogInformation(
-                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} — target identifier {Id}, name fallback '{HostName}' — fanning out siblings",
-                    wpid.ToString("X4"), dev.Name, announcement.Hostname, targetIdentifier, destinationReceiverName ?? "(none)");
+                    "Topology MATCH: wpid {Wpid} ({Name}) reappeared on remote {Machine} — destination host '{Target}' — fanning out siblings",
+                    wpid.ToString("X4"), dev.Name, announcement.Hostname, destinationHostName);
 
-                var count = _switcher.RequestTopologyFanOut(targetIdentifier, wpid, FanOutSource.RemoteTopology, destinationReceiverName);
+                var count = _switcher.RequestTopologyFanOut(destinationHostName, wpid, FanOutSource.RemoteTopology);
                 _logger.LogInformation("Topology fan-out completed: {Count} sibling(s) switched", count);
             }
         }

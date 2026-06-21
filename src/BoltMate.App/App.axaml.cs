@@ -206,75 +206,12 @@ public partial class App : Application
             OperatingSystem.IsWindows() ? new BoltMate.Hid.Win.WinReceiverTransport(_loggerFactory) :
                                           new BoltMate.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
         _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
-
-        // Hydrate cached receiver identifiers on attach + persist updates
-        // after GetReceiverDetailsAsync succeeds. Without this, a freshly
-        // launched app on a host that hasn't read its receiver-level
-        // identifier yet (or where the read fails) can't include a usable
-        // HostIdentifierHex in topology announcements, breaking cross-
-        // machine MATCH for devices arriving on this host.
-        _disposables.Add(_manager.Receivers.Connect()
-            .Subscribe(changes =>
-            {
-                foreach (var change in changes)
-                {
-                    if (change.Reason != DynamicData.ChangeReason.Add) continue;
-                    var r = change.Current;
-                    if (_settings.CachedReceiverIdentifiers.TryGetValue(r.Info.Path, out var cachedHex)
-                        && !string.IsNullOrEmpty(cachedHex))
-                    {
-                        try { r.HostIdentifier = Convert.FromHexString(cachedHex); }
-                        catch { /* malformed cache — ignore */ }
-                    }
-                    // Periodically sample the receiver's effective identifier
-                    // and persist it. "Effective" = receiver-level read OR
-                    // the value any connected device has stored for its
-                    // current host slot (same per-pairing identifier from a
-                    // different read path). Re-poll every few seconds for ~30s
-                    // so we catch slow-arriving HostBindings reads on Win.
-                    _ = System.Threading.Tasks.Task.Run(async () =>
-                    {
-                        for (var i = 0; i < 10; i++)
-                        {
-                            await System.Threading.Tasks.Task.Delay(3000);
-                            string? effective = r.HostIdentifierKey;
-                            if (effective is null)
-                            {
-                                foreach (var d in r.Devices.Items)
-                                {
-                                    if (!d.LinkUp) continue;
-                                    if (d.LastKnownCurrentHost is not byte cur) continue;
-                                    if (d.HostBindings.TryGetValue(cur, out var binding)
-                                        && binding.HostIdentifierKey is { } v)
-                                    { effective = v; break; }
-                                }
-                            }
-                            if (effective is not null && effective != cachedHex)
-                            {
-                                _settings.CachedReceiverIdentifiers[r.Info.Path] = effective;
-                                try { _settings.Save(); } catch { }
-                                // Also pin onto receiver itself for immediate use by the
-                                // announcement builder, in case GetReceiverDetailsAsync
-                                // never actually returned a value.
-                                if (r.HostIdentifierKey is null)
-                                {
-                                    try { r.HostIdentifier = Convert.FromHexString(effective); }
-                                    catch { }
-                                }
-                                cachedHex = effective;
-                                break;
-                            }
-                        }
-                    });
-                }
-            }));
-
         _disposables.Add(_manager);
         _disposables.Add(_loggerFactory);
 
         // One manager-scoped SwitcherService handles fan-out across every
-        // attached receiver. Topology-aware: routes by matching BLE address
-        // through each device's HostBindings.
+        // attached receiver. Matches siblings by host friendly name (the
+        // OS hostname recorded in each device's host slot at pairing time).
         _switcher = new SwitcherService(_manager, _loggerFactory.CreateLogger<SwitcherService>());
         _disposables.Add(_switcher);
 
@@ -285,11 +222,9 @@ public partial class App : Application
         ApplyTopologySettings();
 
         // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
+        // No on-disk persistence — bindings are re-read on every link-up since the
+        // host name we match on is provided fresh by the device each time.
         _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
-
-        // Persist host bindings to disk so offline-device topology survives restarts.
-        _disposables.Add(new HostBindingPersistence(_manager, _settings,
-            _loggerFactory.CreateLogger<HostBindingPersistence>()));
 
         // Update check scaffold — fires once at startup when auto-check is on.
         // Real cast endpoint lives behind UpdateService.CheckAsync (currently

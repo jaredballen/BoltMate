@@ -13,21 +13,23 @@ namespace BoltMate.Core.Switcher;
 /// Multi-receiver, topology-aware fan-out orchestrator. One instance per
 /// <see cref="ReceiverManager"/> (NOT per receiver). Subscribes to every
 /// attached <see cref="BoltReceiver"/>'s host-switch streams and routes the
-/// trigger across ALL participating receivers using each device's
-/// <see cref="PairedDevice.HostBindings"/> for BLE-address matching.
+/// trigger across all participating receivers, matching each sibling's
+/// <see cref="PairedDevice.HostBindings"/> entry whose host friendly name
+/// equals the target.
 /// </summary>
 /// <remarks>
 /// Algorithm (per trigger event):
 /// <list type="number">
-/// <item>Resolve the originating device's target BLE from its HostBindings.</item>
+/// <item>Resolve the originating device's target host name from its HostBindings.</item>
 /// <item>For each sibling on any participating receiver, find the slot whose
-/// binding points to the same BLE; CHANGE_HOST to that slot.</item>
+/// binding's host name matches; CHANGE_HOST to that slot.</item>
 /// <item>Skip the originator. Skip non-participating receivers. Skip siblings
 /// without a matching binding (logged for UI hint).</item>
 /// </list>
-/// Falls back to legacy "same host index for every sibling" when the
-/// originator's HostBindings aren't populated yet (e.g. first press before
-/// DeviceEnricher has finished).
+/// No identifier fallback: per-pairing host identifiers rotate when a device
+/// is re-paired (verified empirically), so they're an unreliable correlation
+/// key. The host friendly name (= system hostname at pairing time) survives
+/// re-pair sessions and is what Logi+ surfaces in the channel picker.
 /// </remarks>
 public sealed class SwitcherService : IDisposable
 {
@@ -60,29 +62,29 @@ public sealed class SwitcherService : IDisposable
     public void Dispose() => _disposables.Dispose();
 
     /// <summary>
-    /// Topology-aware fan-out by destination host identifier. Used by the UDP
+    /// Topology-aware fan-out by destination host name. Used by the UDP
     /// topology correlator (originator = the device that just left this
-    /// machine). For each local sibling, finds the slot whose
-    /// <see cref="HostBinding.HostIdentifier"/> matches the target id and
+    /// machine) and by CLI / API callers requesting a user-initiated switch.
+    /// For each local sibling, finds the slot whose
+    /// <see cref="HostBinding.ReceiverName"/> matches the target hostname and
     /// writes <c>CHANGE_HOST(matching_slot)</c> — which may be a different
     /// slot index per device.
     /// </summary>
-    /// <param name="remoteReceiverHostId">Lowercase hex 6-byte host identifier
-    /// of the target receiver — the value stored in each device's HostBindings.
-    /// Logitech-proprietary, NOT a real BLE/BT address. May be on this machine
-    /// (local switch) or a peer (cross-machine sync).</param>
+    /// <param name="targetHostName">Destination host name as recorded in each
+    /// device's HostBindings — the system hostname of the target computer.
+    /// Case-insensitive match.</param>
     /// <param name="originatingDeviceWpid">Optional — when set, skip the
     /// device with this WPID (it already left). Pass null for a fan-out with
     /// no originator (e.g. CLI-initiated switch).</param>
     /// <param name="source">Tag so subscribers know which path fired.</param>
     /// <returns>Number of siblings fanned out.</returns>
-    public int RequestTopologyFanOut(string remoteReceiverHostId, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology, string? destinationReceiverName = null)
+    public int RequestTopologyFanOut(string targetHostName, ushort? originatingDeviceWpid, FanOutSource source = FanOutSource.RemoteTopology)
     {
         var count = 0;
         var receiverCount = _manager.Receivers.Items.Count();
         _logger.LogInformation(
-            "FanOut starting: target={Target}, originatorWpid={Wpid}, source={Source}, receivers={N}",
-            remoteReceiverHostId, originatingDeviceWpid?.ToString("X4") ?? "(none)", source, receiverCount);
+            "FanOut starting: targetHostName='{Target}', originatorWpid={Wpid}, source={Source}, receivers={N}",
+            targetHostName, originatingDeviceWpid?.ToString("X4") ?? "(none)", source, receiverCount);
         foreach (var receiver in _manager.Receivers.Items)
         {
             var deviceCount = receiver.Devices.Items.Count();
@@ -107,37 +109,16 @@ public sealed class SwitcherService : IDisposable
                     continue;
                 }
 
-                // Primary match: host friendly name. Logi+ writes the OS
-                // hostname into each device slot at pairing — stable across
-                // re-pair sessions because the hostname itself doesn't rotate.
-                // Fall back to per-pairing host identifier when the name is
-                // empty (un-Logi+-touched pairings).
-                byte? matchingSlot = null;
-                var matchedBy = "(none)";
-                if (!string.IsNullOrWhiteSpace(destinationReceiverName))
-                {
-                    matchingSlot = device.FindHostSlotByReceiverName(destinationReceiverName!);
-                    if (matchingSlot is not null) matchedBy = "name";
-                }
-                if (matchingSlot is null && !string.IsNullOrWhiteSpace(remoteReceiverHostId))
-                {
-                    matchingSlot = device.FindHostSlotForHostId(remoteReceiverHostId);
-                    if (matchingSlot is not null) matchedBy = "id";
-                }
+                var matchingSlot = device.FindHostSlotByReceiverName(targetHostName);
                 if (matchingSlot is not byte slot)
                 {
                     var bindingsDump = string.Join(", ", device.HostBindings.Select(kv =>
-                        $"h{kv.Key}={(kv.Value.Paired ? $"{kv.Value.HostIdentifierKey ?? "(null)"}|{kv.Value.ReceiverName ?? "(no name)"}" : "unpaired")}"));
+                        $"h{kv.Key}={(kv.Value.Paired ? kv.Value.ReceiverName ?? "(no name)" : "unpaired")}"));
                     _logger.LogWarning(
-                        "FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} no binding to name '{NameTarget}' or id {Target} — bindings: [{Dump}] — skipping",
-                        device.DeviceIndex, device.DisplayName, device.Wpid,
-                        destinationReceiverName ?? "(none)", remoteReceiverHostId, bindingsDump);
+                        "FanOut: slot {Slot} ({Name}) wpid {Wpid:X4} no binding to host '{Target}' — bindings: [{Dump}] — skipping",
+                        device.DeviceIndex, device.DisplayName, device.Wpid, targetHostName, bindingsDump);
                     continue;
                 }
-                if (matchedBy == "id")
-                    _logger.LogInformation(
-                        "FanOut: slot {Slot} ({Name}) matched by id fallback {Target} (name '{HostName}' not in bindings)",
-                        device.DeviceIndex, device.DisplayName, remoteReceiverHostId, destinationReceiverName ?? "(none)");
 
                 if (receiver.TrySwitchHost(device.DeviceIndex, slot))
                 {
@@ -177,8 +158,8 @@ public sealed class SwitcherService : IDisposable
             }
         }
         _logger.LogInformation(
-            "Topology fan-out (source={Source}): target identifier {Id}, originator wpid={Wpid}, {Count} device(s) switched",
-            source, remoteReceiverHostId,
+            "Topology fan-out (source={Source}): target host '{Target}', originator wpid={Wpid}, {Count} device(s) switched",
+            source, targetHostName,
             originatingDeviceWpid?.ToString("X4") ?? "(none)",
             count);
         return count;
@@ -199,24 +180,24 @@ public sealed class SwitcherService : IDisposable
     private void FanOut(BoltReceiver origin, byte originatingSlot, byte originHostIndex, FanOutSource source)
     {
         var originDevice = origin.TryGetDevice(originatingSlot);
-        var targetHostId = originDevice is not null
-                           && originDevice.HostBindings.TryGetValue(originHostIndex, out var binding)
-                           && binding.Paired
-            ? binding.HostIdentifierKey
+        var targetHostName = originDevice is not null
+                             && originDevice.HostBindings.TryGetValue(originHostIndex, out var binding)
+                             && binding.Paired
+            ? binding.ReceiverName
             : null;
 
-        if (targetHostId is null)
+        if (string.IsNullOrWhiteSpace(targetHostName))
         {
-            _logger.LogInformation(
-                "Fan-out trigger from {Serial} slot {Slot} host {Host} (source={Source}) — no BLE binding cached; falling back to same-index routing",
+            _logger.LogWarning(
+                "Fan-out trigger from {Serial} slot {Slot} host {Host} (source={Source}) — origin device has no host name for that slot; cannot fan out. " +
+                "Re-pair the device's host slot from each peer machine to populate the host name.",
                 origin.Info.Serial, originatingSlot, originHostIndex, source);
-            FanOutLegacy(origin, originatingSlot, originHostIndex, source);
             return;
         }
 
         _logger.LogInformation(
-            "Fan-out trigger from {Serial} slot {Slot} -> BLE {Ble} (source={Source})",
-            origin.Info.Serial, originatingSlot, targetHostId, source);
+            "Fan-out trigger from {Serial} slot {Slot} -> host '{Target}' (source={Source})",
+            origin.Info.Serial, originatingSlot, targetHostName, source);
 
         foreach (var receiver in _manager.Receivers.Items)
         {
@@ -227,12 +208,12 @@ public sealed class SwitcherService : IDisposable
                 if (!device.CanReceiveHostSwitch) continue;
                 if (!device.LinkUp) continue;
 
-                var matchingSlot = device.FindHostSlotForHostId(targetHostId);
+                var matchingSlot = device.FindHostSlotByReceiverName(targetHostName);
                 if (matchingSlot is not byte slot)
                 {
                     _logger.LogDebug(
-                        "Sibling {Serial} slot {Slot} ({Name}) has no binding to BLE {Ble} — skipping",
-                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, targetHostId);
+                        "Sibling {Serial} slot {Slot} ({Name}) has no binding to host '{Target}' — skipping",
+                        receiver.Info.Serial, device.DeviceIndex, device.DisplayName, targetHostName);
                     continue;
                 }
 
@@ -241,35 +222,6 @@ public sealed class SwitcherService : IDisposable
                     _fanOuts.OnNext(new FanOutEvent(
                         Target: device,
                         TargetHost: slot,
-                        Source: source,
-                        OriginatingReceiver: origin,
-                        OriginatingSlot: originatingSlot));
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Falls back to the pre-topology behavior: send the same host index to
-    /// every sibling. Used when the originator's HostBindings are not yet
-    /// populated (e.g. the very first press, before background enrichment).
-    /// </summary>
-    private void FanOutLegacy(BoltReceiver origin, byte originatingSlot, byte targetHost, FanOutSource source)
-    {
-        foreach (var receiver in _manager.Receivers.Items)
-        {
-            foreach (var device in receiver.Devices.Items)
-            {
-                if (ReferenceEquals(receiver, origin) && device.DeviceIndex == originatingSlot)
-                    continue;
-                if (!device.CanReceiveHostSwitch) continue;
-                if (!device.LinkUp) continue;
-
-                if (receiver.TrySwitchHost(device.DeviceIndex, targetHost))
-                {
-                    _fanOuts.OnNext(new FanOutEvent(
-                        Target: device,
-                        TargetHost: targetHost,
                         Source: source,
                         OriginatingReceiver: origin,
                         OriginatingSlot: originatingSlot));
