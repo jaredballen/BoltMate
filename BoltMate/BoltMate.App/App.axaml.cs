@@ -134,28 +134,53 @@ public partial class App : Application
         // Cmd-Tab into it.
         MacActivationPolicy.ShowDockIcon();
 
-        _welcomeWindow = new WelcomeWindow(_settings);
+        _welcomeWindow = new WelcomeWindow(_settings,
+            isFirstRun: true,
+            log: _loggerFactory.CreateLogger<WelcomeWindow>());
         _welcomeWindow.WelcomeCompleted += () =>
         {
             // After the wizard finishes, run normal bootstrap THEN open the
             // Settings window to the Status tab.
             Dispatcher.UIThread.Post(() =>
             {
+                // Release MainWindow tether so closing Settings doesn't
+                // shutdown the tray-only app.
+                if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
+                    d.MainWindow = null;
                 ContinueBootstrap(log);
                 MacActivationPolicy.HideDockIcon();
                 OpenSettings(SettingsWindow.TabStatus);
             });
         };
 
-        // Defer the Show() call until after framework-init returns and the
-        // message loop is running. On Windows this is required — calling
-        // Show() synchronously inside OnFrameworkInitializationCompleted
-        // silently drops the window because the desktop lifetime hasn't
-        // finished registering top-level window hosting yet.
+        // Windows: Avalonia's Win32 backend treats MainWindow specially —
+        // setting it before Show() guarantees the OS surfaces the window
+        // and gives it activation. Without this, the welcome window can be
+        // dropped on the floor by Avalonia's startup race on Win 11.
+        // (ShutdownMode is OnExplicitShutdown so closing MainWindow won't
+        // tear down the app even if we forget to clear it.)
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.MainWindow = _welcomeWindow;
+        }
+
+        // Defer Show() until after framework-init returns and the message
+        // loop is running. On Windows this is required — calling Show()
+        // synchronously inside OnFrameworkInitializationCompleted silently
+        // drops the window because the desktop lifetime hasn't finished
+        // registering top-level window hosting yet.
         Dispatcher.UIThread.Post(() =>
         {
             _welcomeWindow.Show();
+            // Brief Topmost flicker forces Win + macOS to bring the window
+            // to the foreground even if some other process has stolen focus
+            // (e.g. a recently launched installer post-install).
+            _welcomeWindow.Topmost = true;
             _welcomeWindow.Activate();
+            Dispatcher.UIThread.Post(() => _welcomeWindow.Topmost = false,
+                DispatcherPriority.Background);
+
+            _welcomeWindow.RunFlow();
         }, DispatcherPriority.Loaded);
     }
 
@@ -363,7 +388,9 @@ public partial class App : Application
 
         if (_welcomeWindow is null || !_welcomeWindow.IsVisible)
         {
-            _welcomeWindow = new WelcomeWindow(_settings);
+            _welcomeWindow = new WelcomeWindow(_settings,
+                isFirstRun: false,
+                log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a
             // first run. Just open at the primer and let the user trigger /
             // skip as they wish. We DO NOT subscribe to WelcomeCompleted
@@ -372,7 +399,10 @@ public partial class App : Application
         MacActivationPolicy.ShowDockIcon();
         _welcomeWindow.OpenToPrimer(primerId);
         _welcomeWindow.Show();
+        _welcomeWindow.Topmost = true;
         _welcomeWindow.Activate();
+        Dispatcher.UIThread.Post(() => _welcomeWindow.Topmost = false,
+            DispatcherPriority.Background);
     }
 
     /// <summary>

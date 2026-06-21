@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -8,45 +7,74 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using BoltMate.Core;
 using BoltMate.Hid.IOKit;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoltMate.App.Welcome;
 
 /// <summary>
-/// First-run welcome wizard and on-demand "fix permissions" entry point.
+/// First-run welcome wizard AND on-demand "Fix permissions" entry point.
 ///
-/// Pages (Mac):     Welcome → Network → Input Monitoring → Done
-/// Pages (Windows): Welcome → Network → Done       (Input Monitoring skipped)
-/// Pages (Linux):   Linux fast-path → close immediately
+/// The wizard is a state machine, not a linear page list. Pages exist for
+/// every state; advance is driven by code-behind based on the user's
+/// explicit Grant / Not now / Quit press and the post-press OS permission
+/// recheck. No page auto-fires an OS prompt — every prompt is tied to a
+/// Grant button press.
 ///
-/// All pages live in the XAML as sibling Grids; only one is visible at a
-/// time. Page index is the array position in <see cref="_pages"/>.
+/// State outline:
+///
+///   Welcome ─► (autostart toggle staged)
+///       │
+///       ▼  Get started
+///   NetworkPrimer ◄────────────────┐
+///       │  Grant                   │
+///       ▼                          │
+///   [Request + recheck]            │
+///       │                          │
+///       ├──► granted ──►  next required perm OR Done
+///       │                          │
+///       └──► still denied / "Not now"
+///                       │          │
+///                       ▼          │
+///                  NetworkRefusal  │
+///                       │ Grant ───┘
+///                       │ Quit ──► Shutdown(1)
+///
+/// HID flow (Mac only) is the same shape, sequenced AFTER network. On Win
+/// + Linux the HID pages are never visited.
 ///
 /// Modal-ish contract:
 ///   • Closing the window via [x] / Cmd-W counts as the user opting OUT
-///     and quits the app (per the spec).
+///     and quits the app (same as Quit BoltMate button).
 ///   • Closing via the "Open BoltMate" / "Done" path is the happy exit:
-///     flips <see cref="AppSettings.HasShownWelcome"/> true, saves, and
-///     fires <see cref="WelcomeCompleted"/> so the App layer continues
-///     startup + opens the Settings window to the Status tab.
+///     applies autostart toggle, flips <see cref="AppSettings.HasShownWelcome"/>
+///     true, saves, fires <see cref="WelcomeCompleted"/>, and lets App layer
+///     continue bootstrap.
+///
+/// "Fix permissions" mode (subsequent launches) reuses this same window via
+/// <see cref="OpenToPrimer"/> — but skips the Welcome page (autostart is
+/// configured in Settings at that point, not here), and on completion does
+/// NOT flip HasShownWelcome (it's already true). The Closing handler also
+/// does NOT quit in fix-permissions mode — the user can just close it.
 /// </summary>
 public partial class WelcomeWindow : Window
 {
     public const string PermissionNetwork = "network";
     public const string PermissionInputMonitoring = "input-monitoring";
 
-    // Wait time after triggering an OS prompt before we advance to the next
-    // page. Gives the system roughly enough time to surface the dialog so
-    // the next page doesn't visibly race with the prompt UI.
-    private static readonly TimeSpan PromptSettleDelay = TimeSpan.FromMilliseconds(1500);
+    // How long we wait between issuing a Grant request and re-checking the
+    // permission status. Long enough for the OS prompt to surface AND for
+    // the user to make a decision in many cases — but we also re-check on
+    // window focus regain so a slow user doesn't get penalised.
+    private static readonly TimeSpan PromptSettleDelay = TimeSpan.FromMilliseconds(2000);
 
     private readonly AppSettings _settings;
+    private readonly ILogger _log;
+    private readonly bool _isFirstRun;
 
-    private Grid[] _pages = Array.Empty<Grid>();
-    private int _currentPageIndex;
-
-    // Flips to true on the happy path (Done button). The Closing handler
-    // uses this to distinguish "user finished the wizard" from "user
-    // dismissed the wizard" — the latter quits the app.
+    // Flips to true on the happy path (Done / Open BoltMate button). The
+    // Closing handler uses this to distinguish "user finished" from "user
+    // dismissed" — the latter quits the app on first run.
     private bool _completedSuccessfully;
 
     /// <summary>
@@ -56,104 +84,140 @@ public partial class WelcomeWindow : Window
     /// </summary>
     public event Action? WelcomeCompleted;
 
-    /// <summary>
-    /// Designer-only ctor. Real usage goes through the (AppSettings) ctor.
-    /// </summary>
-    public WelcomeWindow() : this(new AppSettings()) { }
+    /// <summary>Designer-only ctor. Real usage goes through the (AppSettings, …) ctor.</summary>
+    public WelcomeWindow() : this(new AppSettings(), isFirstRun: true, NullLogger.Instance) { }
 
-    public WelcomeWindow(AppSettings settings)
+    public WelcomeWindow(AppSettings settings, bool isFirstRun = true, ILogger? log = null)
     {
         _settings = settings;
+        _isFirstRun = isFirstRun;
+        _log = log ?? NullLogger.Instance;
         InitializeComponent();
 
-        // Build the per-platform page list. Linux gets the fast-path only.
-        var welcome = this.FindControl<Grid>("PageWelcome")!;
-        var network = this.FindControl<Grid>("PageNetwork")!;
-        var inputMonitoring = this.FindControl<Grid>("PageInputMonitoring")!;
-        var done = this.FindControl<Grid>("PageDone")!;
-        var linux = this.FindControl<Grid>("PageLinux")!;
+        ShowPage("PageWelcome");
 
-        if (OperatingSystem.IsLinux())
-        {
-            _pages = new[] { linux };
-        }
-        else if (OperatingSystem.IsWindows())
-        {
-            _pages = new[] { welcome, network, done };
-        }
-        else
-        {
-            // mac (default for any other OperatingSystem combo)
-            _pages = new[] { welcome, network, inputMonitoring, done };
-        }
-
-        ShowPage(0);
-
-        // Intercept manual close: anything that doesn't go through the
-        // happy-path Done button is treated as a hard opt-out.
+        // Intercept manual close: on first run, treat any non-happy-path
+        // dismiss as a quit (per spec). In Fix-Permissions mode just close
+        // silently — the rest of the app is already running.
         Closing += (_, _) =>
         {
             if (_completedSuccessfully) return;
-            QuitApp();
+            if (_isFirstRun)
+            {
+                _log.LogInformation("Welcome wizard dismissed without completion — quitting app");
+                QuitApp();
+            }
         };
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
     /// <summary>
+    /// Begin the welcome flow from the natural entry point. On Linux,
+    /// short-circuits to the fast-path "Open BoltMate" page. Otherwise
+    /// starts at the Welcome page (first-run) or the first ungranted
+    /// permission primer (fix-permissions).
+    /// </summary>
+    public void RunFlow()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            ShowPage("PageLinux");
+            return;
+        }
+
+        if (_isFirstRun)
+        {
+            ShowPage("PageWelcome");
+            return;
+        }
+
+        // Fix-permissions mode: skip the welcome page and jump straight to
+        // the first primer for a still-ungranted permission. If everything
+        // is granted just show Done.
+        AdvanceToNextRequiredPermissionOrDone();
+    }
+
+    /// <summary>
     /// Open the wizard already positioned at the primer for a specific
     /// permission. Called by the tray "Fix permissions" item and the
-    /// notification click handler.
+    /// notification click handler. Treated as fix-permissions mode (no
+    /// HasShownWelcome flip).
     /// </summary>
     public void OpenToPrimer(string permissionId)
     {
-        var target = permissionId switch
+        var targetPage = permissionId switch
         {
-            PermissionNetwork         => IndexOf("PageNetwork"),
-            PermissionInputMonitoring => IndexOf("PageInputMonitoring"),
-            _                         => 0,
+            PermissionNetwork         => "PageNetworkPrimer",
+            PermissionInputMonitoring => "PageInputMonitoringPrimer",
+            _                         => "PageNetworkPrimer",
         };
-        if (target < 0) target = 0;
-        ShowPage(target);
+        ShowPage(targetPage);
+        UpdateStatusLineForCurrentPage();
     }
 
-    private int IndexOf(string controlName)
-    {
-        var c = this.FindControl<Grid>(controlName);
-        if (c is null) return -1;
-        for (var i = 0; i < _pages.Length; i++)
-            if (ReferenceEquals(_pages[i], c)) return i;
-        return -1;
-    }
+    // ====================================================================
+    // Page transitions
+    // ====================================================================
 
-    private void ShowPage(int index)
+    private void ShowPage(string controlName)
     {
-        if (_pages.Length == 0) return;
-        if (index < 0) index = 0;
-        if (index >= _pages.Length) index = _pages.Length - 1;
-        _currentPageIndex = index;
-        for (var i = 0; i < _pages.Length; i++)
-            _pages[i].IsVisible = i == index;
-
-        // Refresh per-page status text where applicable.
-        if (ReferenceEquals(_pages[index], this.FindControl<Grid>("PageNetwork")))
-            UpdateNetworkStatusLine();
-        else if (ReferenceEquals(_pages[index], this.FindControl<Grid>("PageInputMonitoring")))
-            UpdateInputMonitoringStatusLine();
-    }
-
-    private void AdvanceFrom(Grid currentPage)
-    {
-        for (var i = 0; i < _pages.Length; i++)
+        // Hide every page, then show the named one.
+        foreach (var pageName in AllPageNames)
         {
-            if (!ReferenceEquals(_pages[i], currentPage)) continue;
-            var next = i + 1;
-            if (next >= _pages.Length) next = _pages.Length - 1;
-            ShowPage(next);
-            return;
+            var g = this.FindControl<Grid>(pageName);
+            if (g is not null) g.IsVisible = false;
         }
-        // Fall back to the next sequential page.
-        ShowPage(_currentPageIndex + 1);
+        var target = this.FindControl<Grid>(controlName);
+        if (target is not null) target.IsVisible = true;
+        UpdateStatusLineForCurrentPage();
+    }
+
+    private static readonly string[] AllPageNames =
+    {
+        "PageWelcome",
+        "PageNetworkPrimer",
+        "PageNetworkRefusal",
+        "PageInputMonitoringPrimer",
+        "PageInputMonitoringRefusal",
+        "PageDone",
+        "PageLinux",
+    };
+
+    /// <summary>
+    /// Walks the per-platform required-permission list and shows the primer
+    /// for the first one that is currently NOT granted. If every required
+    /// permission is already granted, jumps to Done.
+    /// </summary>
+    private void AdvanceToNextRequiredPermissionOrDone()
+    {
+        // Network is required on Mac + Windows.
+        if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
+        {
+            NetworkPermission.Invalidate();
+            var net = NetworkPermission.Check();
+            if (net.Status != NetworkPermission.Status.Granted)
+            {
+                _log.LogInformation("Permission gate: network = {Status} — showing primer", net.Status);
+                ShowPage("PageNetworkPrimer");
+                return;
+            }
+        }
+
+        // HID (Input Monitoring) is Mac-only.
+        if (OperatingSystem.IsMacOS())
+        {
+            var im = InputMonitoringPermission.Check();
+            if (im != InputMonitoringPermission.Status.Granted)
+            {
+                _log.LogInformation("Permission gate: input-monitoring = {Status} — showing primer", im);
+                ShowPage("PageInputMonitoringPrimer");
+                return;
+            }
+        }
+
+        _log.LogInformation("Permission gate: all required permissions granted — Done");
+        ShowPage("PageDone");
     }
 
     // ====================================================================
@@ -162,88 +226,88 @@ public partial class WelcomeWindow : Window
 
     private void OnWelcomeGetStarted(object? sender, RoutedEventArgs e)
     {
-        AdvanceFrom(this.FindControl<Grid>("PageWelcome")!);
+        _log.LogInformation("User clicked Get started");
+        AdvanceToNextRequiredPermissionOrDone();
     }
 
-    private async void OnNetworkContinue(object? sender, RoutedEventArgs e)
+    // ---- Network primer ------------------------------------------------
+
+    private async void OnNetworkPrimerGrant(object? sender, RoutedEventArgs e)
     {
-        var btn = this.FindControl<Button>("NetworkContinueButton");
-        if (btn is not null) btn.IsEnabled = false;
-        var line = this.FindControl<TextBlock>("NetworkStatusLine");
-        if (line is not null) line.Text = "Requesting Local Network access…";
-
-        // NetworkPermission.Check() probes by attempting a 1-byte UDP send
-        // to the topology multicast group on Mac — which is exactly what
-        // triggers the macOS Local Network prompt the first time. On
-        // Windows it inspects the network profile category (no prompt).
-        await Task.Run(() =>
-        {
-            NetworkPermission.Invalidate();
-            NetworkPermission.Check();
-        });
-
-        await Task.Delay(PromptSettleDelay);
-
-        // Re-probe so the status line reflects the post-prompt state.
-        NetworkPermission.Invalidate();
-        var result = NetworkPermission.Check();
-        if (line is not null) line.Text = result.Detail;
-
-        AdvanceFrom(this.FindControl<Grid>("PageNetwork")!);
+        _log.LogInformation("User tapped Grant on network primer");
+        await RequestNetworkAndAdvance(refusalIfDenied: true);
     }
 
-    private void OnNetworkSkip(object? sender, RoutedEventArgs e)
+    private void OnNetworkPrimerNotNow(object? sender, RoutedEventArgs e)
     {
-        AdvanceFrom(this.FindControl<Grid>("PageNetwork")!);
+        _log.LogInformation("User tapped Not now on network primer");
+        ShowPage("PageNetworkRefusal");
     }
 
-    private async void OnInputMonitoringContinue(object? sender, RoutedEventArgs e)
+    // ---- Network refusal -----------------------------------------------
+
+    private async void OnNetworkRefusalGrant(object? sender, RoutedEventArgs e)
     {
-        var btn = this.FindControl<Button>("InputMonitoringContinueButton");
-        if (btn is not null) btn.IsEnabled = false;
-        var line = this.FindControl<TextBlock>("InputMonitoringStatusLine");
-        if (line is not null) line.Text = "Requesting HID device access…";
-
-        // Two-pronged nudge for the TCC prompt:
-        //   1) Open the Input Monitoring system settings pane so the user
-        //      can flip the toggle if the implicit prompt doesn't appear.
-        //   2) Call IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) — the
-        //      official "prompt me, I want HID access" Apple API. This
-        //      triggers the TCC dialog the first time the process asks.
-        OpenInputMonitoringSettings();
-        await Task.Run(() => InputMonitoringPermission.Request());
-
-        await Task.Delay(PromptSettleDelay);
-
-        var status = InputMonitoringPermission.Check();
-        if (line is not null)
-            line.Text = status switch
-            {
-                InputMonitoringPermission.Status.Granted => "HID device access: granted",
-                InputMonitoringPermission.Status.Denied  => "HID device access: denied (you can enable it later in System Settings)",
-                _                                        => "HID device access: pending (check System Settings if no prompt appeared)",
-            };
-
-        AdvanceFrom(this.FindControl<Grid>("PageInputMonitoring")!);
+        _log.LogInformation("User tapped Grant on network refusal");
+        // Try again from the refusal page. If still denied, stay on
+        // refusal (don't bounce to primer — that's a worse UX).
+        await RequestNetworkAndAdvance(refusalIfDenied: false);
     }
 
-    private void OnInputMonitoringSkip(object? sender, RoutedEventArgs e)
+    // ---- HID primer ----------------------------------------------------
+
+    private async void OnInputMonitoringPrimerGrant(object? sender, RoutedEventArgs e)
     {
-        AdvanceFrom(this.FindControl<Grid>("PageInputMonitoring")!);
+        _log.LogInformation("User tapped Grant on HID primer");
+        await RequestInputMonitoringAndAdvance(refusalIfDenied: true);
     }
+
+    private void OnInputMonitoringPrimerNotNow(object? sender, RoutedEventArgs e)
+    {
+        _log.LogInformation("User tapped Not now on HID primer");
+        ShowPage("PageInputMonitoringRefusal");
+    }
+
+    // ---- HID refusal ---------------------------------------------------
+
+    private async void OnInputMonitoringRefusalGrant(object? sender, RoutedEventArgs e)
+    {
+        _log.LogInformation("User tapped Grant on HID refusal");
+        await RequestInputMonitoringAndAdvance(refusalIfDenied: false);
+    }
+
+    // ---- Quit (refusal pages) ------------------------------------------
+
+    private void OnQuitApp(object? sender, RoutedEventArgs e)
+    {
+        _log.LogInformation("User tapped Quit BoltMate");
+        // Don't run Closing-handler quit-logic — call Shutdown directly.
+        _completedSuccessfully = true; // suppress Closing-handler quit
+        QuitApp(exitCode: 1);
+    }
+
+    // ---- Done ----------------------------------------------------------
 
     private void OnDoneOpen(object? sender, RoutedEventArgs e)
     {
+        _log.LogInformation("User tapped Open BoltMate (Done)");
         _completedSuccessfully = true;
-        try
+
+        // Apply autostart toggle (first-run only — fix-permissions mode
+        // doesn't surface the welcome page so the checkbox was never
+        // touched).
+        if (_isFirstRun)
         {
-            _settings.HasShownWelcome = true;
-            _settings.Save();
-        }
-        catch
-        {
-            // Best-effort persist; an IO error here shouldn't trap the user
-            // in the wizard. They'll just see it again next launch.
+            ApplyAutostartFromToggle();
+            try
+            {
+                _settings.HasShownWelcome = true;
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to persist HasShownWelcome — user will see the wizard again next launch");
+            }
         }
 
         WelcomeCompleted?.Invoke();
@@ -251,49 +315,167 @@ public partial class WelcomeWindow : Window
     }
 
     // ====================================================================
+    // Permission request helpers
+    // ====================================================================
+
+    private async Task RequestNetworkAndAdvance(bool refusalIfDenied)
+    {
+        var grantBtn = this.FindControl<Button>(refusalIfDenied
+            ? "NetworkPrimerGrantButton"
+            : "NetworkRefusalGrantButton");
+        var statusLine = this.FindControl<TextBlock>(refusalIfDenied
+            ? "NetworkPrimerStatusLine"
+            : "NetworkRefusalStatusLine");
+
+        if (grantBtn is not null) grantBtn.IsEnabled = false;
+        if (statusLine is not null) statusLine.Text = "Requesting Local Network access…";
+
+        var requested = await Task.Run(NetworkPermission.Request);
+        _log.LogInformation("NetworkPermission.Request returned {Result}", requested);
+
+        await Task.Delay(PromptSettleDelay);
+
+        NetworkPermission.Invalidate();
+        var result = NetworkPermission.Check();
+        _log.LogInformation("Post-request network status: {Status} ({Detail})", result.Status, result.Detail);
+
+        if (grantBtn is not null) grantBtn.IsEnabled = true;
+        if (statusLine is not null) statusLine.Text = result.Detail;
+
+        if (result.Status == NetworkPermission.Status.Granted)
+        {
+            // Network is good — proceed to next required permission, or
+            // Done if nothing else.
+            AdvanceToNextRequiredPermissionOrDone();
+        }
+        else if (refusalIfDenied)
+        {
+            ShowPage("PageNetworkRefusal");
+            var refusalLine = this.FindControl<TextBlock>("NetworkRefusalStatusLine");
+            if (refusalLine is not null) refusalLine.Text = result.Detail;
+        }
+        // else: stay on refusal page (we're already there)
+    }
+
+    private async Task RequestInputMonitoringAndAdvance(bool refusalIfDenied)
+    {
+        var grantBtn = this.FindControl<Button>(refusalIfDenied
+            ? "InputMonitoringPrimerGrantButton"
+            : "InputMonitoringRefusalGrantButton");
+        var statusLine = this.FindControl<TextBlock>(refusalIfDenied
+            ? "InputMonitoringPrimerStatusLine"
+            : "InputMonitoringRefusalStatusLine");
+
+        if (grantBtn is not null) grantBtn.IsEnabled = false;
+        if (statusLine is not null) statusLine.Text = "Requesting HID device access…";
+
+        // IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) — official Apple
+        // API for "prompt the user for HID access". Foreground first so the
+        // TCC dialog can attach to our window.
+        MacActivationPolicy.ShowDockIcon();
+        await Task.Delay(100);
+        var requested = await Task.Run(InputMonitoringPermission.Request);
+        _log.LogInformation("InputMonitoringPermission.Request returned {Result}", requested);
+
+        await Task.Delay(PromptSettleDelay);
+
+        var status = InputMonitoringPermission.Check();
+        _log.LogInformation("Post-request HID status: {Status}", status);
+
+        if (grantBtn is not null) grantBtn.IsEnabled = true;
+        if (statusLine is not null)
+            statusLine.Text = HidStatusToDetail(status);
+
+        if (status == InputMonitoringPermission.Status.Granted)
+        {
+            AdvanceToNextRequiredPermissionOrDone();
+        }
+        else if (refusalIfDenied)
+        {
+            ShowPage("PageInputMonitoringRefusal");
+            var refusalLine = this.FindControl<TextBlock>("InputMonitoringRefusalStatusLine");
+            if (refusalLine is not null) refusalLine.Text = HidStatusToDetail(status);
+        }
+    }
+
+    // ====================================================================
     // Helpers
     // ====================================================================
 
-    private void UpdateNetworkStatusLine()
+    private void UpdateStatusLineForCurrentPage()
     {
-        var line = this.FindControl<TextBlock>("NetworkStatusLine");
-        if (line is null) return;
-        NetworkPermission.Invalidate();
-        var res = NetworkPermission.Check();
-        line.Text = res.Detail;
-    }
-
-    private void UpdateInputMonitoringStatusLine()
-    {
-        var line = this.FindControl<TextBlock>("InputMonitoringStatusLine");
-        if (line is null) return;
-        var status = InputMonitoringPermission.Check();
-        line.Text = status switch
+        var pageName = CurrentPageName();
+        switch (pageName)
         {
-            InputMonitoringPermission.Status.Granted        => "HID device access: granted",
-            InputMonitoringPermission.Status.Denied         => "HID device access: denied",
-            InputMonitoringPermission.Status.Unknown        => "HID device access: not yet requested",
-            InputMonitoringPermission.Status.NotApplicable  => "HID device access: not applicable on this OS",
-            _                                               => "HID device access: unknown",
-        };
+            case "PageNetworkPrimer":
+            case "PageNetworkRefusal":
+                {
+                    NetworkPermission.Invalidate();
+                    var res = NetworkPermission.Check();
+                    var line = this.FindControl<TextBlock>(
+                        pageName == "PageNetworkPrimer"
+                            ? "NetworkPrimerStatusLine"
+                            : "NetworkRefusalStatusLine");
+                    if (line is not null) line.Text = res.Detail;
+                    break;
+                }
+            case "PageInputMonitoringPrimer":
+            case "PageInputMonitoringRefusal":
+                {
+                    var status = InputMonitoringPermission.Check();
+                    var line = this.FindControl<TextBlock>(
+                        pageName == "PageInputMonitoringPrimer"
+                            ? "InputMonitoringPrimerStatusLine"
+                            : "InputMonitoringRefusalStatusLine");
+                    if (line is not null) line.Text = HidStatusToDetail(status);
+                    break;
+                }
+        }
     }
 
-    private static void OpenInputMonitoringSettings()
+    private string? CurrentPageName()
     {
-        if (!OperatingSystem.IsMacOS()) return;
+        foreach (var pageName in AllPageNames)
+        {
+            var g = this.FindControl<Grid>(pageName);
+            if (g?.IsVisible == true) return pageName;
+        }
+        return null;
+    }
+
+    private static string HidStatusToDetail(InputMonitoringPermission.Status status) => status switch
+    {
+        InputMonitoringPermission.Status.Granted        => "HID device access: granted",
+        InputMonitoringPermission.Status.Denied         => "HID device access: denied",
+        InputMonitoringPermission.Status.Unknown        => "HID device access: pending (check System Settings if no prompt appeared)",
+        InputMonitoringPermission.Status.NotApplicable  => "HID device access: not applicable on this OS",
+        _                                               => "HID device access: unknown",
+    };
+
+    private void ApplyAutostartFromToggle()
+    {
+        var toggle = this.FindControl<CheckBox>("WelcomeAutostartToggle");
+        var want = toggle?.IsChecked == true;
+        if (!AppAutostart.CanRegister())
+        {
+            _log.LogInformation("Autostart not applicable (running from 'dotnet run' or unknown binary path)");
+            return;
+        }
         try
         {
-            Process.Start("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent");
+            var result = want ? AppAutostart.Install() : AppAutostart.Uninstall();
+            _log.LogInformation("Autostart {Action}: success={Ok} message={Msg}",
+                want ? "install" : "uninstall", result.Success, result.Message);
         }
-        catch
+        catch (Exception ex)
         {
-            // best-effort
+            _log.LogWarning(ex, "Autostart toggle apply failed (non-fatal)");
         }
     }
 
-    private static void QuitApp()
+    private static void QuitApp(int exitCode = 0)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.Shutdown();
+            desktop.Shutdown(exitCode);
     }
 }

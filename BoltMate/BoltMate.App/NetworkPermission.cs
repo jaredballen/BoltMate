@@ -56,6 +56,93 @@ public static class NetworkPermission
     }
 
     /// <summary>
+    /// Explicitly ask the OS to surface its local-network permission prompt.
+    /// Used by the welcome wizard when the user taps "Grant" — this is the
+    /// only path that intentionally fires the OS dialog.
+    /// </summary>
+    /// <remarks>
+    /// macOS: foregrounds the app (TCC will silently deny without prompting
+    /// for a background process), then sends a 1-byte UDP datagram to the
+    /// topology multicast group. The first such send from a not-yet-decided
+    /// app triggers the Local Network TCC dialog. Brief 100ms delay before
+    /// the send so AppKit has time to register the foreground transition.
+    ///
+    /// Windows: open the Network section of Settings so the user can change
+    /// their profile to Private (which is what gates discovery on Win). The
+    /// firewall prompt itself fires when a listening socket is opened later,
+    /// from the topology service. No reliable in-process way to force it.
+    ///
+    /// Linux: no-op — returns true.
+    /// </remarks>
+    /// <returns><c>true</c> if the request appeared to be issued without error.</returns>
+    public static bool Request()
+    {
+        try
+        {
+            if (OperatingSystem.IsMacOS())
+                return RequestMac();
+            if (OperatingSystem.IsWindows())
+                return RequestWindows();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool RequestMac()
+    {
+        // CRITICAL: process MUST be foreground when the TCC-gated send fires,
+        // or macOS silently denies without surfacing the prompt. Activate the
+        // app and surface the Dock icon (the wizard's parent already did this
+        // but call again defensively in case Request() is invoked from a
+        // background "Fix permissions" path).
+        MacActivationPolicy.ShowDockIcon();
+
+        // Give AppKit a beat to flip activation policy before we trip TCC.
+        System.Threading.Thread.Sleep(100);
+
+        Invalidate();
+        try
+        {
+            using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            s.MulticastLoopback = true;
+            s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Parse("239.255.41.42"), 41420));
+            return true;
+        }
+        catch (SocketException ex)
+        {
+            // Common cases:
+            //   AccessDenied / HostUnreachable: TCC has decided "deny" (no
+            //     prompt re-fires for that decision; user must open Settings).
+            //   NetworkUnreachable: no live network interface — also no prompt.
+            // We log via Trace because we have no ILogger handle in this static.
+            Trace.WriteLine($"NetworkPermission.Request: SocketException {ex.SocketErrorCode} ({ex.Message})");
+            return false;
+        }
+    }
+
+    private static bool RequestWindows()
+    {
+        // Windows has no per-app local-network TCC prompt. The closest
+        // analogue is the firewall dialog that fires the FIRST time a process
+        // opens a UDP listening socket on a Public profile — that happens
+        // later when the topology service starts. Best we can do from the
+        // welcome wizard is route the user to the OS Network settings so
+        // they can flip to a Private profile if needed.
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:network") { UseShellExecute = true });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Opens the platform's privacy / network settings pane so the user can
     /// grant access. No-op on platforms without a known deep link.
     /// </summary>

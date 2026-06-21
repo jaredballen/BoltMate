@@ -2,33 +2,44 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:FluentAvalonia.UI.Controls"
         x:Class="BoltMate.App.Welcome.WelcomeWindow"
-        Width="560" Height="440"
-        MinWidth="520" MinHeight="420"
+        Width="560" Height="460"
+        MinWidth="520" MinHeight="440"
         Title="Welcome to BoltMate"
         CanResize="False"
         WindowStartupLocation="CenterScreen">
 
     <!--
-        First-run welcome wizard. Pagination is "fake" — every page is a
-        sibling Grid stacked in the same parent, and only the active one is
-        IsVisible=True. Code-behind toggles via SetPage(int). No real
-        navigation framework needed for 4 pages.
+        First-run welcome + on-demand permission-fix wizard.
 
         Page layout convention:
           [ heading icon ]
           [ big title ]
           [ paragraph ]
+          [ optional status line ]
           [ buttons row pinned to bottom ]
 
-        The window cannot be dismissed except via the buttons:
-        Closing handler in code-behind treats the [x] / Cmd-W as a quit.
+        State machine lives in code-behind. Pages are sibling Grids stacked
+        in this Grid; only one is IsVisible=True at a time. The wizard never
+        auto-fires an OS prompt — every prompt is tied to an explicit Grant
+        button press.
+
+        On first run the user MUST traverse Welcome → (Network) → (HID, Mac
+        only) → Done. On subsequent launches the tray "Fix permissions" item
+        opens the same flow but skips the Welcome page and starts directly
+        at whichever primer is still ungranted.
+
+        Refusal-recovery: any "Not now" or denied-after-Grant press routes
+        to a Refusal page for that permission with two buttons: Grant (loops
+        back) and Quit BoltMate (full app shutdown). The wizard cannot be
+        dismissed by closing the window — Closing handler treats [x] / Cmd-W
+        the same as Quit.
     -->
     <Grid Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
 
         <!-- =========================== WELCOME ============================ -->
         <Grid x:Name="PageWelcome"
               Margin="32"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
+              RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
             <Image Grid.Row="0"
                    Source="avares://BoltMate.App/Assets/app-icon-1024.png"
                    Width="96" Height="96"
@@ -44,7 +55,13 @@
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="20,12,20,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
+            <CheckBox Grid.Row="4"
+                      x:Name="WelcomeAutostartToggle"
+                      Content="Launch BoltMate when I sign in"
+                      IsChecked="True"
+                      HorizontalAlignment="Center"
+                      Margin="0,0,0,16" />
+            <StackPanel Grid.Row="5" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button x:Name="WelcomeGetStartedButton"
                         Content="Get started"
@@ -54,7 +71,7 @@
         </Grid>
 
         <!-- =========================== NETWORK PRIMER ===================== -->
-        <Grid x:Name="PageNetwork"
+        <Grid x:Name="PageNetworkPrimer"
               Margin="32"
               IsVisible="False"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
@@ -64,33 +81,71 @@
                              HorizontalAlignment="Center"
                              Margin="0,4,0,16" />
             <TextBlock Grid.Row="1"
-                       Text="Local Network access"
+                       Text="BoltMate needs Local Network access"
                        FontSize="22" FontWeight="SemiBold"
+                       TextAlignment="Center" TextWrapping="Wrap"
                        HorizontalAlignment="Center" />
             <TextBlock Grid.Row="2"
-                       Text="BoltMate sends small heartbeats on your LAN so peripherals follow you between your machines. Nothing leaves your network."
+                       Text="BoltMate sends small heartbeats on your LAN so peripherals follow you between your computers. Nothing leaves your network — no traffic crosses the internet."
                        FontSize="13"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="NetworkStatusLine"
+                       x:Name="NetworkPrimerStatusLine"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Skip for now" Click="OnNetworkSkip" />
-                <Button x:Name="NetworkContinueButton"
-                        Content="Continue"
+                <Button Content="Not now" Click="OnNetworkPrimerNotNow" />
+                <Button x:Name="NetworkPrimerGrantButton"
+                        Content="Grant"
                         Classes="accent"
-                        Click="OnNetworkContinue" />
+                        Click="OnNetworkPrimerGrant" />
             </StackPanel>
         </Grid>
 
-        <!-- =========================== INPUT MONITORING PRIMER ============ -->
-        <Grid x:Name="PageInputMonitoring"
+        <!-- =========================== NETWORK REFUSAL ==================== -->
+        <Grid x:Name="PageNetworkRefusal"
+              Margin="32"
+              IsVisible="False"
+              RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <ui:FASymbolIcon Grid.Row="0"
+                             Symbol="Important"
+                             FontSize="56"
+                             Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,16" />
+            <TextBlock Grid.Row="1"
+                       Text="Local Network is required"
+                       FontSize="22" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Grid.Row="2"
+                       Text="BoltMate can't sync between your computers without LAN access. Without it, you'd have to manually press Easy-Switch on each device when moving between machines."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,12,10,0" />
+            <TextBlock Grid.Row="3"
+                       x:Name="NetworkRefusalStatusLine"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="12"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,16,10,0" />
+            <StackPanel Grid.Row="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Quit BoltMate" Click="OnQuitApp" />
+                <Button x:Name="NetworkRefusalGrantButton"
+                        Content="Grant"
+                        Classes="accent"
+                        Click="OnNetworkRefusalGrant" />
+            </StackPanel>
+        </Grid>
+
+        <!-- =========================== HID PRIMER (MAC) =================== -->
+        <Grid x:Name="PageInputMonitoringPrimer"
               Margin="32"
               IsVisible="False"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
@@ -100,28 +155,66 @@
                              HorizontalAlignment="Center"
                              Margin="0,4,0,16" />
             <TextBlock Grid.Row="1"
-                       Text="HID device access"
+                       Text="BoltMate needs HID device access"
                        FontSize="22" FontWeight="SemiBold"
+                       TextAlignment="Center" TextWrapping="Wrap"
                        HorizontalAlignment="Center" />
             <TextBlock Grid.Row="2"
-                       Text="macOS labels this permission 'Input Monitoring' because it gates HID device access. BoltMate uses it ONLY to read host-switch events from your Bolt receiver. We do not log keystrokes, mouse movements, or any other input."
+                       Text="macOS labels this 'Input Monitoring' because it gates all HID device access. BoltMate uses it ONLY to read host-switch events from your Bolt receiver. BoltMate does not log keystrokes or any other input."
                        FontSize="13"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="InputMonitoringStatusLine"
+                       x:Name="InputMonitoringPrimerStatusLine"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Skip for now" Click="OnInputMonitoringSkip" />
-                <Button x:Name="InputMonitoringContinueButton"
-                        Content="Continue"
+                <Button Content="Not now" Click="OnInputMonitoringPrimerNotNow" />
+                <Button x:Name="InputMonitoringPrimerGrantButton"
+                        Content="Grant"
                         Classes="accent"
-                        Click="OnInputMonitoringContinue" />
+                        Click="OnInputMonitoringPrimerGrant" />
+            </StackPanel>
+        </Grid>
+
+        <!-- =========================== HID REFUSAL (MAC) ================== -->
+        <Grid x:Name="PageInputMonitoringRefusal"
+              Margin="32"
+              IsVisible="False"
+              RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <ui:FASymbolIcon Grid.Row="0"
+                             Symbol="Important"
+                             FontSize="56"
+                             Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,16" />
+            <TextBlock Grid.Row="1"
+                       Text="HID device access is required"
+                       FontSize="22" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Grid.Row="2"
+                       Text="macOS labels this 'Input Monitoring' because it gates all HID device access. BoltMate uses it ONLY to read host-switch events from your Bolt receiver. BoltMate does not log keystrokes or any other input. Without this permission BoltMate can't talk to your Bolt receiver at all."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,12,10,0" />
+            <TextBlock Grid.Row="3"
+                       x:Name="InputMonitoringRefusalStatusLine"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="12"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,16,10,0" />
+            <StackPanel Grid.Row="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Quit BoltMate" Click="OnQuitApp" />
+                <Button x:Name="InputMonitoringRefusalGrantButton"
+                        Content="Grant"
+                        Classes="accent"
+                        Click="OnInputMonitoringRefusalGrant" />
             </StackPanel>
         </Grid>
 
