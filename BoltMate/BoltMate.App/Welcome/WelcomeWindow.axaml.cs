@@ -137,7 +137,19 @@ public partial class WelcomeWindow : Window
 
         if (_isFirstRun)
         {
-            ShowPage("PageWelcome");
+            // Resume mid-wizard if the user already cleared some steps in a
+            // prior session. The most common cause is macOS forcing a
+            // relaunch after the user grants Input Monitoring in System
+            // Settings — we land here on the next startup with
+            // WelcomeStepCompleted + NetworkStepCompleted already true, so
+            // we should jump straight to PageInputMonitoringPrimer.
+            if (!_settings.WelcomeStepCompleted)
+            {
+                ShowPage("PageWelcome");
+                return;
+            }
+            _log.LogInformation("Wizard resume: welcome already done — advancing");
+            AdvanceToNextRequiredPermissionOrDone();
             return;
         }
 
@@ -145,6 +157,30 @@ public partial class WelcomeWindow : Window
         // the first primer for a still-ungranted permission. If everything
         // is granted just show Done.
         AdvanceToNextRequiredPermissionOrDone();
+    }
+
+    /// <summary>
+    /// Persist a step-completion flag immediately. Best-effort — settings
+    /// save failures are non-fatal (worst case: re-show the same page on
+    /// next launch).
+    /// </summary>
+    private void SaveCheckpoint(string step)
+    {
+        try
+        {
+            switch (step)
+            {
+                case "welcome": _settings.WelcomeStepCompleted = true; break;
+                case "network": _settings.NetworkStepCompleted = true; break;
+                case "input-monitoring": _settings.InputMonitoringStepCompleted = true; break;
+            }
+            _settings.Save();
+            _log.LogInformation("Wizard checkpoint saved: {Step}", step);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to save wizard checkpoint {Step}", step);
+        }
     }
 
     /// <summary>
@@ -212,20 +248,24 @@ public partial class WelcomeWindow : Window
             NetworkPermission.Invalidate();
             var net = NetworkPermission.Check();
             var alreadyShown = _primersShownThisSession.Contains(PermissionNetwork);
-            // On first-run we ALWAYS show the network primer at least once.
+            // On first-run we ALWAYS show the network primer at least once,
+            // UNLESS the persisted checkpoint says we already completed it
+            // in a prior session (e.g. macOS killed us mid-flow for HID
+            // grant relaunch).
             // NetworkPermission.Check on macOS is unreliable before TCC has
             // decided (it can return Granted while the prompt hasn't actually
             // appeared yet), so a Check-only gate would skip the primer
             // entirely on the user's first launch.
-            var requireShow = _isFirstRun && !alreadyShown;
+            var requireShow = _isFirstRun && !alreadyShown && !_settings.NetworkStepCompleted;
             if (requireShow || net.Status != NetworkPermission.Status.Granted)
             {
-                _log.LogInformation("Permission gate: network = {Status}, firstRun={First}, alreadyShown={Shown} — showing primer",
-                    net.Status, _isFirstRun, alreadyShown);
+                _log.LogInformation("Permission gate: network = {Status}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
+                    net.Status, _isFirstRun, alreadyShown, _settings.NetworkStepCompleted);
                 _primersShownThisSession.Add(PermissionNetwork);
                 ShowPage("PageNetworkPrimer");
                 return;
             }
+            SaveCheckpoint("network"); // we're past the network step
         }
 
         // HID (Input Monitoring) is Mac-only.
@@ -233,15 +273,16 @@ public partial class WelcomeWindow : Window
         {
             var im = InputMonitoringPermission.Check();
             var alreadyShown = _primersShownThisSession.Contains(PermissionInputMonitoring);
-            var requireShow = _isFirstRun && !alreadyShown;
+            var requireShow = _isFirstRun && !alreadyShown && !_settings.InputMonitoringStepCompleted;
             if (requireShow || im != InputMonitoringPermission.Status.Granted)
             {
-                _log.LogInformation("Permission gate: input-monitoring = {Status}, firstRun={First}, alreadyShown={Shown} — showing primer",
-                    im, _isFirstRun, alreadyShown);
+                _log.LogInformation("Permission gate: input-monitoring = {Status}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
+                    im, _isFirstRun, alreadyShown, _settings.InputMonitoringStepCompleted);
                 _primersShownThisSession.Add(PermissionInputMonitoring);
                 ShowPage("PageInputMonitoringPrimer");
                 return;
             }
+            SaveCheckpoint("input-monitoring"); // we're past the HID step
         }
 
         _log.LogInformation("Permission gate: all required permissions granted — Done");
@@ -255,6 +296,11 @@ public partial class WelcomeWindow : Window
     private void OnWelcomeGetStarted(object? sender, RoutedEventArgs e)
     {
         _log.LogInformation("User clicked Get started");
+        // Apply the autostart toggle NOW (not on the Done page) so that if a
+        // permission prompt later forces the app to relaunch (macOS HID
+        // grant), the user's choice has already taken effect at the OS level.
+        ApplyAutostartFromToggle();
+        SaveCheckpoint("welcome");
         AdvanceToNextRequiredPermissionOrDone();
     }
 

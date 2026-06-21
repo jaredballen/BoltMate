@@ -48,6 +48,16 @@ public sealed class AppSettings
     /// </summary>
     public bool HasShownWelcome { get; set; } = false;
 
+    /// <summary>
+    /// Mid-wizard checkpoint flags. Persisted as the user walks the welcome
+    /// pages so a forced restart (e.g. macOS requiring a relaunch after the
+    /// user grants Input Monitoring in System Settings) resumes at the next
+    /// page instead of starting from scratch.
+    /// </summary>
+    public bool WelcomeStepCompleted { get; set; } = false;
+    public bool NetworkStepCompleted { get; set; } = false;
+    public bool InputMonitoringStepCompleted { get; set; } = false;
+
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
 
