@@ -13,6 +13,9 @@ namespace BoltMate.Core.Topology;
 /// Protocol version stays at 1 while BoltMate is pre-release; field changes
 /// in this iteration aren't a wire bump because there are no other instances
 /// in the field.
+///
+/// Coordinator-only mode (no receiver attached) does NOT broadcast — the
+/// broadcast loop bails when <c>ReceiverManager.Receivers.Count == 0</c>.
 /// </remarks>
 public sealed class ReceiverAnnouncement
 {

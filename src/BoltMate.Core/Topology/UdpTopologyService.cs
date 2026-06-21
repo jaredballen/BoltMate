@@ -206,6 +206,14 @@ public sealed class UdpTopologyService : IDisposable
         {
             try
             {
+                // No receivers → nothing for peers to act on. Skip the
+                // tick entirely so a coordinator-only machine doesn't
+                // generate LAN chatter with empty payloads.
+                if (_manager.Receivers.Count == 0)
+                {
+                    goto sleep;
+                }
+
                 var seq = (ulong)Interlocked.Increment(ref _nextSeq);
                 var payload = BuildAnnouncement(seq);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
@@ -240,6 +248,7 @@ public sealed class UdpTopologyService : IDisposable
                 _logger.LogWarning(ex, "Topology broadcast tick failed");
             }
 
+            sleep:
             // Cadence: tighter while inside a burst window, otherwise normal.
             // BUT — wake immediately if a local link event fires (kick event),
             // even mid-sleep. That gets our news to peers' correlators inside
@@ -365,8 +374,8 @@ public sealed class UdpTopologyService : IDisposable
         // can measure their outbound packet loss to us.
         foreach (var (peerId, lastSeq) in _lastSeenSeq)
             ann.Acks.Add(new PeerAck { MachineId = peerId, LastSeq = lastSeq });
-        // Always-broadcast: even with zero receivers, we ship an envelope so
-        // peers see "BoltMate is alive on machine X". Coordinator-only mode.
+        // BroadcastLoopAsync guarantees receivers.Count > 0 by this point —
+        // we don't ship empty announcements (no signal for peers to act on).
         foreach (var receiver in receivers)
         {
             var entry = new ReceiverAnnouncementEntry
