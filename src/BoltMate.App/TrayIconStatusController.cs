@@ -228,12 +228,12 @@ public sealed class TrayIconStatusController : IDisposable
         // use the dark variant — a white silhouette renders on the typical
         // dark menubar.
         if (OperatingSystem.IsMacOS())
-            return new Uri("avares://BoltMate.App/Assets/tray-icon-dark.png");
+            return new Uri("avares://BoltMate/Assets/tray-icon-dark.png");
 
         var theme = Application.Current?.PlatformSettings?.GetColorValues().ThemeVariant;
         return theme == PlatformThemeVariant.Dark
-            ? new Uri("avares://BoltMate.App/Assets/tray-icon-dark.png")
-            : new Uri("avares://BoltMate.App/Assets/tray-icon-light.png");
+            ? new Uri("avares://BoltMate/Assets/tray-icon-dark.png")
+            : new Uri("avares://BoltMate/Assets/tray-icon-light.png");
     }
 
     public void Dispose() => _disposables.Dispose();

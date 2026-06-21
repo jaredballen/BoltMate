@@ -27,7 +27,7 @@
         <TrayIcons>
             <TrayIcon ToolTipText="BoltMate"
                       ctrl:MacOSProperties.IsTemplateIcon="True"
-                      Icon="avares://BoltMate.App/Assets/tray-icon-light.png">
+                      Icon="avares://BoltMate/Assets/tray-icon-light.png">
                 <TrayIcon.Menu>
                     <NativeMenu />
                 </TrayIcon.Menu>

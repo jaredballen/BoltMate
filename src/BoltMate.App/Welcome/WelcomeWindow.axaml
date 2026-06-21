@@ -41,7 +41,7 @@
               Margin="32"
               RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
             <Image Grid.Row="0"
-                   Source="avares://BoltMate.App/Assets/app-icon-1024.png"
+                   Source="avares://BoltMate/Assets/app-icon-1024.png"
                    Width="96" Height="96"
                    HorizontalAlignment="Center"
                    Margin="0,0,0,16" />
@@ -254,7 +254,7 @@
               IsVisible="False"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <Image Grid.Row="0"
-                   Source="avares://BoltMate.App/Assets/app-icon-1024.png"
+                   Source="avares://BoltMate/Assets/app-icon-1024.png"
                    Width="96" Height="96"
                    HorizontalAlignment="Center"
                    Margin="0,0,0,16" />
