@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using System.Text.Json;
 using Makaretu.Dns;
 using Microsoft.Extensions.Logging;
@@ -45,6 +46,28 @@ public sealed class MdnsTcpChannel : IDisposable
     private ServiceDiscovery? _serviceDiscovery;
     private bool _disposed;
 
+    // mDNS self-echo health. We auto-receive answers for our OWN advertised
+    // service through the same MulticastService — if Bonjour is healthy on
+    // the LAN, our instance comes back to us within seconds of the periodic
+    // re-advert. If Local Network is denied / Bonjour service isn't running
+    // on Windows / multicast is blocked, no echo arrives. Used to surface
+    // "Bonjour blocked" independently from the LAN UDP path.
+    private DateTimeOffset _lastSelfMdnsEcho;
+    private DateTimeOffset _mdnsStartedAt;
+    private readonly System.Reactive.Subjects.BehaviorSubject<TransportHealth> _mdnsHealth;
+    private System.Threading.Timer? _mdnsHealthTimer;
+    private TransportState _lastMdnsState = TransportState.Unknown;
+    private static readonly TimeSpan MdnsEchoFreshness = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MdnsWarmup = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Self-echo health of the mDNS / Bonjour discovery path. Independent
+    /// from <see cref="UdpTopologyService.UdpHealth"/> so users can tell
+    /// which transport is failing — e.g. UDP blocked but Bonjour fine, or
+    /// vice versa.
+    /// </summary>
+    public IObservable<TransportHealth> MdnsHealth => _mdnsHealth.AsObservable();
+
     public MdnsTcpChannel(
         UdpTopologyService udp,
         TopologySettings settings,
@@ -55,6 +78,46 @@ public sealed class MdnsTcpChannel : IDisposable
         _settings = settings;
         _machineId = machineId;
         _logger = logger ?? NullLogger<MdnsTcpChannel>.Instance;
+        _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
+            TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
+        _disposables.Add(_mdnsHealth);
+    }
+
+    private string MdnsEndpointLabel() =>
+        $"{NormaliseServiceName(_settings.MdnsServiceType)} (mDNS 224.0.0.251:5353)";
+
+    private void EmitMdnsHealth(TransportState state, string detail)
+    {
+        if (_lastMdnsState == state) return;
+        _lastMdnsState = state;
+        _mdnsHealth.OnNext(new TransportHealth(state, MdnsEndpointLabel(), detail, DateTimeOffset.UtcNow));
+    }
+
+    private void RecomputeMdnsHealth()
+    {
+        if (_multicast is null || _serviceDiscovery is null)
+        {
+            EmitMdnsHealth(TransportState.Blocked,
+                "Bonjour publisher failed to start. On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted.");
+            return;
+        }
+        var now = DateTimeOffset.UtcNow;
+        var sinceStart = now - _mdnsStartedAt;
+        var sinceEcho = now - _lastSelfMdnsEcho;
+        if (_lastSelfMdnsEcho == default && sinceStart < MdnsWarmup)
+        {
+            EmitMdnsHealth(TransportState.Unknown, $"warming up ({sinceStart.TotalSeconds:F0}/{MdnsWarmup.TotalSeconds:F0}s)");
+            return;
+        }
+        if (_lastSelfMdnsEcho == default || sinceEcho > MdnsEchoFreshness)
+        {
+            EmitMdnsHealth(TransportState.Blocked,
+                $"Bonjour service has not echoed our own advert in {(sinceEcho == default ? sinceStart : sinceEcho).TotalSeconds:F0}s. " +
+                "On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted. " +
+                "If both look right, multicast (224.0.0.251:5353) may be filtered on this network.");
+            return;
+        }
+        EmitMdnsHealth(TransportState.Healthy, $"last self-echo {sinceEcho.TotalSeconds:F0}s ago");
     }
 
     /// <summary>Idempotently starts the mDNS publisher, browser, and TCP listener.</summary>
@@ -123,6 +186,18 @@ public sealed class MdnsTcpChannel : IDisposable
             _serviceDiscovery.ServiceInstanceDiscovered += OnInstanceDiscovered;
             _multicast.Start();
             _serviceDiscovery.QueryServiceInstances(NormaliseServiceName(_settings.MdnsServiceType));
+            _mdnsStartedAt = DateTimeOffset.UtcNow;
+
+            // Periodic re-query keeps the self-echo signal fresh — without
+            // this we'd depend purely on Makaretu's auto-reannounce cadence
+            // (≈ TTL-based). Re-derives health every tick too, so a
+            // newly-blocked state surfaces within ~10s of the change.
+            _mdnsHealthTimer = new System.Threading.Timer(_ =>
+            {
+                try { _serviceDiscovery?.QueryServiceInstances(NormaliseServiceName(_settings.MdnsServiceType)); }
+                catch { /* best effort */ }
+                RecomputeMdnsHealth();
+            }, null, dueTime: TimeSpan.FromSeconds(5), period: TimeSpan.FromSeconds(10));
 
             _logger.LogInformation("MdnsTcp: mDNS publisher started ({Service}, instance {Instance}, TCP {Port})",
                 _settings.MdnsServiceType, _machineId, _settings.TcpPort);
@@ -130,6 +205,8 @@ public sealed class MdnsTcpChannel : IDisposable
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "MdnsTcp: mDNS publish/browse init failed; TCP listener still active for peers that find us another way");
+            EmitMdnsHealth(TransportState.Blocked,
+                $"Bonjour publisher failed to start: {ex.Message}");
         }
 
         // 3. Mirror UDP outgoing announcements onto every TCP peer.
@@ -143,6 +220,7 @@ public sealed class MdnsTcpChannel : IDisposable
         try { _cts.Cancel(); } catch { }
         _disposables.Dispose();
 
+        try { _mdnsHealthTimer?.Dispose(); } catch { }
         try { _listener?.Stop(); } catch { }
         try { _serviceDiscovery?.Dispose(); } catch { }
         try { _multicast?.Stop(); _multicast?.Dispose(); } catch { }
@@ -234,8 +312,16 @@ public sealed class MdnsTcpChannel : IDisposable
             var instance = args.ServiceInstanceName.ToString();
             // Filter to our service type to avoid acting on unrelated mDNS noise.
             if (!instance.Contains("_boltmate", StringComparison.OrdinalIgnoreCase)) return;
-            // Skip our own instance.
-            if (instance.StartsWith(_machineId, StringComparison.OrdinalIgnoreCase)) return;
+            // Self-echo path: when our OWN advertised instance comes back
+            // to us, the discovery layer is alive end-to-end. Record the
+            // timestamp + recompute health, then bail (we don't open a TCP
+            // peer connection to ourselves).
+            if (instance.StartsWith(_machineId, StringComparison.OrdinalIgnoreCase))
+            {
+                _lastSelfMdnsEcho = DateTimeOffset.UtcNow;
+                RecomputeMdnsHealth();
+                return;
+            }
 
             // Extract host + port from the SRV record, and machineId TXT.
             IPEndPoint? endpoint = null;
