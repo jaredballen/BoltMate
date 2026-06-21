@@ -49,11 +49,21 @@ src/
 │   └── AppSettings.cs             # JSON config schema
 ├── BoltMate.Cli/         # headless service / diagnostic CLI (`boltmate` binary)
 ├── BoltMate.App/         # Avalonia 12 tray app
-│   ├── Assets/                    # tray-icon.png (+@2x), app-icon-512.png, BoltMate.icns
+│   ├── Assets/                    # app-icon.{svg,png,icns,ico}, tray-icon-{light,dark}.png (+@2x)
+│   ├── Welcome/WelcomeWindow.axaml(.cs)  # first-run + Fix-permissions wizard (7 pages)
+│   ├── Permissions/               # IPermission roll-up (Network, InputMonitoring, Autostart)
+│   ├── Updates/                   # UpdateService (stub)
 │   ├── App.axaml(.cs)             # tray shell + bootstrap
-│   ├── TrayMenuController.cs      # dynamic menu bound to manager.Receivers cache
+│   ├── Program.cs                 # entry point + single-instance lock
+│   ├── TrayMenuController.cs      # static 4-item tray menu + conditional "Fix permissions…"
+│   ├── TrayIconStatusController.cs # composites Good/Bad/Alert badge onto tray silhouette
 │   ├── DeviceEnricher.cs          # background metadata reads on link-up
-│   ├── SettingsWindow.axaml(.cs)  # receivers list, topology matrix, Status tab, Network tab
+│   ├── HostBindingPersistence.cs  # caches HostBindings to AppSettings
+│   ├── SettingsWindow.axaml(.cs)  # 3 panes: Status, About, License (FluentAvalonia NavigationView)
+│   ├── NetworkPermission.cs       # Local Network probe + grant request (Mac TCC / Win firewall)
+│   ├── PermissionStatusService.cs # 2Hz poll, drives tray badge + Fix-permissions menu item
+│   ├── LocalNotifications.cs      # NSUserNotification on Mac (no-op elsewhere)
+│   ├── AppAutostart.cs            # LaunchAgent plist (Mac) / Task Scheduler (Win)
 │   ├── MacActivationPolicy.cs     # NSApp setActivationPolicy P/Invoke (Dock show/hide)
 │   └── AppLoggerSetup.cs          # Serilog logger factory (mirrors CLI's setup)
 └── BoltMate.Tests/       # xUnit (90+ tests), FakeReceiverConnection/Transport doubles
@@ -83,10 +93,15 @@ Falls back to legacy "same host index for every sibling" routing when the origin
 ## App layer composition (BoltMate.App)
 
 - `App.axaml.cs` — bootstrap: settings load, transport, manager, switcher, enricher, topology service, tray controller.
+- `Welcome/WelcomeWindow` — 7-page wizard (Welcome, NetworkPrimer, NetworkRefusal, InputMonitoringPrimer, InputMonitoringRefusal, Done, Linux). One window, page swap via `IsVisible`. Reused as the Fix-permissions entry point on later launches. **Flagged for rewrite** (see [welcome flow memory](.claude/...)).
 - `DeviceEnricher` — background metadata reads on link-up: feature discovery + name/serial/battery/host bindings.
-- `TrayMenuController` — builds dynamic NativeMenu from manager cache; per-receiver sub-sections with per-slot "Switch to Host N" submenus.
-- `SettingsWindow` — tabs: General, Receivers (read-only list), Topology (cross-receiver matrix), Network (LAN sync toggle), Status (live local + peer view), Updates.
-- `MacActivationPolicy` — NSApp activation policy P/Invoke to show/hide the Dock icon when settings open.
+- `TrayMenuController` — static menu (Status / About / License / Quit) plus a conditional "⚠ Fix permissions…" item driven by `PermissionStatusService`. The per-receiver / per-slot submenu structure described in earlier drafts does **not** exist in the current code.
+- `TrayIconStatusController` — composites a Good (✓ green) / Bad (✕ red) / Alert (! yellow) badge over the silhouette tray icon based on peer reachability + permissions state.
+- `SettingsWindow` — three panes via FluentAvalonia NavigationView: **Status** (This machine / Network access / Peers cards), **About** (Updates / Startup / Privacy / Diagnostics cards + version header), **License** (placeholder). 820×560, hidden-not-closed across opens.
+- `PermissionStatusService` — 2Hz polling roll-up of Network + Input Monitoring + Autostart, exposed as Rx observables; drives tray badge + Fix-permissions menu item + Welcome auto-advance.
+- `MacActivationPolicy` — NSApp activation policy P/Invoke to show/hide the Dock icon when Settings or Welcome window opens.
+
+See `doc/ui-design-handoff.md` for the full per-screen UI inventory.
 
 ## Build / run
 
@@ -181,3 +196,16 @@ Bolt receiver: VID `0x046D`, PID `0xC548`. Management interface = UsagePage `0xF
 ## Working with this project
 
 The full task list (#1–#30) is tracked via TaskList. Phase 1 (headless service with reactive Core) is complete and tested; tasks #14–#25 cover the pairing/management feature expansion that grew during the design conversation. Phase 2 (full Avalonia UX) builds on the existing tray-scaffold App project.
+
+## Pending UX work
+
+**Transport health surfacing (slice D of the network-diagnostics rework).**
+The Core now exposes three independent `IObservable<TransportHealth>`
+signals — `UdpTopologyService.UdpHealth`, `MdnsTcpChannel.MdnsHealth`,
+`MdnsTcpChannel.TcpHealth` — each with its own `{ State (Healthy /
+Unknown / Blocked), Endpoint, DetailMessage, LastChangeUtc }`. Nothing in
+the UI binds to them yet. The Settings → Status tab needs a "Network"
+section that renders all three with their endpoint string + actionable
+detail copy, plus a tray-badge composite that flips to alert mode when
+any transport stays Blocked beyond a threshold. Brief lives in
+`doc/transport-health-ui-brief.md`.
