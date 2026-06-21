@@ -57,9 +57,14 @@ if ($Hard) {
 Done. Notes:
   • Settings live in %APPDATA%\BoltMate (Roaming); logs in %LOCALAPPDATA%\BoltMate\Logs.
   • Firewall rules without admin only remove per-user entries; system rules
-    require an elevated PowerShell. If the firewall prompt still doesn't
-    appear, check Windows Defender Firewall → Allowed apps for stale entries.
-  • Network "permission" on Win is the NLM profile category (Private vs
-    Public). The welcome wizard probes that; toggling between profiles is
-    done in Settings → Network & Internet.
+    require an elevated PowerShell. If the firewall prompt doesn't re-fire
+    on next launch, check Windows Defender Firewall → Allowed apps for
+    stale entries and remove them manually.
+  • Network "permission" on Win is now the per-exe Windows Defender Firewall
+    inbound Allow rule (not the NLM profile). The wizard treats no-rule as
+    Denied so the Grant button can trigger the prompt deliberately by
+    binding an inbound listener — before the topology service does it
+    later for the same reason.
+  • Run this script as: powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-win.ps1
+    (default ExecutionPolicy=Restricted blocks unsigned .ps1 files.)
 "@ | Write-Host
