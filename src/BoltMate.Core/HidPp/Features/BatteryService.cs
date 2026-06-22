@@ -115,7 +115,7 @@ public readonly record struct BatteryStatus(
                               or ChargingState.WirelessCharging;
 
     /// <summary>True if the battery has reached full charge.</summary>
-    public bool Full => State == ChargingState.ChargeComplete || Level == BatteryLevel.Full;
+    public bool Full => State is ChargingState.ChargeComplete || Level is BatteryLevel.Full;
 
     public override string ToString()
     {

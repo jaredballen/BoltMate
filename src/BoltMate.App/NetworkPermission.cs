@@ -504,8 +504,8 @@ public static class NetworkPermission
 
         foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
         {
-            if (nic.OperationalStatus != OperationalStatus.Up) continue;
-            if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+            if (nic.OperationalStatus is not OperationalStatus.Up) continue;
+            if (nic.NetworkInterfaceType is NetworkInterfaceType.Loopback) continue;
             var props = nic.GetIPProperties();
             if (props.GatewayAddresses.Count > 0)
                 return "Unknown";

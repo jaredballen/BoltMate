@@ -110,15 +110,15 @@ public sealed class MdnsTcpChannel : IDisposable
     private static TransportHealth CombineSyncHealth(TransportHealth mdns, TransportHealth tcp)
     {
         const string endpoint = "Bonjour / mDNS + TCP sync";
-        if (mdns.State == TransportState.Blocked)
+        if (mdns.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
                 $"Bonjour discovery blocked — {mdns.DetailMessage}",
                 DateTimeOffset.UtcNow);
-        if (tcp.State == TransportState.Blocked)
+        if (tcp.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
                 $"TCP backchannel blocked — {tcp.DetailMessage}",
                 DateTimeOffset.UtcNow);
-        if (mdns.State == TransportState.Healthy && tcp.State == TransportState.Healthy)
+        if (mdns.State is TransportState.Healthy && tcp.State is TransportState.Healthy)
             return new TransportHealth(TransportState.Healthy, endpoint,
                 "Bonjour + TCP both healthy",
                 DateTimeOffset.UtcNow);
@@ -365,35 +365,33 @@ public sealed class MdnsTcpChannel : IDisposable
 
     private async Task ReadLoopAsync(TcpClient peer, CancellationToken ct)
     {
-        using (peer)
+        using var _ = peer;
+        try
         {
-            try
+            var stream = peer.GetStream();
+            var lengthBuf = new byte[4];
+            while (!ct.IsCancellationRequested)
             {
-                var stream = peer.GetStream();
-                var lengthBuf = new byte[4];
-                while (!ct.IsCancellationRequested)
-                {
-                    var got = await ReadExactAsync(stream, lengthBuf, ct).ConfigureAwait(false);
-                    if (!got) return;
-                    var len = BitConverter.ToInt32(lengthBuf, 0);
-                    if (len <= 0 || len > 64 * 1024) return; // sanity cap (64KB)
-                    var payload = new byte[len];
-                    if (!await ReadExactAsync(stream, payload, ct).ConfigureAwait(false)) return;
+                var got = await ReadExactAsync(stream, lengthBuf, ct).ConfigureAwait(false);
+                if (!got) return;
+                var len = BitConverter.ToInt32(lengthBuf, 0);
+                if (len <= 0 || len > 64 * 1024) return; // sanity cap (64KB)
+                var payload = new byte[len];
+                if (!await ReadExactAsync(stream, payload, ct).ConfigureAwait(false)) return;
 
-                    try
-                    {
-                        var announcement = JsonSerializer.Deserialize(payload,
-                            ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
-                        if (announcement is not null)
-                            _udp.InjectInbound(announcement, "tcp");
-                    }
-                    catch (JsonException) { /* skip malformed */ }
+                try
+                {
+                    var announcement = JsonSerializer.Deserialize(payload,
+                        ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+                    if (announcement is not null)
+                        _udp.InjectInbound(announcement, "tcp");
                 }
+                catch (JsonException) { /* skip malformed */ }
             }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "MdnsTcp read loop ended");
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "MdnsTcp read loop ended");
         }
     }
 

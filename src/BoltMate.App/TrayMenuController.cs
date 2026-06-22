@@ -59,8 +59,8 @@ public sealed class TrayMenuController : IDisposable
     /// <summary>Push a fresh permission snapshot; rebuilds the menu only if alert-presence flipped.</summary>
     public void SetPermissionStatus(OverallStatus status)
     {
-        var wasAlerting = _permissionStatus == OverallStatus.AnyDenied;
-        var nowAlerting = status == OverallStatus.AnyDenied;
+        var wasAlerting = _permissionStatus is OverallStatus.AnyDenied;
+        var nowAlerting = status is OverallStatus.AnyDenied;
         _permissionStatus = status;
         if (wasAlerting == nowAlerting) return;
         Dispatcher.UIThread.Post(BuildItems);

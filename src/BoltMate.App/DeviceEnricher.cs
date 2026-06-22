@@ -38,7 +38,7 @@ public sealed class DeviceEnricher : IDisposable
         {
             foreach (var change in changes)
             {
-                if (change.Reason == ChangeReason.Add)
+                if (change.Reason is ChangeReason.Add)
                     HookReceiver(change.Current);
             }
         }));

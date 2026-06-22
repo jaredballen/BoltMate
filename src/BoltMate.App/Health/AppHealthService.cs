@@ -148,8 +148,8 @@ public sealed class AppHealthService : IDisposable
         // peers can still get the fan-out announcements. The per-
         // protocol signals (mDNS vs TCP) stay in the logs for diagnosis,
         // they're just rolled up here for the user-facing decision.
-        var bothBlocked = _udpHealth.State == TransportState.Blocked
-                          && _syncHealth.State == TransportState.Blocked;
+        var bothBlocked = _udpHealth.State is TransportState.Blocked
+                          && _syncHealth.State is TransportState.Blocked;
         _netTracker.RawBad = bothBlocked;
         _netTracker.CurrentDetail = bothBlocked
             ? $"both transports blocked — UDP multicast: {_udpHealth.DetailMessage} || Bonjour sync: {_syncHealth.DetailMessage}"

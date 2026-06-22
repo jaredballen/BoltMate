@@ -560,7 +560,7 @@ public sealed class UdpTopologyService : IDisposable
         {
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                if (ni.OperationalStatus is not OperationalStatus.Up) continue;
                 if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
                 var props = ni.GetIPProperties();
                 foreach (var addr in props.UnicastAddresses)

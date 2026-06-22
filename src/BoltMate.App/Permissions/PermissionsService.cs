@@ -203,7 +203,7 @@ public sealed class PermissionsService : IPermissionsService
         protected override bool ProbeOs()
         {
             NetworkPermission.Invalidate();
-            return NetworkPermission.Check().Status == NetworkPermission.Status.Granted;
+            return NetworkPermission.Check().Status is NetworkPermission.Status.Granted;
         }
 
         protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
@@ -212,7 +212,7 @@ public sealed class PermissionsService : IPermissionsService
 
             NetworkPermission.Invalidate();
             var pre = NetworkPermission.Check();
-            if (pre.Status == NetworkPermission.Status.Granted) return Task.CompletedTask;
+            if (pre.Status is NetworkPermission.Status.Granted) return Task.CompletedTask;
 
             // Mac vs Win semantics for "Denied" differ:
             //   • Mac: Denied means the user explicitly toggled off in TCC.
@@ -223,7 +223,7 @@ public sealed class PermissionsService : IPermissionsService
             //     listener to trigger the Defender "Allow access" prompt.
             // Routing both to OpenSystemSettings would dump Win users into
             // the full firewall control panel instead of the simple prompt.
-            if (OperatingSystem.IsMacOS() && pre.Status == NetworkPermission.Status.Denied)
+            if (OperatingSystem.IsMacOS() && pre.Status is NetworkPermission.Status.Denied)
             {
                 Log.LogInformation("Mac: Local Network already denied — opening System Settings");
                 NetworkPermission.OpenSystemSettings();

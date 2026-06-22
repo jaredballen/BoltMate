@@ -140,7 +140,7 @@ public sealed class TrayIconStatusController : IDisposable
 
     private void OnUdpHealthChanged(TransportHealth h)
     {
-        if (h.State == TransportState.Blocked)
+        if (h.State is TransportState.Blocked)
         {
             if (_udpBlockedSince is null)
                 _udpBlockedSince = DateTimeOffset.UtcNow;
@@ -155,7 +155,7 @@ public sealed class TrayIconStatusController : IDisposable
 
     private void OnSyncHealthChanged(TransportHealth h)
     {
-        if (h.State == TransportState.Blocked)
+        if (h.State is TransportState.Blocked)
         {
             if (_syncBlockedSince is null)
                 _syncBlockedSince = DateTimeOffset.UtcNow;
@@ -294,7 +294,7 @@ public sealed class TrayIconStatusController : IDisposable
             ctx.DrawEllipse(fill, new Pen(Brushes.White, badgeSize * 0.08), rect.Center, rect.Width / 2, rect.Height / 2);
 
             var glyphPen = new Pen(Brushes.White, badgeSize * 0.14, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-            if (kind == BadgeKind.Good)
+            if (kind is BadgeKind.Good)
             {
                 // Check: two strokes — short down-right then longer up-right.
                 var p1 = new Point(rect.X + badgeSize * 0.25, rect.Y + badgeSize * 0.55);
@@ -303,7 +303,7 @@ public sealed class TrayIconStatusController : IDisposable
                 ctx.DrawLine(glyphPen, p1, p2);
                 ctx.DrawLine(glyphPen, p2, p3);
             }
-            else if (kind == BadgeKind.Bad)
+            else if (kind is BadgeKind.Bad)
             {
                 // X: two diagonals.
                 var pad = badgeSize * 0.28;

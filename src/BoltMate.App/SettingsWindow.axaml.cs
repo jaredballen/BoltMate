@@ -499,7 +499,7 @@ public partial class SettingsWindow : Window
         if (line is not null) line.Text = res.Detail;
         if (btn is not null)
         {
-            btn.IsVisible = res.Status == NetworkPermission.Status.Denied;
+            btn.IsVisible = res.Status is NetworkPermission.Status.Denied;
             btn.Content = OperatingSystem.IsWindows() ? "Open Network Settings" : "Open Privacy Settings";
         }
     }
