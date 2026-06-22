@@ -4,14 +4,9 @@ namespace BoltMate.Core.HidPp.Features;
 /// HID++ 2.0 UNIFIED_BATTERY (feature 0x1004). Modern Logi devices (MX Master
 /// 3/3S, MX Keys series, etc.) expose battery state here.
 /// </summary>
-public sealed class BatteryService
+public sealed class BatteryService(HidPpClient client)
 {
-    private readonly HidPpClient _client;
-
-    public BatteryService(HidPpClient client)
-    {
-        _client = client;
-    }
+    private readonly HidPpClient _client = client;
 
     /// <summary>
     /// Reads the full battery snapshot — percent, charging state, external

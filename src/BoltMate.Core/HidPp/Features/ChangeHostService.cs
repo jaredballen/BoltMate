@@ -10,14 +10,9 @@ namespace BoltMate.Core.HidPp.Features;
 /// </list>
 /// Verified write-only by Solaar (<c>settings_templates.ChangeHost</c> uses <c>no_reply=True</c>).
 /// </remarks>
-public sealed class ChangeHostService
+public sealed class ChangeHostService(HidPpClient client)
 {
-    private readonly HidPpClient _client;
-
-    public ChangeHostService(HidPpClient client)
-    {
-        _client = client;
-    }
+    private readonly HidPpClient _client = client;
 
     /// <summary>
     /// Reads the current host of <paramref name="deviceIndex"/>.

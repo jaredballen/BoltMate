@@ -7,14 +7,9 @@ namespace BoltMate.Core.HidPp.Features;
 /// their friendly names. Read-only; no host-switch event is emitted on
 /// remote changes, so this is purely a poll-based snapshot.
 /// </summary>
-public sealed class HostsInfoService
+public sealed class HostsInfoService(HidPpClient client)
 {
-    private readonly HidPpClient _client;
-
-    public HostsInfoService(HidPpClient client)
-    {
-        _client = client;
-    }
+    private readonly HidPpClient _client = client;
 
     /// <summary>
     /// Returns capability flags, host count, and the currently-active host
