@@ -1,321 +1,386 @@
 # BoltMate refactor plan
 
-Captured 2026-06-22. Findings from a critical pass over the codebase against
-modern C# / .NET best practices and the desired architecture (MVVM via
-ReactiveUI, DI/IoC via `IServiceCollection`/`IServiceProvider`, strong
-interface design, one service per directory).
+Critical pass over the codebase against modern C# / .NET best practices and
+the desired architecture (MVVM via ReactiveUI, DI/IoC via plain
+`IServiceCollection`/`IServiceProvider`, strong interface design,
+one service per directory).
 
-## Status legend
-- ✅ Already compliant — no work needed
-- ⚠️ Partial / mechanical fix
-- ❌ Significant work / new pattern
+Originally captured 2026-06-22. Revision adds regression-prevention strategy.
 
 ---
 
-## 1. Null comparisons — ✅ Already compliant
+## Hard constraint
 
-Zero `== null` / `!= null` instances anywhere. Codebase already uses
-`is null` / `is not null` throughout.
+**Permission handling, HID protocol support, and topology/fan-out logic
+MUST NOT regress.** UI regressions are acceptable risk during the
+transition; the underlying device-control surface is not.
 
-## 2. Enum equality (`==`/`!=` → `is`/`is not`) — ⚠️ Mechanical (~25 sites)
+This shapes everything downstream:
 
-Representative hits:
-```
-BatteryService.cs:118                    State == ChargingState.ChargeComplete
-MdnsTcpChannel.cs:113,117,121,152,199    State == TransportState.X
-TrayIconStatusController.cs:101,143,158  status == X, h.State == TransportState.Blocked
-AppHealthService.cs:151,152              .State == TransportState.Blocked
-UdpTopologyService.cs:136,563            _lastUdpState == state, OperationalStatus != Up
-TrayMenuController.cs:62                 _permissionStatus == OverallStatus.AnyDenied
-DeviceEnricher.cs:41                     change.Reason == ChangeReason.Add
-NetworkPermission.cs:507                 OperationalStatus != Up
-SettingsWindow.axaml.cs:502              res.Status == NetworkPermission.Status.Denied
-PermissionsService.cs:206,215,226        .Status == NetworkPermission.Status.Granted
-```
+- Phase 0 (characterization tests) lands **before** any refactor PR
+- PRs that touch the Core lib (interfaces, DI, ConfigureAwait,
+  TimeProvider) carry an explicit manual smoke checklist
+- The MVVM PR is sequenced LATE because it's UI-only and therefore the
+  lowest-stakes path even though it has the most LOC
+- The DI PR is sequenced AFTER interface extraction so the wiring step
+  is mechanical, not a redesign
 
-Note: `is`/`is not` doesn't compose into `&&` chains as readably as
-`==`. Where the predicate combines two enum tests with `&&`, evaluate
-whether `is` actually reads better case-by-case.
+---
 
-## 3. MVVM — ❌ Zero adoption
+## Findings summary
 
-- No `ViewModels/` folder
-- No `INotifyPropertyChanged` / `ReactiveObject` / `ViewModelBase`
-- All three windows are pure code-behind:
-  | File | Lines |
-  |---|---|
-  | `App.axaml.cs` | 481 |
-  | `SettingsWindow.axaml.cs` | 612 |
-  | `Welcome/WelcomeWindow.axaml.cs` | 564 |
-- XAML binds directly to code-behind properties/events
+### ✅ Already strong (no work needed)
+| Area | State |
+|---|---|
+| Null comparisons | `is null` / `is not null` everywhere — zero `== null` / `!= null` |
+| Sync-over-async | Zero `.Result` / `.Wait()` deadlock patterns |
+| File-scoped namespaces | 56 of 57 .cs files |
+| Records for DTOs | 25 records vs 53 classes |
+| Switch expressions | 16 expressions vs 2 statements |
+| `using` blocks vs declarations | Only 2 blocks left (`MdnsTcpChannel.cs`, `TrayIconStatusController.cs`) |
+| `async void` | Only 1, documented event-handler continuation |
+| Read-only collection surfaces | `IReadOnlyDictionary` / `IReadOnlyList` used appropriately |
 
-**Approach**: ReactiveUI fits the project's existing Rx-first
-architecture rule ([feedback-dotnet-reactive-style]). Each window grows
-a paired `*ViewModel : ReactiveObject` that exposes `IObservable<T>` /
-`ObservableAsPropertyHelper<T>` for state. Code-behind shrinks to
-constructor + `DataContext` wiring + Avalonia-specific glue
-(activation policy, window placement, native-handle callbacks).
-
-## 4. DI/IoC — ❌ Zero adoption in main app
-
-`IServiceProvider`/`IServiceCollection` exists only in
-`BoltMate.LicenseApi` (ASP.NET project) and `BoltMate.Licensing`. Main
-App + Core: zero.
-
-`App.axaml.cs` does ~10 direct `new` constructions in bootstrap order:
-```
-new PermissionsService(_loggerFactory)
-new ReceiverManager(transport, loggerFactory: _loggerFactory)
-new SwitcherService(_manager, ...)
-new UpdateService(_settings, ...)
-new TrayMenuController(menu, _manager, _permissions!, ...)
-new TrayIconStatusController(trays[0], _permissions!, ...)
-new UdpTopologyService(_manager, _settings.Topology, machineId, ...)
-new MdnsTcpChannel(_topology, _settings.Topology, machineId, ...)
-new TopologyCorrelator(_manager, _switcher, ...)
-new SettingsWindow(_manager, _settings, _permissions!, ...)
-```
-
-Lifecycle managed by hand via `CompositeDisposable`.
-
-**Approach**: plain `ServiceCollection` in `Program.cs`, not
-`Microsoft.Extensions.Hosting`. The host builder is overkill for a
-tray-style Avalonia app — its value (config sources, hosted-service
-lifecycle, graceful shutdown signals) doesn't apply here. Construction
-order moves into `services.AddSingleton<T>()` calls and the provider
-resolves it. Avalonia's `AppBuilder` doesn't natively know about
-`IServiceProvider`, so build the provider in `Program.Main` before
-`AppBuilder.Configure<App>()` and pass it into `App` (constructor
-injection isn't supported by Avalonia's parameterless-app convention;
-a static `App.ServiceProvider` field set from `Program.Main` is the
-established pattern in Avalonia + DI samples).
-
-## 5. Service interfaces — ⚠️ 1 of 14 has an interface
-
-| Service | Interface | Location |
+### ⚠️ Mechanical fixes
+| Area | Sites | Risk |
 |---|---|---|
-| `PermissionsService` | ✅ `IPermissionsService` | `App/Permissions/` |
-| `BatteryService` | ❌ | `Core/HidPp/Features/` |
-| `ChangeHostService` | ❌ | `Core/HidPp/Features/` |
-| `DeviceFriendlyNameService` | ❌ | `Core/HidPp/Features/` |
-| `DeviceInfoService` | ❌ | `Core/HidPp/Features/` |
-| `DeviceNameService` | ❌ | `Core/HidPp/Features/` |
-| `HostsInfoService` | ❌ | `Core/HidPp/Features/` |
-| `ReprogControlsService` | ❌ | `Core/HidPp/Features/` |
-| `RootService` | ❌ | `Core/HidPp/Features/` |
-| `SwitcherService` | ❌ | `Core/Switcher/` |
-| `UdpTopologyService` | ❌ | `Core/Topology/` |
-| `AppHealthService` | ❌ | `App/Health/` |
-| `PermissionStatusService` | ❌ | `App/` |
-| `UpdateService` | ❌ | `App/Updates/` |
+| Enum `==`/`!=` → `is`/`is not` | ~25 | Low — semantically identical |
+| `ConfigureAwait(false)` audit in Core | ~50 missing awaits | **Medium for topology** — see Phase 5 |
+| `BoltMate.App/Program.cs` → top-level statements | 1 file | None |
+| Remaining 2 `using` blocks → declarations | 2 sites | Low — confirm dispose scope unchanged |
+| `ArgumentNullException.ThrowIfNull` at public ctors | ~30 ctors | Low — fail-fast on bad callers |
+| Primary constructors (C# 12) | ~20 classes | None |
 
-Plus service-shaped types without `*Service` suffix that also lack
-interfaces: `MdnsTcpChannel`, `TopologyCorrelator`, `BoltReceiver`,
-`ReceiverManager`, `DeviceEnricher`, `TrayMenuController`,
-`TrayIconStatusController`, `HostBindingPersistence`, `HidPpClient`.
+### ❌ New architecture
+| Area | State |
+|---|---|
+| MVVM | Zero — three windows are pure code-behind: `App.axaml.cs` 481 LOC, `SettingsWindow.axaml.cs` 612 LOC, `Welcome/WelcomeWindow.axaml.cs` 564 LOC |
+| DI/IoC in main app | Zero — `App.axaml.cs` does 10+ direct `new` constructions; lifecycle by hand via `CompositeDisposable` |
+| Service interfaces | 1 of 14 `*Service` types has an interface (`PermissionsService` → `IPermissionsService`); plus ~9 service-shaped types without `*Service` suffix that also lack interfaces |
+| Per-service directories | Today: grouped by domain (`Core/HidPp/Features/` holds 8 services flat); ask: one directory per service with co-located interface + class |
+| `TimeProvider` injection | 43 raw `DateTime(Offset).UtcNow` reads — time-sensitive code is not deterministically testable |
+| `[LoggerMessage]` source-gen | Zero — all logging uses interpolation/format strings; hot paths in HID dispatch and topology emit at every notification |
+| `IAsyncDisposable` | Zero — network/HID transports do sync shutdown of async work |
+| Fire-and-forget tasks | `_ = Task.Run(...)` silently swallows exceptions (e.g. `SwitcherService` verify-and-retry) |
+
+---
+
+## Service interface inventory
+
+Concrete services with no interface (interface-extraction candidates):
+
+**HID / Core**: `BoltReceiver`, `ReceiverManager`, `BatteryService`,
+`ChangeHostService`, `DeviceFriendlyNameService`, `DeviceInfoService`,
+`DeviceNameService`, `HostsInfoService`, `ReprogControlsService`,
+`RootService`, `HidPpClient`
+
+**Topology / Switching**: `SwitcherService`, `UdpTopologyService`,
+`MdnsTcpChannel`, `TopologyCorrelator`
+
+**App layer**: `AppHealthService`, `PermissionStatusService`,
+`UpdateService`, `DeviceEnricher`, `TrayMenuController`,
+`TrayIconStatusController`, `HostBindingPersistence`
+
+Total: **~22 services** to extract interfaces for.
 
 Tests today mock at the HID **transport** boundary
-(`FakeReceiverTransport`/`FakeReceiverConnection`) rather than per-service —
-that's actually robust and won't be displaced. Interface extraction is
-additive: it unlocks per-service mocking AND enables DI.
-
-## 6. One service per directory — ⚠️ Currently grouped
-
-Today: `Core/HidPp/Features/` holds 8 service files flat. Same shape in
-`Core/Topology/`, `App/Permissions/`, etc.
-
-Ask: per-service directories with `IFoo.cs` + `Foo.cs` co-located:
-```
-Core/HidPp/Features/Battery/IBatteryService.cs + BatteryService.cs
-Core/HidPp/Features/ChangeHost/IChangeHostService.cs + ChangeHostService.cs
-...
-```
-
-~25 services × 2 files each. Pure organization gain — no functional
-change. Will churn git blame across all moved files. Worth doing in
-the same PR as interface extraction so file moves and interface
-introduction land together.
+(`FakeReceiverTransport` / `FakeReceiverConnection`) rather than per
+service — that pattern stays. Interface extraction is purely additive
+and unlocks per-service mocking AND enables DI.
 
 ---
 
-## 7. Additional C# / .NET best-practice findings
+## Critical-path surface (do not regress)
 
-### ✅ Already strong
-- File-scoped namespaces: **56 of 57** .cs files
-- No `.Result` / `.Wait()` deadlock patterns
-- Records used heavily for DTOs/value objects: 25 records vs 53 classes
-- Switch expressions favored: 16 expressions vs 2 statements
-- `using` blocks nearly gone: only 2 remain (`MdnsTcpChannel.cs`,
-  `TrayIconStatusController.cs`); rest are `using` declarations
-- Only 1 `async void` and it's a documented event-handler continuation
-- `IReadOnlyDictionary` / `IReadOnlyList` used for surfaces that should
-  be read-only
+The refactor must preserve these end-to-end behaviors at all times. Each
+PR carries the relevant subset as a smoke checklist.
 
-### ⚠️ Inconsistent / opportunity
+### Permissions (Mac + Win)
+- TCC `ListenEvent` (Input Monitoring) read on Mac
+- TCC `LocalNetwork` read on Mac (probe-based since `tccutil reset` is
+  unreliable on Sequoia)
+- Windows Defender Firewall per-exe rule detection
+- Welcome wizard fresh-install re-entry (settings.json wiped → wizard
+  must reappear, step gates honored)
+- `PermissionStatusService` 2 Hz roll-up → tray badge state
+  transitions (Healthy / Alert / Bad)
+- "Fix permissions…" conditional tray-menu item
 
-#### `ConfigureAwait(false)` — partial coverage in Core
-Library code (`BoltMate.Core`) should always pass
-`ConfigureAwait(false)` on await to avoid capturing the
-synchronization context. Coverage today is uneven:
+### HID protocol (BoltMate.Core + HidApi / IOKit / Win backends)
+- HID++ frame parse: report id `0x10` short, `0x11` long, `0x20` DJ
+- `IRoot 0x0001` feature-index lookup
+- `0x41 DJ_PAIRING` link-up / link-lost → `BoltReceiver.LinkEstablished` /
+  `LinkLost` emissions
+- `0x1B04` divertedButtons → `BoltReceiver.HostSwitchPresses`
+- `0x1815 SetCurrentHost` snoop → `BoltReceiver.FlowHostSwitches`
+- `0x1004` battery push → `BoltReceiver.BatteryStatusChanged` +
+  `device.LastKnownBattery`
+- `0x1D4B WIRELESS_DEVICE_STATUS` → `BoltReceiver.DeviceReady`
+- `0x1814 CHANGE_HOST` write via `BoltReceiver.TrySwitchHost` —
+  verify-and-retry path in `SwitcherService` fires on no-disconnect-after-1200ms
+- `0x1815 HOSTS_INFO` chunked friendly-name reads — retry-on-default,
+  upgrade-only merge in `DeviceEnricher`
 
-| File | Count |
-|---|---|
-| `BoltReceiver.cs` | 26 ✓ |
-| `HostsInfoService.cs` | 7 ✓ |
-| `DeviceFriendlyNameService.cs` | 5 ✓ |
-| `ReprogControlsService.cs` | 5 ✓ |
-| `DeviceNameService.cs` | 3 ✓ |
-| `PairingBackup.cs` | 2 ✓ |
-| `DeviceInfoService.cs` | 2 (others missing) |
-| `BatteryService.cs` | 1 (others missing) |
-| `ChangeHostService.cs` | 1 (others missing) |
-| `RootService.cs` | 1 (others missing) |
-| Other Core/Topology files | mostly 0 |
-
-Add `ConfigureAwait(false)` everywhere in `BoltMate.Core` (library —
-no UI context). Skip in `BoltMate.App` (Avalonia code-behind that
-touches UI thread needs the captured context).
-
-#### Logging: source-generated vs string-interpolation
-**Zero `[LoggerMessage]` partial methods.** All logging today uses
-`_logger.LogInformation("... {Foo}", value)` — fine at INF cadence
-but ~3× slower than source-generated for hot paths. Hot paths in this
-codebase:
-- `HidPpClient.OnNotification` (every inbound frame)
-- `BoltReceiver.OnNotification` dispatch (same)
-- `UdpTopologyService` per-announcement logs (one per 2 s × peers)
-
-Source-generated would shave allocation on those. Low priority — only
-matters if logging shows up in flame graphs.
-
-#### `TimeProvider` for testability
-**43 direct `DateTime.UtcNow` / `DateTimeOffset.UtcNow` calls**. Means
-time-sensitive logic (`TopologyCorrelator._pendingLost` reappearance
-window, transport-health timers, retry backoffs) can't be unit-tested
-deterministically. Inject `TimeProvider` (built-in since .NET 8) into
-services that read wall-clock; tests pass `FakeTimeProvider` from
-`Microsoft.Extensions.TimeProvider.Testing`.
-
-#### `ArgumentNullException.ThrowIfNull` at public boundaries
-Only 7 instances across the codebase (most in `Licensing`). Public
-service constructors and external-input methods generally don't
-validate nullable args. Add at public boundaries for fail-fast:
-```csharp
-public SwitcherService(ReceiverManager manager, ILogger<SwitcherService>? logger = null)
-{
-    ArgumentNullException.ThrowIfNull(manager);
-    ...
-}
-```
-
-#### `Program.cs` consistency
-`BoltMate.Cli/Program.cs` uses **top-level statements** (modern).
-`BoltMate.App/Program.cs` uses the old `class Program { static void Main(...) }`
-pattern. Normalise to top-level statements in both — saves boilerplate
-and is the C# 10+ default.
-
-#### Primary constructors (C# 12)
-No primary constructors used yet. Many services have boilerplate like:
-```csharp
-private readonly ReceiverManager _manager;
-private readonly ILogger _logger;
-public SwitcherService(ReceiverManager manager, ILogger logger) {
-    _manager = manager; _logger = logger;
-}
-```
-
-C# 12 primary constructors collapse this:
-```csharp
-public sealed class SwitcherService(ReceiverManager manager, ILogger<SwitcherService> logger)
-{
-    // manager + logger usable directly
-}
-```
-
-Worth applying selectively where the constructor is purely
-assigning-to-fields. Don't force it where the constructor has logic
-(subject wiring, disposable composition, etc.).
-
-#### Fire-and-forget tasks
-`SwitcherService` uses `_ = Task.Run(async () => ...)` for the
-verify-and-retry dance. The discarded task silently swallows
-exceptions. Two safer patterns:
-
-```csharp
-// Option A: explicit handler
-_ = Task.Run(VerifyAndRetryAsync).ContinueWith(
-    t => _logger.LogError(t.Exception, "Verify-retry crashed"),
-    TaskContinuationOptions.OnlyOnFaulted);
-
-// Option B: wrap in helper
-private void RunDetached(Func<Task> work, string label) =>
-    _ = Task.Run(async () => {
-        try { await work(); }
-        catch (Exception ex) { _logger.LogError(ex, "{Label} crashed", label); }
-    });
-```
-
-Worth a small helper extension on `ILogger`.
-
-#### `IAsyncDisposable` for network / native handles
-Today: `UdpTopologyService`, `MdnsTcpChannel`, `BoltReceiver`,
-`WinReceiverConnection` all implement `IDisposable` synchronously
-even though shutdown involves async work (`Task.Wait` on cancellation,
-socket draining). Implementing `IAsyncDisposable` and using
-`await using` at the bootstrap site would surface the async shutdown
-cleanly. Avalonia desktop apps usually call `Dispose` at app-exit
-which can tolerate sync shutdown — low priority unless a graceful
-shutdown becomes important.
-
-#### `using` blocks → declarations (2 remaining)
-- `MdnsTcpChannel.cs`
-- `TrayIconStatusController.cs`
-
-Convert when touched.
+### Topology / Fan-out
+- UDP broadcast + multicast loop (`UdpTopologyService`)
+- Self-echo health gate (UDP transport health)
+- mDNS publish + browser via Makaretu (`MdnsTcpChannel`)
+- TCP listener accept loop (`MdnsTcpChannel`)
+- Multi-alias hostname matching (`LocalHostIdentity` — Mac ComputerName +
+  LocalHostName + DNS form; Win MachineName + DNS form)
+- `TopologyCorrelator.Prune` — drops announcements that don't reference
+  any local alias
+- `TopologyCorrelator.OnAnnouncement` — `LastSwitchEvent` route +
+  `CheckRemoteReappearance` route
+- `_pendingLost` reappearance window (10 s)
+- `SwitcherService.LocalSwitchTriggers` emission — only for
+  non-RemoteTopology sources, to avoid peer-to-peer loop
+- `SwitcherService.FanOut` sibling iteration: skip-originator,
+  skip-no-binding, skip-offline, skip-no-ChangeHostIndex
+- `SwitcherService.RequestTopologyFanOut` — called by `TopologyCorrelator`
+  on reappearance, by CLI on user-requested switch
 
 ---
 
-## Proposed PR sequencing
+## PR sequencing (re-prioritised)
 
-Ordered by lift × payoff:
+Order = risk-shaped. Each PR has explicit regression guards before merge.
 
-### PR 1 — Modernization sweep (small)
-- Enum `==`/`!=` → `is`/`is not` (case-by-case for readability)
-- `ConfigureAwait(false)` audit across `BoltMate.Core`
+### Phase 0 — Characterization tests (PREREQUISITE)
+**Goal**: lock in current behavior with tests **before** touching code.
+
+Today's 112 tests already cover much of `SwitcherService`,
+`TopologyCorrelator`, host-name matching, fan-out routing. Gaps:
+
+- [ ] `BoltReceiver.OnNotification` dispatch — table-driven test feeding
+      synthetic frames (one per notification type: 0x41 link up/down,
+      0x1B04 divert, 0x1815 snoop, 0x1004 battery, 0x1D4B ready)
+- [ ] `DeviceEnricher` end-to-end with fake transport: on link-up the
+      heavy-read pass runs; on DeviceReady the refresh runs; on
+      LinkUp=false the read is skipped
+- [ ] `UdpTopologyService` round-trip: emit announcement, receive on
+      loopback, verify same `LastSwitchEvent` survives
+- [ ] `MdnsTcpChannel`: self-echo classifies as Healthy; absence
+      classifies as Blocked
+- [ ] `PermissionsService` smoke (per-platform): granted-state on Mac,
+      denied-state on Win — at least a happy-path
+- [ ] `LocalHostIdentity.Matches`: alias matching unit tests
+- [ ] `SwitcherService` verify-and-retry: when CHANGE_HOST is ignored
+      (device stays LinkUp), retry fires 1200 ms later, then again
+
+These tests must be green before AND after each subsequent PR.
+**No PR merges if any of these break.**
+
+**Manual smoke**: full Mac+Win fan-out cycle (kb easy-switch back and
+forth, mouse follows). Capture log + bindings.
+
+---
+
+### PR 1 — Mechanical modernization (low risk)
+
+- Enum `==`/`!=` → `is`/`is not` (case-by-case where readable)
 - `BoltMate.App/Program.cs` → top-level statements
-- Remaining `using` blocks → declarations
-- `ArgumentNullException.ThrowIfNull` at public constructors
+- Remaining 2 `using` blocks → declarations (`MdnsTcpChannel`,
+  `TrayIconStatusController`) — VERIFY dispose scope unchanged
+- `ArgumentNullException.ThrowIfNull` at public service ctors
+- Primary constructors where pure assign-to-field (e.g. simple HidPp
+  feature services)
 
-### PR 2 — Interface extraction + per-service directories (medium)
-- Extract `IXxxService` for every concrete service
-- Move each service into its own directory with `IXxx.cs` + `Xxx.cs`
-- Update construction sites to depend on the interface
-- Tests: minimal churn — transport-level fakes stay; per-service
-  mocking unlocks for new tests
+**Regression guard**:
+- Phase-0 tests must stay green
+- Visual diff of `using`-block→declaration sites to confirm dispose
+  timing
+- Manual smoke: app launches, tray icon visible, fan-out works
 
-### PR 3 — DI bootstrap (medium)
-- Add `Microsoft.Extensions.DependencyInjection` package to App
-- New `BoltMate.App/Composition/ServiceRegistration.cs` extension
+**Explicitly DEFERRED to Phase 5**:
+- `ConfigureAwait(false)` audit — moved later because Core code paths
+  interact with topology timing; want characterization tests for the
+  Reappearance window first.
+
+---
+
+### PR 2 — Interface extraction + per-service directories (additive)
+
+For each of the ~22 concrete services:
+1. Add `IFoo.cs` next to `Foo.cs` declaring the public surface
+2. Mark the concrete class `: IFoo`
+3. Move both into `Foo/` subdirectory
+4. Update construction sites — no behavior change yet, still
+   `new Foo(...)`, but typed against `IFoo`
+
+**Why this is safe**:
+- Pure additive: no logic moves, no method bodies change
+- Class is still concrete, still constructed by hand
+- File moves are pure renames (csproj uses SDK-style globs — no
+  per-file listing to update)
+- Tests don't change (transport-level fakes stay)
+
+**Regression guard**:
+- Phase-0 tests green
+- Build clean — extraction is correct only if every callsite still
+  compiles against the interface
+- Manual smoke: same as PR 1
+
+**Verification**:
+- For each interface, sanity-grep: every public method on the concrete
+  has a matching member on the interface
+- For each `*Service` type, callers should now reference `IXxxService`
+  in field/parameter types
+
+---
+
+### PR 3 — DI bootstrap (medium risk; CAREFUL with construction order)
+
+This is where regression risk to permissions / HID / topology spikes.
+
+**Changes**:
+- Add `Microsoft.Extensions.DependencyInjection` to App
+- New `BoltMate.App/Composition/ServiceRegistration.cs` — single source
+  of registrations
 - `Program.Main` builds the provider, sets `App.ServiceProvider`
 - `App.OnFrameworkInitializationCompleted` resolves from provider
   instead of `new`
-- `_disposables` shrinks (container handles disposal)
-- Inject `TimeProvider` (default `TimeProvider.System`) where wall-clock
-  is read
+- `_disposables` shrinks (container owns disposal of registered
+  services)
 
-### PR 4 — MVVM via ReactiveUI (large)
-- Add `Avalonia.ReactiveUI` + `ReactiveUI.Validation` packages
-- For each window: extract `*ViewModel : ReactiveObject`
-  - Move state observables, command bindings, validation, derived
-    properties
+**Key risks**:
+
+1. **Construction order**: today's bootstrap calls
+   `_topology.Start()`, `_mdnsTcp.Start()`, `_correlator = new(...)` in
+   a specific sequence. DI is lazy by default — services materialise on
+   first resolve. **If `Start()` runs before subscribers exist, events
+   are missed.** Mitigation: keep an explicit composition-root method
+   that resolves and starts each service in the same order as today.
+   Don't let resolution order be implicit.
+
+2. **Singleton vs transient lifetimes**: services that hold subscriptions
+   (e.g. `TopologyCorrelator` subscribes to `_topology.Announcements`)
+   MUST be singletons. Default `AddSingleton<T>()` everywhere unless
+   there's a known reason for transient.
+
+3. **`CompositeDisposable` vs container disposal**: container disposes
+   in reverse registration order. Confirm reverse order matches today's
+   manual dispose order in `App.Dispose`.
+
+4. **Hot-path services**: `BoltReceiver`, `ReceiverManager`,
+   `HidPpClient` are created per-receiver, not per-app. They stay
+   `new()`-constructed inside `ReceiverManager` — DI registers the
+   ManagerFactory, not the per-receiver objects.
+
+**Regression guard**:
+- Phase-0 tests green
+- After bootstrap, log every resolved service + its lifetime — diff
+  against today's startup log
+- Manual smoke: full restart on both platforms, watch for missing
+  notifications (compare log per-second event counts to a known-good
+  baseline)
+- **HID/topology smoke**: kb easy-switch back and forth, mouse follows,
+  no missed link transitions, no missed announcement events
+- **Permission smoke**: fresh install → welcome wizard fires; click
+  through; tray badge updates correctly
+
+---
+
+### PR 4 — MVVM via ReactiveUI (UI-scope, lower stakes)
+
+- Add `Avalonia.ReactiveUI` package
+- For each window:
+  - Extract `*ViewModel : ReactiveObject` (e.g. `SettingsViewModel`,
+    `WelcomeViewModel`, `AppViewModel`)
+  - Move state observables, command bindings, derived properties to VM
   - Window code-behind shrinks to ctor + `DataContext = vm` + native
-    glue
-- XAML rewritten with `{Binding ...}` and `{x:Static}` markers; native
-  event handlers stay where they MUST (e.g. `Closing` cancel-and-hide)
-- Tests for VMs become straightforward — no UI thread, no Avalonia
-  app fixture needed
+    glue (activation policy P/Invoke, window placement, etc.)
+- XAML rewritten with `{Binding ...}`; event handlers stay only where
+  they MUST (e.g. `Closing` cancel-and-hide)
+- VM unit tests — no UI thread, no Avalonia app fixture needed
 
-### PR 5 — Logging / TimeProvider polish (small, optional)
-- `[LoggerMessage]` source-gen for the 3-5 hottest log entries
-- Inject `TimeProvider` into the dozen services that touch wall-clock
-- Primary constructors where they don't lose clarity
+**Why this is sequenced late despite being the biggest LOC change**:
+- It's UI-only; doesn't touch HID, permissions, or topology services
+  (which are already correctly typed as observables and consumed by VMs
+  the same way they're consumed by code-behind today)
+- User explicitly accepted UI regression risk
+
+**Regression guard**:
+- Phase-0 tests green
+- New VM tests for: SettingsViewModel device-list filtering,
+  WelcomeViewModel page navigation, AppViewModel tray-state derivation
+- Manual UI smoke: open Settings tab, open Welcome, peer view updates,
+  permission warnings appear/disappear
+- **HID/topology/permissions code path is untouched** — but verify with
+  log diff that no observable subscribers were lost in translation
+
+---
+
+### PR 5 — Core polish (medium risk; bundle careful changes)
+
+Things that need test coverage before they're safe:
+
+- `ConfigureAwait(false)` audit across `BoltMate.Core` (deferred from
+  PR 1). Risk: changing sync-context continuation in time-sensitive
+  topology code. Land only after Phase-0 round-trip tests cover the
+  reappearance window.
+- `TimeProvider` injection where wall-clock is read (~43 sites).
+  Replace `DateTimeOffset.UtcNow` with `_timeProvider.GetUtcNow()`.
+  Default: `TimeProvider.System` via DI. Tests use `FakeTimeProvider`.
+- `[LoggerMessage]` source-gen for hot paths (HidPpClient.OnNotification,
+  BoltReceiver.OnNotification dispatch, UDP per-announcement)
+- `IAsyncDisposable` for network/HID transports
+- Fire-and-forget helper: `ILogger.RunDetached(work, label)` that wraps
+  `_ = Task.Run` with exception logging
+
+**Regression guard**:
+- Phase-0 tests green AND extended with time-mocked variants (replace
+  real `Task.Delay` with FakeTimeProvider's advance)
+- For each `ConfigureAwait(false)` site, verify the await wasn't
+  feeding into UI-thread-sensitive code
+- Manual smoke: full Mac+Win fan-out cycle, log diff
+
+---
+
+## Regression-prevention strategy (cross-cutting)
+
+### Per-PR gate
+Before any PR merges:
+1. All Phase-0 characterization tests green
+2. `dotnet test BoltMate.Tests/BoltMate.Tests.csproj` green (112+ tests)
+3. Build clean on both `osx-arm64` and `win-x64` publish
+4. Manual smoke test executed and logged:
+   - Launch app on Mac
+   - Launch app on Win
+   - Press Easy-Switch on kb (Mac → Win), confirm mouse follows
+   - Press Easy-Switch on kb (Win → Mac), confirm mouse follows
+   - Open Settings, verify peer machine appears with correct device
+     bindings
+   - Open Settings → Network, verify all three transports report
+     Healthy
+5. Log diff vs prior session: same notification event types and
+   approximate cadence
+
+### Bisection-friendly commits
+Within each PR, commits should be granular enough that
+`git bisect` can pinpoint a regression to a single file's change.
+No mass-rewrites in one commit.
+
+### Snapshot baseline
+Before PR 1, capture a "known-good" log and a screenshot of:
+- Settings → Status tab
+- Settings → Network tab
+- Tray menu open
+- Welcome wizard pages 1-4
+
+Diff against equivalent captures after each PR. UI regressions are
+acceptable; behavioral regressions (HID events missed, fan-out fails,
+permissions misreported) are not.
+
+### Test-first for any new abstraction
+Interface extraction (PR 2): write the interface AND a test that
+constructs the concrete via the interface BEFORE touching callsites.
+
+DI bootstrap (PR 3): write a `ServiceProvider`-construction test that
+resolves the full graph BEFORE wiring it into `App.OnFrameworkInitializationCompleted`.
+
+MVVM (PR 4): VM tests before XAML rewires.
+
+### Rollback plan
+Each PR lands on a separate branch with no fast-forward — single merge
+commit gives a clean revert if smoke testing finds an issue post-merge.
