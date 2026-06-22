@@ -16,13 +16,18 @@ can fix the right one.
 Today the Core layer emits a per-transport `IObservable<TransportHealth>`.
 **Nothing in the UI binds to these yet.** This brief is for the binding.
 
-## The three transports
+## The two user-facing transports
 
-| Transport | Code surface | What "Blocked" actually means |
+mDNS and the TCP backchannel function as a single point of failure for the
+reliable-sync path — TCP needs mDNS discovery to find peers, so a break in
+either takes down the entire reliable channel. They're rolled up into one
+signal for the UI. The per-protocol breakdown (`MdnsHealth`, `TcpHealth`)
+stays in code for diagnostics and shows up in the logs.
+
+| Transport surfaced in UI | Code surface | What "Blocked" actually means |
 |---|---|---|
-| **UDP broadcast/multicast** | `UdpTopologyService.UdpHealth` | macOS Local Network permission denied, Windows Defender Firewall blocking inbound on UDP 41420, multicast filtered by the network |
-| **Bonjour / mDNS** | `MdnsTcpChannel.MdnsHealth` | macOS Local Network denied, Windows "Bonjour Service" not running, multicast UDP 5353 filtered |
-| **TCP backchannel** | `MdnsTcpChannel.TcpHealth` | Discovery works but the peer's firewall is blocking inbound TCP on the configured port |
+| **UDP multicast** | `UdpTopologyService.UdpHealth` | macOS Local Network permission denied, Windows Defender Firewall blocking inbound on UDP 41420, multicast filtered by the network |
+| **Bonjour / mDNS + TCP sync** | `MdnsTcpChannel.SyncHealth` (combines `MdnsHealth` + `TcpHealth`) | Either Bonjour discovery is blocked (LAN denial, Win Bonjour service not running, mDNS 5353 filtered) **or** Bonjour finds peers but their TCP port can't be reached. Detail message names which sub-protocol failed. |
 
 ## The shape of each signal
 
@@ -44,8 +49,7 @@ Render it differently from Blocked.
 ### Concrete `Endpoint` strings the Core will produce
 
 - UDP: `239.255.41.42:41420`
-- mDNS: `_boltmate._udp.local. (mDNS 224.0.0.251:5353)`
-- TCP: `TCP backchannel (port 41420)`
+- Sync: `Bonjour / mDNS + TCP sync`
 
 ### Concrete `DetailMessage` examples
 
@@ -55,41 +59,36 @@ Render it differently from Blocked.
 **UDP — Blocked**
 `"only 1/25 recent broadcasts echoed back. Multicast loopback is being dropped — check Local Network permission (macOS) or firewall inbound rule (Windows)."`
 
-**mDNS — Unknown (warmup)**
-`"warming up (8/30s)"`
+**Sync — Healthy**
+`"Bonjour + TCP both healthy"`
 
-**mDNS — Blocked**
-`"Bonjour service has not echoed our own advert in 75s. On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted. If both look right, multicast (224.0.0.251:5353) may be filtered on this network."`
+**Sync — Blocked (mDNS is the cause)**
+`"Bonjour discovery blocked — Bonjour service has not echoed our own advert in 75s. On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted."`
 
-**TCP — Unknown**
-`"no Bonjour peers discovered yet"`
+**Sync — Blocked (TCP is the cause)**
+`"TCP backchannel blocked — discovered peer(s) via Bonjour but couldn't open TCP port 41420. The peer likely has a firewall inbound rule blocking the port. Last error: Connection refused"`
 
-**TCP — Blocked**
-`"discovered peer(s) via Bonjour but couldn't open TCP port 41420. The peer likely has a firewall inbound rule blocking the port — verify BoltMate is allowed through Windows Defender Firewall / macOS Local Network access on that machine. Last error: Connection refused"`
+**Sync — Unknown**
+`"Bonjour: warming up (8/30s). TCP: no Bonjour peers discovered yet."`
 
 The detail copy is the user's primary path to a fix. Don't truncate it
 behind a tooltip — show it.
 
 ## What to add — Settings → Status tab
 
-Add a **Network** section to the existing Status tab. One row per transport,
-shown in this order (UDP first, then mDNS, then TCP — it's the order the
-signals matter to a confused user):
+Add a **Network** section to the existing Status tab. One row per
+user-facing transport, UDP first:
 
 ```
 Network
-─────────────────────────────────────────────────
-●  UDP broadcast              239.255.41.42:41420
+─────────────────────────────────────────────────────────
+●  UDP multicast                       239.255.41.42:41420
    Healthy — 23/25 recent broadcasts echoed back (92%)
 
-●  Bonjour discovery          _boltmate._udp.local.
-   Blocked — Bonjour service has not echoed our own
-   advert in 75s. On Windows: confirm the "Bonjour
-   Service" is running. On macOS: confirm Local
-   Network access is granted.
-
-●  TCP backchannel            port 41420
-   Unknown — no Bonjour peers discovered yet
+●  Bonjour / mDNS + TCP sync     Bonjour / mDNS + TCP sync
+   Blocked — TCP backchannel blocked — discovered peer(s)
+   via Bonjour but couldn't open TCP port 41420. The peer
+   likely has a firewall inbound rule blocking the port.
 ```
 
 State indicator (`●`):
@@ -111,10 +110,13 @@ required.
 
 ### Layout intent
 
-The three rows should look like three peers of the same shape, not three
-unrelated panels. The user should be able to glance, see one red dot, jump
-to that row's detail. No collapse/expand — the detail is too important to
-hide.
+The two rows should look like peers of the same shape. The user should be
+able to glance, see one red dot, jump to that row's detail. No
+collapse/expand — the detail is too important to hide.
+
+Logs distinguish mDNS vs TCP separately even though the UI rolls them up,
+so a power user / diagnostics page (out of scope here) can see which
+sub-protocol failed when Sync is Blocked.
 
 ## What to add — tray badge
 
@@ -126,10 +128,9 @@ The existing tray icon already has permission-alert badging (see
   a startup flash. 30s of sustained Blocked.
 - **Tooltip on the tray icon should name which transport** when the
   network-blocked branch is active:
-  - `"BoltMate · network blocked (UDP broadcast)"`
-  - `"BoltMate · network blocked (Bonjour)"`
-  - `"BoltMate · network blocked (TCP backchannel)"`
-  - If multiple, list them comma-separated.
+  - `"BoltMate · network blocked (UDP multicast)"`
+  - `"BoltMate · network blocked (Bonjour sync)"`
+  - If both, `"BoltMate · network blocked (UDP multicast + Bonjour sync)"`
 
 Permission alerts (the existing path) and transport-blocked alerts
 should both flip the badge to the same alert state. The tooltip

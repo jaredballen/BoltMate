@@ -90,6 +90,43 @@ public sealed class MdnsTcpChannel : IDisposable
     /// </summary>
     public IObservable<TransportHealth> TcpHealth => _tcpHealth.AsObservable();
 
+    /// <summary>
+    /// Combined reliable-sync transport health. mDNS + TCP function as a
+    /// single point of failure from a user's perspective — TCP delivery
+    /// depends on mDNS discovery to find peers, so a break in either takes
+    /// down the reliable path. This is the signal the user-facing UI and
+    /// alert service watch. The underlying <see cref="MdnsHealth"/> and
+    /// <see cref="TcpHealth"/> stay public for diagnostics / logging.
+    /// </summary>
+    /// <remarks>
+    /// Combination rule: Blocked if either sub-signal is Blocked. Healthy
+    /// only when both are Healthy. Unknown otherwise. The detail message
+    /// names which sub-transport is the cause so the user gets actionable
+    /// copy without exposing the two-protocol split in the UI.
+    /// </remarks>
+    public IObservable<TransportHealth> SyncHealth =>
+        _mdnsHealth.CombineLatest(_tcpHealth, CombineSyncHealth);
+
+    private static TransportHealth CombineSyncHealth(TransportHealth mdns, TransportHealth tcp)
+    {
+        const string endpoint = "Bonjour / mDNS + TCP sync";
+        if (mdns.State == TransportState.Blocked)
+            return new TransportHealth(TransportState.Blocked, endpoint,
+                $"Bonjour discovery blocked — {mdns.DetailMessage}",
+                DateTimeOffset.UtcNow);
+        if (tcp.State == TransportState.Blocked)
+            return new TransportHealth(TransportState.Blocked, endpoint,
+                $"TCP backchannel blocked — {tcp.DetailMessage}",
+                DateTimeOffset.UtcNow);
+        if (mdns.State == TransportState.Healthy && tcp.State == TransportState.Healthy)
+            return new TransportHealth(TransportState.Healthy, endpoint,
+                "Bonjour + TCP both healthy",
+                DateTimeOffset.UtcNow);
+        return new TransportHealth(TransportState.Unknown, endpoint,
+            $"Bonjour: {mdns.DetailMessage}. TCP: {tcp.DetailMessage}.",
+            DateTimeOffset.UtcNow);
+    }
+
     public MdnsTcpChannel(
         UdpTopologyService udp,
         TopologySettings settings,
@@ -114,6 +151,8 @@ public sealed class MdnsTcpChannel : IDisposable
     {
         if (_lastTcpState == state) return;
         _lastTcpState = state;
+        _logger.LogInformation("TCP backchannel health → {State} ({Endpoint}): {Detail}",
+            state, TcpEndpointLabel(), detail);
         _tcpHealth.OnNext(new TransportHealth(state, TcpEndpointLabel(), detail, DateTimeOffset.UtcNow));
     }
 
@@ -159,6 +198,8 @@ public sealed class MdnsTcpChannel : IDisposable
     {
         if (_lastMdnsState == state) return;
         _lastMdnsState = state;
+        _logger.LogInformation("mDNS transport health → {State} ({Endpoint}): {Detail}",
+            state, MdnsEndpointLabel(), detail);
         _mdnsHealth.OnNext(new TransportHealth(state, MdnsEndpointLabel(), detail, DateTimeOffset.UtcNow));
     }
 

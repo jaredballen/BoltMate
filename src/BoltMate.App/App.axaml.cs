@@ -289,38 +289,38 @@ public partial class App : Application
 
     private void StartPermissionWatchdog(ILogger log)
     {
-        // Service is constructed earlier in OnFrameworkInitializationCompletedCore
-        // (so the welcome wizard can use it). Watchdog is the consumer that
-        // wires permission state into the tray badge + notification.
-        if (_permissions is null) return;
+        // The new AppHealthService is the single source for all
+        // alert-triggering conditions — permissions + network + receiver.
+        // It owns the tray-badge wire and the OS notification cadence so
+        // the older one-input permission watchdog is no longer needed.
+        // Topology services may be null when the user has cross-machine
+        // sync disabled — AppHealthService treats null transports as
+        // "not monitored" (not an alertable condition).
+        if (_permissions is null || _manager is null) return;
         _disposables.Add(_permissions);
 
-        var combined = _permissions.Network.IsGrantedChanged
-            .CombineLatest(_permissions.InputMonitoring.IsGrantedChanged,
-                (net, im) => (net && im) ? OverallStatus.AllGood : OverallStatus.AnyDenied)
-            .DistinctUntilChanged();
-
-        _disposables.Add(combined.Subscribe(overall =>
-            Dispatcher.UIThread.Post(() => OnPermissionOverallChanged(overall, log))));
+        _health = new BoltMate.App.Health.AppHealthService(
+            _permissions,
+            _topology,
+            _mdnsTcp,
+            _manager,
+            postNotification: (title, body) =>
+            {
+                var ok = LocalNotifications.TryPost(title, body);
+                if (ok) log.LogInformation("Health notification delivered: {Title}", title);
+                else log.LogDebug("Health notification not posted (platform fallback to tray-only): {Title}", title);
+                return ok;
+            },
+            setTrayStatus: status =>
+            {
+                _trayStatus?.SetPermissionStatus(status);
+                _trayController?.SetPermissionStatus(status);
+            },
+            logger: _loggerFactory.CreateLogger<BoltMate.App.Health.AppHealthService>());
+        _disposables.Add(_health);
     }
 
-    private void OnPermissionOverallChanged(OverallStatus overall, ILogger log)
-    {
-        _trayStatus?.SetPermissionStatus(overall);
-        _trayController?.SetPermissionStatus(overall);
-
-        if (overall == OverallStatus.AnyDenied && !_notificationDeliveredThisSession)
-        {
-            _notificationDeliveredThisSession = true;
-            var posted = LocalNotifications.TryPost(
-                "BoltMate needs permissions",
-                "Click to fix");
-            if (posted)
-                log.LogInformation("Permission alert notification delivered");
-            else
-                log.LogDebug("Permission alert notification not posted (platform fallback to tray-only)");
-        }
-    }
+    private BoltMate.App.Health.AppHealthService? _health;
 
     /// <summary>
     /// Opens the WelcomeWindow positioned at the first permission that is

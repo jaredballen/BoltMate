@@ -135,6 +135,8 @@ public sealed class UdpTopologyService : IDisposable
     {
         if (_lastUdpState == state) return;
         _lastUdpState = state;
+        _logger.LogInformation("UDP transport health → {State} ({Endpoint}): {Detail}",
+            state, $"{_settings.MulticastGroup}:{_settings.Port}", detail);
         _udpHealth.OnNext(new TransportHealth(
             state,
             $"{_settings.MulticastGroup}:{_settings.Port}",
