@@ -1,4 +1,5 @@
 ﻿using Avalonia;
+using Avalonia.ReactiveUI;
 using System;
 using System.IO;
 using BoltMate.App.Composition;
@@ -114,5 +115,6 @@ class Program
             .WithDeveloperTools()
 #endif
             .WithInterFont()
+            .UseReactiveUI()
             .LogToTrace();
 }

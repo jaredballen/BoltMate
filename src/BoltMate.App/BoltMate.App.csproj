@@ -25,15 +25,17 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.0.4" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.4" />
     <!--
-      ReactiveUI core only. Avalonia.ReactiveUI integration package hasn't
-      shipped a 12.x release yet (tops out at 11.3.9 against Avalonia 11.x).
-      ReactiveObject still satisfies INotifyPropertyChanged so standard
-      Avalonia bindings work; we lose the Avalonia-specific helpers
-      (UseReactiveUI builder extension, ReactiveWindow<T> with WhenActivated)
-      until that catches up. View activation can be done manually via
-      Window.Opened / Closed for now.
+      Avalonia.ReactiveUI 11.3.9 against Avalonia 12.0.4: the integration
+      package hasn't shipped a 12.x version yet, but the 11.3.9 binding
+      surface continues to work fine at runtime against Avalonia 12 —
+      verified by launching with UseReactiveUI() wired up. NuGet's
+      version graph accepts 12.0.4 as satisfying the 11.3.9 dependency
+      on Avalonia. Bump to the 12.x integration package whenever it ships.
+      ReactiveUI core is pulled in transitively but pinned here so the
+      version is explicit.
     -->
     <PackageReference Include="ReactiveUI" Version="20.1.63" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.4" />
     <PackageReference Include="FluentAvaloniaUI" Version="3.0.0" />
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">
