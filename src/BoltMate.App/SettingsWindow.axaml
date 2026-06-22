@@ -1,22 +1,21 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:app="using:BoltMate.App"
+        xmlns:vm="using:BoltMate.App.ViewModels"
         xmlns:ui="using:FluentAvalonia.UI.Controls"
         x:Class="BoltMate.App.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
         Width="820" Height="560"
         MinWidth="680" MinHeight="460"
         Title="BoltMate Settings"
         WindowStartupLocation="CenterScreen">
 
     <!--
-        Win11-style settings shell:
-        FANavigationView ("FA" = FluentAvalonia's prefix to disambiguate from
-        Avalonia's stock NavigationView) on the left with three items. Each
-        NavigationView item has a tag we use in code-behind to switch the
-        Content panel via the SelectionChanged event.
+        Win11-style settings shell. FluentAvalonia NavigationView on the left,
+        three pages stacked in a content Grid (only one IsVisible at a time —
+        page swap done in code-behind because FANavigationView's selection
+        contract doesn't bind cleanly).
 
-        Mac Mica is NOT enabled (Mica is Windows-only and not worth the
-        per-platform code-behind plumbing for v1).
+        All state binds to SettingsViewModel. Mac Mica is NOT enabled.
     -->
     <Grid>
         <ui:FANavigationView x:Name="MainNav"
@@ -50,11 +49,6 @@
                 </ui:FANavigationViewItem>
             </ui:FANavigationView.MenuItems>
 
-            <!--
-                Content host. The three pages are stacked in a Grid; only one
-                is visible at a time. Selection logic lives in code-behind so
-                we can keep the existing OpenTo(tab) API.
-            -->
             <Grid>
 
                 <!-- ======================= STATUS ======================= -->
@@ -74,9 +68,9 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="This machine" FontSize="14" FontWeight="SemiBold" />
-                                    <ItemsControl x:Name="LocalDevicesList">
+                                    <ItemsControl ItemsSource="{Binding LocalDevices}">
                                         <ItemsControl.ItemTemplate>
-                                            <DataTemplate DataType="app:SettingsWindow+LocalDeviceRow">
+                                            <DataTemplate DataType="vm:SettingsViewModel+LocalDeviceRow">
                                                 <Border Padding="8" Margin="0,0,0,4"
                                                         Background="{DynamicResource SubtleFillColorSecondaryBrush}"
                                                         CornerRadius="4">
@@ -90,9 +84,9 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <TextBlock x:Name="LocalEmptyLine"
-                                               Text="No devices currently linked up."
-                                               Foreground="#9AA0A6" FontSize="12" IsVisible="False" />
+                                    <TextBlock Text="No devices currently linked up."
+                                               Foreground="#9AA0A6" FontSize="12"
+                                               IsVisible="{Binding LocalEmpty}" />
                                 </StackPanel>
                             </Border>
 
@@ -101,12 +95,11 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Network access" FontSize="14" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="NetworkPermissionLine"
+                                    <TextBlock Text="{Binding NetworkPermissionDetail}"
                                                Foreground="#B5BAC2" FontSize="12" />
-                                    <Button x:Name="OpenNetworkSettingsButton"
-                                            Content="Open Privacy Settings"
-                                            Click="OnOpenNetworkSettings"
-                                            IsVisible="False" />
+                                    <Button Content="{Binding OpenNetworkSettingsLabel}"
+                                            Command="{Binding OpenNetworkSettingsCommand}"
+                                            IsVisible="{Binding ShowOpenNetworkSettings}" />
                                 </StackPanel>
                             </Border>
 
@@ -115,23 +108,41 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="12">
                                     <TextBlock Text="Network" FontSize="14" FontWeight="SemiBold" />
-                                    
+
                                     <!-- UDP row -->
                                     <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                                        <TextBlock x:Name="UdpStatusIndicator" Grid.Column="0" Grid.Row="0" Text="●" Foreground="Gray" FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="UDP multicast" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="UdpEndpoint" Grid.Column="2" Grid.Row="0" Foreground="#9AA0A6" FontSize="11" VerticalAlignment="Center" TextAlignment="Right" />
-                                        <TextBlock x:Name="UdpDetail" Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1" Foreground="#B5BAC2" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        <TextBlock Grid.Column="0" Grid.Row="0" Text="●"
+                                                   Foreground="{Binding UdpIndicatorColor}"
+                                                   FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="UDP multicast"
+                                                   FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Grid.Row="0" Text="{Binding UdpEndpoint}"
+                                                   Foreground="#9AA0A6" FontSize="11"
+                                                   VerticalAlignment="Center" TextAlignment="Right" />
+                                        <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
+                                                   Text="{Binding UdpDetail}"
+                                                   Foreground="#B5BAC2" FontSize="12"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0" />
                                     </Grid>
-                                    
-                                    <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,4" />
+
+                                    <Border Height="1"
+                                            Background="{DynamicResource CardStrokeColorDefaultBrush}"
+                                            Margin="0,4" />
 
                                     <!-- Sync row -->
                                     <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                                        <TextBlock x:Name="SyncStatusIndicator" Grid.Column="0" Grid.Row="0" Text="●" Foreground="Gray" FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="Bonjour / mDNS + TCP sync" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="SyncEndpoint" Grid.Column="2" Grid.Row="0" Foreground="#9AA0A6" FontSize="11" VerticalAlignment="Center" TextAlignment="Right" />
-                                        <TextBlock x:Name="SyncDetail" Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1" Foreground="#B5BAC2" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        <TextBlock Grid.Column="0" Grid.Row="0" Text="●"
+                                                   Foreground="{Binding SyncIndicatorColor}"
+                                                   FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="Bonjour / mDNS + TCP sync"
+                                                   FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Grid.Row="0" Text="{Binding SyncEndpoint}"
+                                                   Foreground="#9AA0A6" FontSize="11"
+                                                   VerticalAlignment="Center" TextAlignment="Right" />
+                                        <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
+                                                   Text="{Binding SyncDetail}"
+                                                   Foreground="#B5BAC2" FontSize="12"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0" />
                                     </Grid>
                                 </StackPanel>
                             </Border>
@@ -141,11 +152,11 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Peers" FontSize="14" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="PeersStateLine"
+                                    <TextBlock Text="{Binding PeersStateLine}"
                                                Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
-                                    <ItemsControl x:Name="PeersList">
+                                    <ItemsControl ItemsSource="{Binding Peers}">
                                         <ItemsControl.ItemTemplate>
-                                            <DataTemplate DataType="app:SettingsWindow+PeerRow">
+                                            <DataTemplate DataType="vm:SettingsViewModel+PeerRow">
                                                 <Border Padding="8" Margin="0,0,0,4"
                                                         Background="{DynamicResource SubtleFillColorSecondaryBrush}"
                                                         CornerRadius="4">
@@ -159,7 +170,7 @@
                                                                    FontFamily="JetBrains Mono,Menlo,Consolas,monospace" />
                                                         <ItemsControl ItemsSource="{Binding Devices}" Margin="6,2,0,0">
                                                             <ItemsControl.ItemTemplate>
-                                                                <DataTemplate DataType="app:SettingsWindow+PeerDeviceRow">
+                                                                <DataTemplate DataType="vm:SettingsViewModel+PeerDeviceRow">
                                                                     <TextBlock Text="{Binding Line}"
                                                                                Foreground="#B5BAC2" FontSize="11"
                                                                                FontFamily="JetBrains Mono,Menlo,Consolas,monospace" Margin="0,1" />
@@ -171,8 +182,9 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <TextBlock x:Name="PeersOverflowLine"
-                                               Foreground="#9AA0A6" FontSize="11" IsVisible="False" />
+                                    <TextBlock Text="{Binding PeersOverflowLine}"
+                                               Foreground="#9AA0A6" FontSize="11"
+                                               IsVisible="{Binding ShowPeersOverflow}" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -185,7 +197,7 @@
                         <StackPanel Spacing="16">
                             <StackPanel Spacing="4">
                                 <TextBlock Text="BoltMate" FontSize="22" FontWeight="SemiBold" />
-                                <TextBlock x:Name="AboutVersionLine" Foreground="#9AA0A6" FontSize="12" />
+                                <TextBlock Text="{Binding VersionLine}" Foreground="#9AA0A6" FontSize="12" />
                             </StackPanel>
 
                             <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
@@ -195,12 +207,13 @@
                                     <TextBlock Text="Updates" FontSize="14" FontWeight="SemiBold" />
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <TextBlock Text="Last checked:" Foreground="#9AA0A6" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="LastCheckedLine" Text="never" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding LastCheckedLine}" VerticalAlignment="Center" />
                                     </StackPanel>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button x:Name="CheckNowButton" Content="Check for updates" Click="OnCheckForUpdatesNow" />
+                                        <Button Content="Check for updates"
+                                                Command="{Binding CheckForUpdatesCommand}" />
                                     </StackPanel>
-                                    <TextBlock x:Name="UpdateStatusLine"
+                                    <TextBlock Text="{Binding UpdateStatusLine}"
                                                Foreground="#B5BAC2" FontSize="12" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
@@ -210,10 +223,10 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="10">
                                     <TextBlock Text="Startup" FontSize="14" FontWeight="SemiBold" />
-                                    <CheckBox x:Name="LaunchAtLoginToggle"
-                                              Content="Launch BoltMate at login"
-                                              IsCheckedChanged="OnLaunchAtLoginChanged" />
-                                    <TextBlock x:Name="LaunchAtLoginDetail"
+                                    <CheckBox Content="Launch BoltMate at login"
+                                              IsChecked="{Binding LaunchAtLoginChecked, Mode=TwoWay}"
+                                              IsEnabled="{Binding LaunchAtLoginEnabled}" />
+                                    <TextBlock Text="{Binding LaunchAtLoginDetail}"
                                                Margin="22,0,0,0" Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
@@ -223,9 +236,8 @@
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="10">
                                     <TextBlock Text="Privacy" FontSize="14" FontWeight="SemiBold" />
-                                    <CheckBox x:Name="TelemetryToggle"
-                                              Content="Send anonymous diagnostics"
-                                              IsCheckedChanged="OnTelemetryChanged" />
+                                    <CheckBox Content="Send anonymous diagnostics"
+                                              IsChecked="{Binding TelemetryEnabled, Mode=TwoWay}" />
                                     <TextBlock Margin="22,0,0,0" Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
                                         Off by default. When on, error reports and de-identified usage counts go to Azure App Insights.
                                         No device serials, key strokes, or file paths are ever sent.
@@ -239,9 +251,11 @@
                                 <StackPanel Spacing="10">
                                     <TextBlock Text="Diagnostics" FontSize="14" FontWeight="SemiBold" />
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Open logs folder" Click="OnOpenLogsFolder" />
+                                        <Button Content="Open logs folder"
+                                                Command="{Binding OpenLogsFolderCommand}" />
                                     </StackPanel>
-                                    <TextBlock x:Name="LogsPathLine" Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding LogsPathLine}"
+                                               Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
