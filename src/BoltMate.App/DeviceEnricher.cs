@@ -195,11 +195,31 @@ public sealed class DeviceEnricher : IDisposable
                     device.LastKnownCurrentHost = hosts.CurrentHost;
 
                     // Read each host's binding so SwitcherService can route by BLE.
+                    // Defensive merge: if a re-read returns null or the generic
+                    // "Logitech Bolt receiver" default for a slot we previously
+                    // had a real name for, KEEP the real name. The 0x1815 read
+                    // is intermittently flaky under rapid link transitions and
+                    // would otherwise downgrade good bindings to defaults that
+                    // break fan-out target matching until the next clean read.
                     var bindings = await receiver.HostsInfo.GetAllHostsAsync(deviceIndex, hostsIdx);
+                    var prior = device.HostBindings;
                     var dict = new Dictionary<byte, BoltMate.Core.Bolt.HostBinding>();
                     foreach (var b in bindings)
-                        dict[b.HostIndex] = b;
+                    {
+                        var merged = b;
+                        if (IsGenericName(b.ReceiverName)
+                            && prior.TryGetValue(b.HostIndex, out var prev)
+                            && !IsGenericName(prev.ReceiverName))
+                        {
+                            merged = b with { ReceiverName = prev.ReceiverName };
+                        }
+                        dict[b.HostIndex] = merged;
+                    }
                     device.HostBindings = dict;
+
+                    static bool IsGenericName(string? name) =>
+                        string.IsNullOrWhiteSpace(name)
+                        || string.Equals(name, "Logitech Bolt receiver", StringComparison.OrdinalIgnoreCase);
 
                     var summary = string.Join(", ", bindings.Select(b =>
                         $"h{b.HostIndex}={(b.Paired ? $"{b.HostIdentifierString ?? "(no ble)"}|name='{b.ReceiverName ?? "(null)"}'" : "unpaired")}"));

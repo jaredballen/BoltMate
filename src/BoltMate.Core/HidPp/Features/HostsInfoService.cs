@@ -112,6 +112,11 @@ public sealed class HostsInfoService
     {
         // fn 0x30 getHostFriendlyName(hostIndex, charIndex) returns a chunk and
         // signals end-of-string via the chunk length and embedded NULs.
+        // (Solaar's published spec says fn 0x20 = GET / 0x30 = SET, but
+        // empirically MX Master 3S + MX Keys S firmware respond with the
+        // friendly-name chunks to fn 0x30 — tried fn 0x20 and got garbage
+        // bytes back. Leaving fn 0x30 wired up; the binding-merge layer
+        // in DeviceEnricher tolerates the occasional default-name reply.)
         // Logi Options+ stores the hostname as UTF-8 (so a macOS hostname like
         // "Jared's M4 MacBook Pro" with a curly apostrophe U+2019 occupies 3
         // bytes E2 80 99). Accumulate raw bytes first, decode at end.

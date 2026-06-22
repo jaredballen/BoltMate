@@ -412,13 +412,10 @@ public partial class App : Application
         _trayController?.Bind(_topology);
         _trayStatus?.Bind(_topology);
 
-        if (_settings.Topology.UseMdnsTcp)
-        {
-            _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
-                _loggerFactory.CreateLogger<MdnsTcpChannel>());
-            _mdnsTcp.Start();
-            _disposables.Add(_mdnsTcp);
-        }
+        _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
+            _loggerFactory.CreateLogger<MdnsTcpChannel>());
+        _mdnsTcp.Start();
+        _disposables.Add(_mdnsTcp);
 
         _correlator = new TopologyCorrelator(_manager, _switcher,
             _topology.Announcements,
