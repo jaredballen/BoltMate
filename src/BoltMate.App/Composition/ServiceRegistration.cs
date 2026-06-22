@@ -44,6 +44,11 @@ public static class ServiceRegistration
         services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
         services.AddSingleton(settings);
 
+        // TimeProvider.System for production; tests substitute FakeTimeProvider
+        // directly when constructing services. Registered so any future
+        // DI-injected service that takes TimeProvider gets the system clock.
+        services.AddSingleton(TimeProvider.System);
+
         // IReceiverTransport is registered as a FACTORY (not a pre-built
         // instance) so the OS-specific HID handle doesn't open until the
         // first resolve. On macOS the IOKit transport's constructor calls

@@ -110,17 +110,21 @@ public sealed class UdpTopologyService : IDisposable
     public void InjectInbound(ReceiverAnnouncement announcement, string channel = "ext") =>
         HandleInbound(announcement, channel);
 
+    private readonly TimeProvider _time;
+
     public UdpTopologyService(
         ReceiverManager manager,
         TopologySettings settings,
         string machineId,
-        ILogger<UdpTopologyService>? logger = null)
+        ILogger<UdpTopologyService>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         _manager = manager;
         _settings = settings;
         _machineId = machineId;
         _hostname = SafeHostname();
         _logger = logger ?? NullLogger<UdpTopologyService>.Instance;
+        _time = timeProvider ?? TimeProvider.System;
         _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
             TransportHealth.Unknown(
                 $"{_settings.MulticastGroup}:{_settings.Port}",
@@ -141,7 +145,7 @@ public sealed class UdpTopologyService : IDisposable
             state,
             $"{_settings.MulticastGroup}:{_settings.Port}",
             detail,
-            DateTimeOffset.UtcNow));
+            _time.GetUtcNow()));
     }
 
     private void RecomputeUdpHealth()
@@ -170,7 +174,7 @@ public sealed class UdpTopologyService : IDisposable
 
     private void SweepExpiredOutbound()
     {
-        var cutoff = DateTimeOffset.UtcNow - EchoWindow;
+        var cutoff = _time.GetUtcNow() - EchoWindow;
         var changed = false;
         foreach (var kv in _outboundTracking)
         {
@@ -281,7 +285,7 @@ public sealed class UdpTopologyService : IDisposable
     private void TriggerImmediateBroadcast(byte slot, string cause)
     {
         Interlocked.Exchange(ref _burstUntilTicks,
-            DateTime.UtcNow.AddMilliseconds(_settings.BurstDurationMs).Ticks);
+            _time.GetUtcNow().UtcDateTime.AddMilliseconds(_settings.BurstDurationMs).Ticks);
         _logger.LogDebug("Topology: kicking immediate broadcast (slot {Slot} {Cause}); burst for {Ms}ms",
             slot, cause, _settings.BurstDurationMs);
         _kickBroadcast.Set();
@@ -305,7 +309,7 @@ public sealed class UdpTopologyService : IDisposable
                 var payload = BuildAnnouncement(seq);
                 var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                 try { _outgoing.OnNext(payload); } catch { /* observers must not block sends */ }
-                _outboundTracking[seq] = new OutboundTrack(DateTimeOffset.UtcNow);
+                _outboundTracking[seq] = new OutboundTrack(_time.GetUtcNow());
                 var endpoints = AllEndpoints();
 
                 // N× repeats — same Seq each time. Peers dedup.
@@ -347,7 +351,7 @@ public sealed class UdpTopologyService : IDisposable
             // even mid-sleep. That gets our news to peers' correlators inside
             // their 3s watch window when they need to know NOW.
             var burstUntil = new DateTime(Interlocked.Read(ref _burstUntilTicks), DateTimeKind.Utc);
-            var bursting = DateTime.UtcNow < burstUntil;
+            var bursting = _time.GetUtcNow().UtcDateTime < burstUntil;
             var sleepMs = bursting ? _settings.BurstIntervalMs : _settings.BroadcastIntervalSeconds * 1000;
             try
             {
@@ -429,7 +433,7 @@ public sealed class UdpTopologyService : IDisposable
                 if (_peerStats.TryGetValue(key, out var dupStats))
                 {
                     Interlocked.Increment(ref dupStats.DuplicatesSuppressed);
-                    dupStats.LastSeenUtc = DateTime.UtcNow;
+                    dupStats.LastSeenUtc = _time.GetUtcNow().UtcDateTime;
                 }
                 return;
             }
@@ -438,7 +442,7 @@ public sealed class UdpTopologyService : IDisposable
         _lastSeenSeq[key] = announcement.Seq;
         var stats = _peerStats.GetOrAdd(key, k => new PeerStats { MachineId = k });
         stats.Hostname = announcement.Hostname;
-        stats.LastSeenUtc = DateTime.UtcNow;
+        stats.LastSeenUtc = _time.GetUtcNow().UtcDateTime;
         stats.LastSeq = announcement.Seq;
         if (lastSeq > 0 && announcement.Seq > lastSeq + 1)
         {
@@ -471,7 +475,7 @@ public sealed class UdpTopologyService : IDisposable
         {
             MachineId = _machineId,
             Hostname = _hostname,
-            Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+            Timestamp = _time.GetUtcNow().ToString("O"),
             Seq = seq,
             ReceiverCount = receivers.Count,
             LastSwitchEvent = ConsumePendingSwitchEvent(),
@@ -545,7 +549,7 @@ public sealed class UdpTopologyService : IDisposable
         {
             DeviceSerial = deviceSerial,
             TargetHostName = targetHostName,
-            Timestamp = DateTimeOffset.UtcNow.ToString("O"),
+            Timestamp = _time.GetUtcNow().ToString("O"),
         });
     }
 

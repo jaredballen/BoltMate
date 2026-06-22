@@ -107,36 +107,37 @@ public sealed class MdnsTcpChannel : IDisposable
     public IObservable<TransportHealth> SyncHealth =>
         _mdnsHealth.CombineLatest(_tcpHealth, CombineSyncHealth);
 
-    private static TransportHealth CombineSyncHealth(TransportHealth mdns, TransportHealth tcp)
+    private TransportHealth CombineSyncHealth(TransportHealth mdns, TransportHealth tcp)
     {
         const string endpoint = "Bonjour / mDNS + TCP sync";
+        var now = _time.GetUtcNow();
         if (mdns.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
-                $"Bonjour discovery blocked — {mdns.DetailMessage}",
-                DateTimeOffset.UtcNow);
+                $"Bonjour discovery blocked — {mdns.DetailMessage}", now);
         if (tcp.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
-                $"TCP backchannel blocked — {tcp.DetailMessage}",
-                DateTimeOffset.UtcNow);
+                $"TCP backchannel blocked — {tcp.DetailMessage}", now);
         if (mdns.State is TransportState.Healthy && tcp.State is TransportState.Healthy)
             return new TransportHealth(TransportState.Healthy, endpoint,
-                "Bonjour + TCP both healthy",
-                DateTimeOffset.UtcNow);
+                "Bonjour + TCP both healthy", now);
         return new TransportHealth(TransportState.Unknown, endpoint,
-            $"Bonjour: {mdns.DetailMessage}. TCP: {tcp.DetailMessage}.",
-            DateTimeOffset.UtcNow);
+            $"Bonjour: {mdns.DetailMessage}. TCP: {tcp.DetailMessage}.", now);
     }
+
+    private readonly TimeProvider _time;
 
     public MdnsTcpChannel(
         UdpTopologyService udp,
         TopologySettings settings,
         string machineId,
-        ILogger<MdnsTcpChannel>? logger = null)
+        ILogger<MdnsTcpChannel>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         _udp = udp;
         _settings = settings;
         _machineId = machineId;
         _logger = logger ?? NullLogger<MdnsTcpChannel>.Instance;
+        _time = timeProvider ?? TimeProvider.System;
         _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
             TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
         _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
@@ -153,7 +154,7 @@ public sealed class MdnsTcpChannel : IDisposable
         _lastTcpState = state;
         _logger.LogInformation("TCP backchannel health → {State} ({Endpoint}): {Detail}",
             state, TcpEndpointLabel(), detail);
-        _tcpHealth.OnNext(new TransportHealth(state, TcpEndpointLabel(), detail, DateTimeOffset.UtcNow));
+        _tcpHealth.OnNext(new TransportHealth(state, TcpEndpointLabel(), detail, _time.GetUtcNow()));
     }
 
     private void RecomputeTcpHealth()
@@ -178,7 +179,7 @@ public sealed class MdnsTcpChannel : IDisposable
         // No connection right now. If it's been long enough since the first
         // discovery for at least one connect attempt to have settled, call it
         // Blocked — otherwise we're still mid-attempt.
-        var sinceDiscover = DateTimeOffset.UtcNow - _lastPeerDiscovered;
+        var sinceDiscover = _time.GetUtcNow() - _lastPeerDiscovered;
         if (sinceDiscover < TcpConnectGrace)
         {
             EmitTcpHealth(TransportState.Unknown, $"connect attempts in flight ({sinceDiscover.TotalSeconds:F0}s since discovery)");
@@ -200,7 +201,7 @@ public sealed class MdnsTcpChannel : IDisposable
         _lastMdnsState = state;
         _logger.LogInformation("mDNS transport health → {State} ({Endpoint}): {Detail}",
             state, MdnsEndpointLabel(), detail);
-        _mdnsHealth.OnNext(new TransportHealth(state, MdnsEndpointLabel(), detail, DateTimeOffset.UtcNow));
+        _mdnsHealth.OnNext(new TransportHealth(state, MdnsEndpointLabel(), detail, _time.GetUtcNow()));
     }
 
     private void RecomputeMdnsHealth()
@@ -211,7 +212,7 @@ public sealed class MdnsTcpChannel : IDisposable
                 "Bonjour publisher failed to start. On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted.");
             return;
         }
-        var now = DateTimeOffset.UtcNow;
+        var now = _time.GetUtcNow();
         var sinceStart = now - _mdnsStartedAt;
         var sinceEcho = now - _lastSelfMdnsEcho;
         if (_lastSelfMdnsEcho == default && sinceStart < MdnsWarmup)
@@ -296,7 +297,7 @@ public sealed class MdnsTcpChannel : IDisposable
             _serviceDiscovery.ServiceInstanceDiscovered += OnInstanceDiscovered;
             _multicast.Start();
             _serviceDiscovery.QueryServiceInstances(NormaliseServiceName(_settings.MdnsServiceType));
-            _mdnsStartedAt = DateTimeOffset.UtcNow;
+            _mdnsStartedAt = _time.GetUtcNow();
 
             // Periodic re-query keeps the self-echo signal fresh — without
             // this we'd depend purely on Makaretu's auto-reannounce cadence
@@ -427,7 +428,7 @@ public sealed class MdnsTcpChannel : IDisposable
             // peer connection to ourselves).
             if (instance.StartsWith(_machineId, StringComparison.OrdinalIgnoreCase))
             {
-                _lastSelfMdnsEcho = DateTimeOffset.UtcNow;
+                _lastSelfMdnsEcho = _time.GetUtcNow();
                 RecomputeMdnsHealth();
                 return;
             }
@@ -466,7 +467,7 @@ public sealed class MdnsTcpChannel : IDisposable
             // Stamp the first time we observed a peer via Bonjour. After the
             // TcpConnectGrace window has elapsed without a successful
             // connect, TcpHealth flips to Blocked.
-            if (_lastPeerDiscovered == default) _lastPeerDiscovered = DateTimeOffset.UtcNow;
+            if (_lastPeerDiscovered == default) _lastPeerDiscovered = _time.GetUtcNow();
             EnsureClientFor(peerMachineId, endpoint);
             RecomputeTcpHealth();
         }
@@ -489,7 +490,7 @@ public sealed class MdnsTcpChannel : IDisposable
                 var client = new TcpClient { NoDelay = true };
                 await client.ConnectAsync(endpoint.Address, endpoint.Port, _cts.Token).ConfigureAwait(false);
                 _peerClients[peerMachineId] = client;
-                _lastTcpConnectSuccess = DateTimeOffset.UtcNow;
+                _lastTcpConnectSuccess = _time.GetUtcNow();
                 _logger.LogInformation("MdnsTcp: outbound TCP connected to peer {Machine} at {Endpoint}",
                     peerMachineId, endpoint);
                 RecomputeTcpHealth();
