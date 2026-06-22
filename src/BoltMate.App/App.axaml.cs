@@ -237,7 +237,7 @@ public partial class App : Application
         var trays = TrayIcon.GetIcons(this);
         if (trays is { Count: > 0 } && trays[0].Menu is { } menu)
         {
-            _trayController = new TrayMenuController(menu, _manager,
+            _trayController = new TrayMenuController(menu, _manager, _permissions!,
                 _loggerFactory.CreateLogger<TrayMenuController>())
             {
                 OnStatusClicked = () => OpenSettings(SettingsWindow.TabStatus),
@@ -248,7 +248,7 @@ public partial class App : Application
             _disposables.Add(_trayController);
 
             // Tray icon owns its image + theme + connection-health badge.
-            _trayStatus = new TrayIconStatusController(trays[0],
+            _trayStatus = new TrayIconStatusController(trays[0], _permissions!,
                 _loggerFactory.CreateLogger<TrayIconStatusController>());
             _disposables.Add(_trayStatus);
 
@@ -392,6 +392,8 @@ public partial class App : Application
         {
             _trayController?.Bind(null);
             _trayStatus?.Bind(null);
+            _trayStatus?.BindHealth(null, null);
+            _settingsWindow?.BindHealth(null, null);
             return;
         }
 
@@ -424,19 +426,19 @@ public partial class App : Application
             _loggerFactory.CreateLogger<TopologyCorrelator>());
         _disposables.Add(_correlator);
 
-        // Wire local fan-out → switch-event broadcast. Whenever the switcher
-        // moves a device (Easy-Switch press / Flow snoop / user request),
-        // tell the topology service to surface the intent in its next
-        // outgoing announcement so peers can fan their own siblings.
+        // Wire local switch trigger → broadcast intent to peers. Fires once
+        // per Easy-Switch press / Flow snoop / user request, BEFORE local
+        // fan-out, regardless of whether the local machine has siblings to
+        // switch. RemoteTopology source is suppressed at the Core layer so
+        // peer rebroadcasts don't loop.
         var topology = _topology;
-        _disposables.Add(_switcher.FanOuts.Subscribe(ev =>
+        _disposables.Add(_switcher.LocalSwitchTriggers.Subscribe(t =>
         {
-            if (ev.Target.HostBindings.TryGetValue(ev.TargetHost, out var binding)
-                && !string.IsNullOrWhiteSpace(binding.ReceiverName))
-            {
-                topology.RecordLocalSwitchEvent(ev.Target.Serial, binding.ReceiverName);
-            }
+            topology.RecordLocalSwitchEvent(t.OriginatingDeviceSerial, t.TargetHostName);
         }));
+
+        _trayStatus?.BindHealth(_topology?.UdpHealth, _mdnsTcp?.SyncHealth);
+        _settingsWindow?.BindHealth(_topology?.UdpHealth, _mdnsTcp?.SyncHealth);
     }
 
     private void OpenSettings(string? initialTab = null)
@@ -448,7 +450,7 @@ public partial class App : Application
         // and are instant.
         if (_settingsWindow is null)
         {
-            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!)
+            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!, _topology?.UdpHealth, _mdnsTcp?.SyncHealth)
             {
                 HostNamesChanged = () => _trayController?.RefreshHostLabels(),
                 TopologyChanged = ApplyTopologySettings,

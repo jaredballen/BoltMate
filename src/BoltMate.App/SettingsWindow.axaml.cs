@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;
+using BoltMate.Core.Topology;
 
 namespace BoltMate.App;
 
@@ -86,14 +87,22 @@ public partial class SettingsWindow : Window
         Close();
     }
 
+    private readonly SerialDisposable _udpHealthSub = new();
+    private readonly SerialDisposable _syncHealthSub = new();
+
     public SettingsWindow(
         ReceiverManager manager,
         AppSettings settings,
-        IPermissionsService permissions) : this()
+        IPermissionsService permissions,
+        IObservable<TransportHealth>? udpHealth = null,
+        IObservable<TransportHealth>? syncHealth = null) : this()
     {
         _manager = manager;
         _settings = settings;
         _permissions = permissions;
+
+        _disposables.Add(_udpHealthSub);
+        _disposables.Add(_syncHealthSub);
 
         var localList = this.FindControl<ItemsControl>("LocalDevicesList");
         if (localList is not null) localList.ItemsSource = _localDevices;
@@ -112,6 +121,97 @@ public partial class SettingsWindow : Window
         // here within the service's polling interval.
         _disposables.Add(_permissions.Autostart.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
+
+        BindHealth(udpHealth, syncHealth);
+    }
+
+    public void BindHealth(IObservable<TransportHealth>? udpHealth, IObservable<TransportHealth>? syncHealth)
+    {
+        if (udpHealth is not null)
+        {
+            _udpHealthSub.Disposable = udpHealth.Subscribe(h => Dispatcher.UIThread.Post(() => UpdateUdpHealthUi(h)));
+        }
+        else
+        {
+            _udpHealthSub.Disposable = Disposable.Empty;
+            Dispatcher.UIThread.Post(() => UpdateUdpHealthUi(TransportHealth.Unknown("239.255.41.42:41420", "cross-machine sync disabled")));
+        }
+
+        if (syncHealth is not null)
+        {
+            _syncHealthSub.Disposable = syncHealth.Subscribe(h => Dispatcher.UIThread.Post(() => UpdateSyncHealthUi(h)));
+        }
+        else
+        {
+            _syncHealthSub.Disposable = Disposable.Empty;
+            Dispatcher.UIThread.Post(() => UpdateSyncHealthUi(TransportHealth.Unknown("Bonjour / mDNS + TCP sync", "cross-machine sync disabled")));
+        }
+    }
+
+    private void UpdateUdpHealthUi(TransportHealth health)
+    {
+        var indicator = this.FindControl<TextBlock>("UdpStatusIndicator");
+        var endpoint = this.FindControl<TextBlock>("UdpEndpoint");
+        var detail = this.FindControl<TextBlock>("UdpDetail");
+
+        if (indicator is not null)
+        {
+            indicator.Foreground = health.State switch
+            {
+                TransportState.Healthy => Avalonia.Media.Brush.Parse("#10B981"),
+                TransportState.Blocked => Avalonia.Media.Brush.Parse("#EF4444"),
+                _ => Avalonia.Media.Brush.Parse("#9CA3AF")
+            };
+        }
+
+        if (endpoint is not null)
+        {
+            endpoint.Text = health.Endpoint;
+        }
+
+        if (detail is not null)
+        {
+            var stateStr = health.State switch
+            {
+                TransportState.Healthy => "Healthy",
+                TransportState.Blocked => "Blocked",
+                _ => "Unknown"
+            };
+            detail.Text = $"{stateStr} — {health.DetailMessage}";
+        }
+    }
+
+    private void UpdateSyncHealthUi(TransportHealth health)
+    {
+        var indicator = this.FindControl<TextBlock>("SyncStatusIndicator");
+        var endpoint = this.FindControl<TextBlock>("SyncEndpoint");
+        var detail = this.FindControl<TextBlock>("SyncDetail");
+
+        if (indicator is not null)
+        {
+            indicator.Foreground = health.State switch
+            {
+                TransportState.Healthy => Avalonia.Media.Brush.Parse("#10B981"),
+                TransportState.Blocked => Avalonia.Media.Brush.Parse("#EF4444"),
+                _ => Avalonia.Media.Brush.Parse("#9CA3AF")
+            };
+        }
+
+        if (endpoint is not null)
+        {
+            endpoint.Text = health.Endpoint;
+        }
+
+        if (detail is not null)
+        {
+            var stateStr = health.State switch
+            {
+                TransportState.Healthy => "Healthy",
+                TransportState.Blocked => "Blocked",
+                _ => "Unknown"
+            };
+            detail.Text = $"{stateStr} — {health.DetailMessage}";
+        }
     }
 
     /// <summary>

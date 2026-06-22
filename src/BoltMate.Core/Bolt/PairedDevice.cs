@@ -84,7 +84,7 @@ public sealed class PairedDevice
         {
             if (binding.Paired &&
                 !string.IsNullOrWhiteSpace(binding.ReceiverName) &&
-                string.Equals(binding.ReceiverName, receiverName, StringComparison.OrdinalIgnoreCase))
+                Topology.HostNameHelper.HostNameMatches(binding.ReceiverName, receiverName))
                 return slot;
         }
         return null;

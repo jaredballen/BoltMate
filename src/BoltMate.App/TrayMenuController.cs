@@ -5,6 +5,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Topology;
+using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 
 namespace BoltMate.App;
@@ -20,6 +21,7 @@ public sealed class TrayMenuController : IDisposable
 {
     private readonly NativeMenu _menu;
     private readonly ReceiverManager _manager;
+    private readonly IPermissionsService _permissions;
     private readonly ILogger<TrayMenuController> _logger;
     private readonly CompositeDisposable _disposables = new();
 
@@ -30,10 +32,12 @@ public sealed class TrayMenuController : IDisposable
     public TrayMenuController(
         NativeMenu menu,
         ReceiverManager manager,
+        IPermissionsService permissions,
         ILogger<TrayMenuController> logger)
     {
         _menu = menu;
         _manager = manager;
+        _permissions = permissions;
         _logger = logger;
 
         BuildItems();
@@ -68,7 +72,8 @@ public sealed class TrayMenuController : IDisposable
     {
         _menu.Items.Clear();
 
-        if (_permissionStatus == OverallStatus.AnyDenied)
+        var permissionsDenied = !_permissions.Network.IsGranted || !_permissions.InputMonitoring.IsGranted;
+        if (permissionsDenied)
         {
             var fixItem = new NativeMenuItem("⚠ Fix permissions…");
             fixItem.Click += (_, _) => OnFixPermissionsClicked?.Invoke();

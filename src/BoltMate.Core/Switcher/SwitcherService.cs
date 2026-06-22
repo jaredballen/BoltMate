@@ -36,10 +36,21 @@ public sealed class SwitcherService : IDisposable
     private readonly ReceiverManager _manager;
     private readonly ILogger<SwitcherService> _logger;
     private readonly Subject<FanOutEvent> _fanOuts = new();
+    private readonly Subject<LocalSwitchTrigger> _triggers = new();
     private readonly CompositeDisposable _disposables = new();
 
     /// <summary>Stream of fan-out writes issued. One per sibling per trigger.</summary>
     public IObservable<FanOutEvent> FanOuts => _fanOuts.AsObservable();
+
+    /// <summary>
+    /// Stream of resolved local switch triggers. Fires once per Easy-Switch
+    /// press / Flow snoop after the target hostname has been resolved from the
+    /// originator's HostBindings, BEFORE local fan-out runs. Fires regardless
+    /// of whether the local machine has any siblings to fan — the topology
+    /// layer needs this signal even when the originator is the only local
+    /// device, so peer machines can fan their own siblings.
+    /// </summary>
+    public IObservable<LocalSwitchTrigger> LocalSwitchTriggers => _triggers.AsObservable();
 
     public SwitcherService(ReceiverManager manager, ILogger<SwitcherService>? logger = null)
     {
@@ -57,6 +68,7 @@ public sealed class SwitcherService : IDisposable
             .Subscribe(t => OnFlowHostSwitchDetected(t.Origin, t.Snoop)));
 
         _disposables.Add(_fanOuts);
+        _disposables.Add(_triggers);
     }
 
     public void Dispose() => _disposables.Dispose();
@@ -85,6 +97,20 @@ public sealed class SwitcherService : IDisposable
         _logger.LogInformation(
             "FanOut starting: targetHostName='{Target}', originatorWpid={Wpid}, source={Source}, receivers={N}",
             targetHostName, originatingDeviceWpid?.ToString("X4") ?? "(none)", source, receiverCount);
+
+        // Emit a trigger for locally-initiated switches (e.g. CLI / user request)
+        // so the topology layer broadcasts intent. RemoteTopology MUST NOT emit
+        // here — that would create a peer-to-peer rebroadcast loop.
+        if (source != FanOutSource.RemoteTopology)
+        {
+            _triggers.OnNext(new LocalSwitchTrigger(
+                OriginatingReceiver: null,
+                OriginatingSlot: 0,
+                OriginatingDeviceSerial: null,
+                OriginatingDeviceWpid: originatingDeviceWpid,
+                TargetHostName: targetHostName,
+                Source: source));
+        }
         foreach (var receiver in _manager.Receivers.Items)
         {
             var deviceCount = receiver.Devices.Items.Count();
@@ -199,6 +225,14 @@ public sealed class SwitcherService : IDisposable
             "Fan-out trigger from {Serial} slot {Slot} -> host '{Target}' (source={Source})",
             origin.Info.Serial, originatingSlot, targetHostName, source);
 
+        _triggers.OnNext(new LocalSwitchTrigger(
+            OriginatingReceiver: origin,
+            OriginatingSlot: originatingSlot,
+            OriginatingDeviceSerial: originDevice?.Serial,
+            OriginatingDeviceWpid: originDevice?.Wpid,
+            TargetHostName: targetHostName,
+            Source: source));
+
         foreach (var receiver in _manager.Receivers.Items)
         {
             foreach (var device in receiver.Devices.Items)
@@ -238,6 +272,20 @@ public sealed record FanOutEvent(
     FanOutSource Source,
     BoltReceiver OriginatingReceiver,
     byte OriginatingSlot);
+
+/// <summary>
+/// One emission per Easy-Switch press / Flow snoop / user request, fired
+/// after the target hostname has been resolved from the originator's
+/// HostBindings and BEFORE the local sibling loop runs. Carries the data
+/// the topology layer needs to broadcast intent to peer machines.
+/// </summary>
+public sealed record LocalSwitchTrigger(
+    BoltReceiver? OriginatingReceiver,
+    byte OriginatingSlot,
+    string? OriginatingDeviceSerial,
+    ushort? OriginatingDeviceWpid,
+    string TargetHostName,
+    FanOutSource Source);
 
 /// <summary>What triggered the fan-out.</summary>
 public enum FanOutSource

@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using BoltMate.Core.Topology;
+using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 
 namespace BoltMate.App;
@@ -40,9 +41,18 @@ public sealed class TrayIconStatusController : IDisposable
     private readonly CompositeDisposable _disposables = new();
     private readonly DispatcherTimer _timer;
 
+    private readonly IPermissionsService _permissions;
     private UdpTopologyService? _topology;
     private State _last = State.None;
     private OverallStatus _permissionStatus = OverallStatus.AllGood;
+
+    private DateTimeOffset? _udpBlockedSince;
+    private DateTimeOffset? _syncBlockedSince;
+    private bool _udpBlockedAlert;
+    private bool _syncBlockedAlert;
+
+    private readonly SerialDisposable _udpHealthSub = new();
+    private readonly SerialDisposable _syncHealthSub = new();
 
     // Cached compositions. Built lazily; rebuilt only on theme change.
     private WindowIcon? _neutralIcon;
@@ -50,10 +60,14 @@ public sealed class TrayIconStatusController : IDisposable
     private WindowIcon? _badIcon;
     private WindowIcon? _alertIcon;
 
-    public TrayIconStatusController(TrayIcon trayIcon, ILogger logger)
+    public TrayIconStatusController(TrayIcon trayIcon, IPermissionsService permissions, ILogger logger)
     {
         _trayIcon = trayIcon;
+        _permissions = permissions;
         _logger = logger;
+
+        _disposables.Add(_udpHealthSub);
+        _disposables.Add(_syncHealthSub);
 
         _timer = new DispatcherTimer(CheckCadence, DispatcherPriority.Background, (_, _) => Refresh());
         _timer.Start();
@@ -99,28 +113,115 @@ public sealed class TrayIconStatusController : IDisposable
         });
     }
 
+    public void BindHealth(IObservable<TransportHealth>? udpHealth, IObservable<TransportHealth>? syncHealth)
+    {
+        if (udpHealth is not null)
+        {
+            _udpHealthSub.Disposable = udpHealth.Subscribe(h => Dispatcher.UIThread.Post(() => OnUdpHealthChanged(h)));
+        }
+        else
+        {
+            _udpHealthSub.Disposable = Disposable.Empty;
+            _udpBlockedSince = null;
+            _udpBlockedAlert = false;
+        }
+
+        if (syncHealth is not null)
+        {
+            _syncHealthSub.Disposable = syncHealth.Subscribe(h => Dispatcher.UIThread.Post(() => OnSyncHealthChanged(h)));
+        }
+        else
+        {
+            _syncHealthSub.Disposable = Disposable.Empty;
+            _syncBlockedSince = null;
+            _syncBlockedAlert = false;
+        }
+    }
+
+    private void OnUdpHealthChanged(TransportHealth h)
+    {
+        if (h.State == TransportState.Blocked)
+        {
+            if (_udpBlockedSince is null)
+                _udpBlockedSince = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            _udpBlockedSince = null;
+            _udpBlockedAlert = false;
+        }
+        Refresh();
+    }
+
+    private void OnSyncHealthChanged(TransportHealth h)
+    {
+        if (h.State == TransportState.Blocked)
+        {
+            if (_syncBlockedSince is null)
+                _syncBlockedSince = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            _syncBlockedSince = null;
+            _syncBlockedAlert = false;
+        }
+        Refresh();
+    }
+
     private void Refresh()
     {
+        var now = DateTimeOffset.UtcNow;
+        if (_udpBlockedSince is not null && (now - _udpBlockedSince.Value) >= TimeSpan.FromSeconds(30))
+            _udpBlockedAlert = true;
+        else if (_udpBlockedSince is null)
+            _udpBlockedAlert = false;
+
+        if (_syncBlockedSince is not null && (now - _syncBlockedSince.Value) >= TimeSpan.FromSeconds(30))
+            _syncBlockedAlert = true;
+        else if (_syncBlockedSince is null)
+            _syncBlockedAlert = false;
+
         var state = ResolveState();
-        if (state == _last) return;
+
+        string tooltip;
+        if (AreRequiredPermissionsDenied())
+        {
+            tooltip = "BoltMate — permissions needed";
+        }
+        else if (_udpBlockedAlert || _syncBlockedAlert)
+        {
+            if (_udpBlockedAlert && _syncBlockedAlert)
+                tooltip = "BoltMate · network blocked (UDP multicast + Bonjour sync)";
+            else if (_udpBlockedAlert)
+                tooltip = "BoltMate · network blocked (UDP multicast)";
+            else
+                tooltip = "BoltMate · network blocked (Bonjour sync)";
+        }
+        else
+        {
+            tooltip = "BoltMate";
+        }
+
         try
         {
-            _trayIcon.Icon = GetOrBuild(state);
-            _trayIcon.ToolTipText = state == State.Alert
-                ? "BoltMate — permissions needed"
-                : "BoltMate";
-            _last = state;
-            // Template flag only valid in neutral state — any composited
-            // badge (good / bad / alert) drops the template flag so AppKit
-            // doesn't try to template-invert the colored sticker.
-            try
+            if (state != _last)
             {
-                if (OperatingSystem.IsMacOS())
+                _trayIcon.Icon = GetOrBuild(state);
+                _last = state;
+                // Template flag only valid in neutral state — any composited
+                // badge (good / bad / alert) drops the template flag so AppKit
+                // doesn't try to template-invert the colored sticker.
+                try
                 {
-                    Avalonia.Controls.MacOSProperties.SetIsTemplateIcon(_trayIcon, state == State.Neutral);
+                    if (OperatingSystem.IsMacOS())
+                    {
+                        Avalonia.Controls.MacOSProperties.SetIsTemplateIcon(_trayIcon, state == State.Neutral);
+                    }
                 }
+                catch { /* avalonia version diff — best effort */ }
             }
-            catch { /* avalonia version diff — best effort */ }
+
+            _trayIcon.ToolTipText = tooltip;
         }
         catch (Exception ex)
         {
@@ -130,9 +231,9 @@ public sealed class TrayIconStatusController : IDisposable
 
     private State ResolveState()
     {
-        // Alert beats every other state — a denied permission is the most
+        // Alert beats every other state — a denied permission or a blocked transport is the most
         // important thing for the user to know about.
-        if (_permissionStatus == OverallStatus.AnyDenied)
+        if (AreRequiredPermissionsDenied() || _udpBlockedAlert || _syncBlockedAlert)
             return State.Alert;
 
         if (_topology is null) return State.Neutral;
@@ -143,6 +244,11 @@ public sealed class TrayIconStatusController : IDisposable
             if (p.LastSeenUtc >= cutoff)
                 return State.Good;
         return State.Bad;
+    }
+
+    private bool AreRequiredPermissionsDenied()
+    {
+        return !_permissions.Network.IsGranted || !_permissions.InputMonitoring.IsGranted;
     }
 
     private WindowIcon GetOrBuild(State state) => state switch

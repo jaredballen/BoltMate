@@ -16,13 +16,16 @@ public class SwitcherServiceTests
         public ReceiverManager Manager { get; }
         public SwitcherService Switcher { get; }
         public List<FanOutEvent> FanOuts { get; } = new();
+        public List<LocalSwitchTrigger> Triggers { get; } = new();
         private readonly IDisposable _sub;
+        private readonly IDisposable _triggerSub;
 
         public Fixture()
         {
             Manager = new ReceiverManager(Transport, autoStart: false);
             Switcher = new SwitcherService(Manager);
             _sub = Switcher.FanOuts.Subscribe(ev => FanOuts.Add(ev));
+            _triggerSub = Switcher.LocalSwitchTriggers.Subscribe(t => Triggers.Add(t));
         }
 
         public BoltReceiver AddReceiver(string path = "/test/bolt-0", string serial = "SER-0")
@@ -71,6 +74,7 @@ public class SwitcherServiceTests
         public void Dispose()
         {
             _sub.Dispose();
+            _triggerSub.Dispose();
             Switcher.Dispose();
             Manager.Dispose();
         }
@@ -194,6 +198,37 @@ public class SwitcherServiceTests
 
         Assert.Single(f.FanOuts);
         Assert.Equal((byte)2, f.FanOuts[0].Target.DeviceIndex);
+    }
+
+    [Fact]
+    public void LocalSwitchTrigger_fires_even_when_no_local_siblings_exist()
+    {
+        using var f = new Fixture();
+        var receiver = f.AddReceiver();
+
+        // Only one device on this machine. No siblings to fan locally — but
+        // the topology layer still needs the trigger so it can tell peers
+        // "a device just left for host B".
+        f.SeedDevice(receiver, 1, bindings: [(0, HostA), (1, HostB)]);
+
+        f.InjectHostSwitchPress(receiver, originatingSlot: 1, targetHost: 1);
+
+        Assert.Empty(f.FanOuts); // no siblings to switch locally
+        var trigger = Assert.Single(f.Triggers);
+        Assert.Equal(HostB, trigger.TargetHostName);
+        Assert.Equal(FanOutSource.EasySwitchPress, trigger.Source);
+    }
+
+    [Fact]
+    public void LocalSwitchTrigger_does_not_fire_when_origin_bindings_missing()
+    {
+        using var f = new Fixture();
+        var receiver = f.AddReceiver();
+        f.SeedDevice(receiver, 1);
+
+        f.InjectHostSwitchPress(receiver, originatingSlot: 1, targetHost: 0);
+
+        Assert.Empty(f.Triggers);
     }
 
     [Fact]

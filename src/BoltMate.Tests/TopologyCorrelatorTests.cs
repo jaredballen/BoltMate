@@ -269,4 +269,127 @@ public class TopologyCorrelatorTests
         Assert.Empty(f.Filtered);
         Assert.Empty(f.FanOuts);
     }
+
+    [Theory]
+    [InlineData("Jareds-M4-MBP", "Jareds-M4-MBP.local", true)]
+    [InlineData("Jareds-M4-MBP.allen.family", "jareds-m4-mbp", true)]
+    [InlineData("Jareds-M4-MBP", "Jareds-M4-MBP", true)]
+    [InlineData("Jareds-M4-MBP", "Other-Host", false)]
+    [InlineData("", "Other-Host", false)]
+    [InlineData("Jareds-M4-MBP", null, false)]
+    public void HostNameMatches_handles_suffixes_and_casing(string? name1, string? name2, bool expected)
+    {
+        var result = HostNameHelper.HostNameMatches(name1, name2);
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Local_link_lost_followed_by_remote_reappearance_triggers_fan_out()
+    {
+        using var f = new Fixture();
+        var r = f.AddReceiver();
+
+        // 1. Seed a keyboard that is currently LinkUp on us, and paired to PeerHost
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
+
+        // 2. Seed the mouse on slot 1, WPID 0xAAAA, and paired to PeerHost
+        f.SeedDevice(r, 1, wpid: 0xAAAA, (0, LocalHost), (1, PeerHost));
+
+        // Ensure both devices are linkUp locally
+        Assert.True(r.TryGetDevice(1)!.LinkUp);
+        Assert.True(r.TryGetDevice(2)!.LinkUp);
+
+        // 3. Trigger local link-lost for the mouse (0xAAAA)
+        var session = f.Transport.Sessions.Single();
+        var conn = session.LastConnection;
+        // In DJ pairing notifications, low byte first, so 0xAAAA is AA, AA
+        conn.Inject(HidPpFrame.TryParse([0x10, 0x01, 0x41, 0x10, 0x40, 0xAA, 0xAA])!.Value);
+
+        // Verify that the mouse's LinkUp status is now false locally
+        Assert.False(r.TryGetDevice(1)!.LinkUp);
+
+        // 4. Simulate receiving a remote announcement from PeerHost showing that device 0xAAAA has appeared on PeerHost.
+        var remoteAnnouncement = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-1",
+                    Devices =
+                    {
+                        new DeviceEntry
+                        {
+                            Slot = 1,
+                            WpidHex = "AAAA",
+                            Serial = "M-1",
+                            Name = "Mouse",
+                            LinkUp = true, // it has appeared on the remote host!
+                            SlotMap =
+                            {
+                                new DeviceSlotEntry { HostIndex = 0, Paired = true, HostName = LocalHost },
+                                new DeviceSlotEntry { HostIndex = 1, Paired = true, HostName = PeerHost }
+                            }
+                        }
+                    }
+                }
+            },
+            LastSwitchEvent = null // No explicit switch event (cycle button device)
+        };
+
+        // 5. Send announcement to correlator
+        f.Announcements.OnNext(remoteAnnouncement);
+
+        // 6. Verify that f.FanOuts contains a fan-out event for the keyboard (0xBBBB) fanning out to PeerHost (slot 1)
+        var ev = Assert.Single(f.FanOuts);
+        Assert.Equal((byte)2, ev.Target.DeviceIndex);
+        Assert.Equal((byte)1, ev.TargetHost);
+        Assert.Equal(FanOutSource.RemoteTopology, ev.Source);
+    }
+
+    [Fact]
+    public void Remote_reappearance_without_prior_local_link_lost_does_not_trigger_fan_out()
+    {
+        using var f = new Fixture();
+        var r = f.AddReceiver();
+
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
+        f.SeedDevice(r, 1, wpid: 0xAAAA, (0, LocalHost), (1, PeerHost));
+
+        // Send a remote announcement showing 0xAAAA is LinkUp on PeerHost,
+        // but since we never saw a local LinkLost for it, no fan-out should occur.
+        var remoteAnnouncement = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-1",
+                    Devices =
+                    {
+                        new DeviceEntry
+                        {
+                            Slot = 1,
+                            WpidHex = "AAAA",
+                            Serial = "M-1",
+                            Name = "Mouse",
+                            LinkUp = true,
+                            SlotMap =
+                            {
+                                new DeviceSlotEntry { HostIndex = 0, Paired = true, HostName = LocalHost },
+                                new DeviceSlotEntry { HostIndex = 1, Paired = true, HostName = PeerHost }
+                            }
+                        }
+                    }
+                }
+            },
+            LastSwitchEvent = null
+        };
+
+        f.Announcements.OnNext(remoteAnnouncement);
+
+        Assert.Empty(f.FanOuts);
+    }
 }
