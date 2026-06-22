@@ -40,6 +40,15 @@ public sealed class PairedDevice
     /// <summary>Feature index of DEVICE_FRIENDLY_NAME (0x0007) — the writable nickname.</summary>
     public byte? DeviceFriendlyNameIndex { get; set; }
 
+    /// <summary>
+    /// Feature index of WIRELESS_DEVICE_STATUS (0x1D4B). When non-null the
+    /// device emits a "ready for reads" notification after firmware finishes
+    /// its post-link-up initialisation. DeviceEnricher defers heavy reads
+    /// (name, friendly name, host bindings) until that fires; otherwise reads
+    /// can race the firmware and return cached/default values.
+    /// </summary>
+    public byte? WirelessDeviceStatusIndex { get; set; }
+
     /// <summary>User-set friendly name from feature 0x0007, when available.</summary>
     public string? FriendlyName { get; set; }
 

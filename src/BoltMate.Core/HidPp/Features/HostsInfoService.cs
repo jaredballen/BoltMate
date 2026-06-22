@@ -86,14 +86,35 @@ public sealed class HostsInfoService
             try
             {
                 var binding = await GetHostInfoAsync(deviceIndex, featureIndex, h, ct).ConfigureAwait(false);
-                // Best-effort name read — many devices return empty for un-Logi+-named hosts.
-                try
+                // Best-effort name read with retry-on-default. Modern Bolt
+                // devices answer with the generic "Logitech Bolt receiver"
+                // when their firmware caches haven't fully primed; a short
+                // wait + retry usually gets the real stored name. Three
+                // attempts total. Acts as a backstop for the WIRELESS_DEVICE_STATUS
+                // gate in DeviceEnricher — covers the case where the device
+                // signals ready but the friendly-name buffer is still cold.
+                string? resolved = null;
+                for (var attempt = 0; attempt < 3; attempt++)
                 {
-                    var name = await GetHostFriendlyNameAsync(deviceIndex, featureIndex, h, ct).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(name))
-                        binding = binding with { ReceiverName = name.Trim('\0', ' ') };
+                    try
+                    {
+                        var name = await GetHostFriendlyNameAsync(deviceIndex, featureIndex, h, ct).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(name)) name = name.Trim('\0', ' ');
+                        if (IsRealName(name))
+                        {
+                            resolved = name;
+                            break;
+                        }
+                        // Keep the default as a last-resort fallback if every
+                        // retry also returns default. Better than null.
+                        resolved ??= name;
+                    }
+                    catch (HidPpException) { /* keep retrying */ }
+                    if (attempt < 2)
+                        await Task.Delay(250, ct).ConfigureAwait(false);
                 }
-                catch (HidPpException) { /* swallow */ }
+                if (!string.IsNullOrWhiteSpace(resolved))
+                    binding = binding with { ReceiverName = resolved };
                 bindings.Add(binding);
             }
             catch (HidPpException)
@@ -102,6 +123,10 @@ public sealed class HostsInfoService
             }
         }
         return bindings;
+
+        static bool IsRealName(string? name) =>
+            !string.IsNullOrWhiteSpace(name)
+            && !string.Equals(name, "Logitech Bolt receiver", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

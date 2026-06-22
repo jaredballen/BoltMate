@@ -60,9 +60,22 @@ public sealed class DeviceEnricher : IDisposable
                 _ = EnrichSlotAsync(receiver, device.DeviceIndex);
         }
 
-        // On every fresh link-up, run the full enrichment pass for that slot.
+        // On every fresh link-up: resolve features + run heavy reads eagerly.
+        // The chunked reads (host friendly names, device name) can race the
+        // device's own post-link-up init and return cached defaults; the
+        // HostsInfoService retry layer + the binding-merge below cope with
+        // most of that.
         _disposables.Add(receiver.LinkEstablished.Subscribe(device =>
             _ = EnrichSlotAsync(receiver, device.DeviceIndex)));
+
+        // 0x1D4B WIRELESS_DEVICE_STATUS notification — device-initiated "I'm
+        // ready" signal. We don't BLOCK on it (would be fragile if the
+        // notification never arrives) but we DO use it as an upgrade trigger:
+        // when it fires, re-run the heavy reads so any stale binding the
+        // initial pass got is replaced. Idempotent w.r.t. the per-receiver
+        // semaphore so concurrent slots don't trample each other.
+        _disposables.Add(receiver.DeviceReady.Subscribe(device =>
+            _ = RefreshSlotAsync(receiver, device.DeviceIndex)));
     }
 
     private async System.Threading.Tasks.Task EnrichAllSlotsAsync(BoltReceiver receiver)
@@ -105,8 +118,67 @@ public sealed class DeviceEnricher : IDisposable
         try
         {
             await receiver.DiscoverFeaturesAsync(deviceIndex);
+        }
+        catch (Exception ex)
+        {
+            // Discover races device init — IRoot reads can time out if the
+            // wireless link is up but firmware hasn't finished its own boot.
+            // Bail; the next LinkEstablished (or a future DeviceReady refresh)
+            // will retry from scratch.
+            _logger.LogWarning(ex, "Resolving features for slot {Slot} failed — will retry on next link transition", deviceIndex);
+            return;
+        }
+
+        await HeavyEnrichInnerAsync(receiver, deviceIndex).ConfigureAwait(false);
+    }
+
+    private async System.Threading.Tasks.Task RefreshSlotAsync(BoltReceiver receiver, byte deviceIndex)
+    {
+        var gate = _receiverGates.GetOrAdd(receiver.Info.Path, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
             var device = receiver.TryGetDevice(deviceIndex);
             if (device is null) return;
+
+            // If feature discovery failed earlier (e.g. IRoot timed out before
+            // the device was ready) we won't have indices yet — try again now
+            // that the firmware has explicitly signaled ready.
+            if (device.HostsInfoIndex is null)
+            {
+                try { await receiver.DiscoverFeaturesAsync(deviceIndex); }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Slot {Slot} DeviceReady-triggered discover retry failed", deviceIndex);
+                    return;
+                }
+            }
+
+            _logger.LogInformation("Slot {Slot} refresh triggered by WIRELESS_DEVICE_STATUS ready", deviceIndex);
+            await HeavyEnrichInnerAsync(receiver, deviceIndex).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async System.Threading.Tasks.Task HeavyEnrichInnerAsync(BoltReceiver receiver, byte deviceIndex)
+    {
+        try
+        {
+            var device = receiver.TryGetDevice(deviceIndex);
+            if (device is null) return;
+
+            // Guard: HID++ reads against an offline device return garbage
+            // (all-unpaired bindings, empty names) which would clobber the
+            // last good in-memory state. Better to bail and wait for the
+            // next link-up / DeviceReady to re-read live.
+            if (!device.LinkUp)
+            {
+                _logger.LogInformation("Slot {Slot} heavy enrich skipped — LinkUp=false at read time", deviceIndex);
+                return;
+            }
 
             // Device-side name (feature 0x0005) — more accurate than register read.
             if (device.DeviceNameIndex is { } dnIdx)
@@ -194,25 +266,34 @@ public sealed class DeviceEnricher : IDisposable
                     var hosts = await receiver.HostsInfo.GetHostsInfoAsync(deviceIndex, hostsIdx);
                     device.LastKnownCurrentHost = hosts.CurrentHost;
 
-                    // Read each host's binding so SwitcherService can route by BLE.
-                    // Defensive merge: if a re-read returns null or the generic
-                    // "Logitech Bolt receiver" default for a slot we previously
-                    // had a real name for, KEEP the real name. The 0x1815 read
-                    // is intermittently flaky under rapid link transitions and
-                    // would otherwise downgrade good bindings to defaults that
-                    // break fan-out target matching until the next clean read.
+                    // Upgrade-only binding merge: never replace a slot we
+                    // previously knew as paired+named with a worse read.
+                    // The 0x1815 reads are intermittently flaky — under
+                    // rapid link transitions a slot can come back as
+                    // Paired=false, or with the generic "Logitech Bolt
+                    // receiver" default in place of the real name. Blindly
+                    // overwriting wipes our last-known-good state and
+                    // strands fan-out (no slot map → can't route by name).
                     var bindings = await receiver.HostsInfo.GetAllHostsAsync(deviceIndex, hostsIdx);
                     var prior = device.HostBindings;
                     var dict = new Dictionary<byte, BoltMate.Core.Bolt.HostBinding>();
                     foreach (var b in bindings)
                     {
                         var merged = b;
-                        if (IsGenericName(b.ReceiverName)
-                            && prior.TryGetValue(b.HostIndex, out var prev)
-                            && !IsGenericName(prev.ReceiverName))
-                        {
-                            merged = b with { ReceiverName = prev.ReceiverName };
-                        }
+                        if (prior.TryGetValue(b.HostIndex, out var prev) && IsBetterBinding(prev, b))
+                            merged = prev;
+
+                        // Local-host substitution: the slot equal to the
+                        // device's current host is bound to US (the device is
+                        // talking to us via this receiver, on this slot index).
+                        // Whatever name the device stored for that slot is
+                        // moot — the canonical answer is our own host name.
+                        // Cleans up the common case where the mouse's h0
+                        // friendly name reads back as the receiver default
+                        // even though that slot really points at this Mac.
+                        if (merged.HostIndex == hosts.CurrentHost && IsGenericName(merged.ReceiverName))
+                            merged = merged with { ReceiverName = BoltMate.Core.Topology.LocalHostIdentity.Canonical };
+
                         dict[b.HostIndex] = merged;
                     }
                     device.HostBindings = dict;
@@ -220,6 +301,18 @@ public sealed class DeviceEnricher : IDisposable
                     static bool IsGenericName(string? name) =>
                         string.IsNullOrWhiteSpace(name)
                         || string.Equals(name, "Logitech Bolt receiver", StringComparison.OrdinalIgnoreCase);
+
+                    // "prior is better than incoming" — keep prior if:
+                    //   • incoming is unpaired but prior was paired
+                    //   • incoming has generic/empty name but prior had a real one
+                    static bool IsBetterBinding(BoltMate.Core.Bolt.HostBinding prior, BoltMate.Core.Bolt.HostBinding incoming)
+                    {
+                        if (prior.Paired && !incoming.Paired) return true;
+                        if (prior.Paired && incoming.Paired
+                            && !IsGenericName(prior.ReceiverName)
+                            && IsGenericName(incoming.ReceiverName)) return true;
+                        return false;
+                    }
 
                     var summary = string.Join(", ", bindings.Select(b =>
                         $"h{b.HostIndex}={(b.Paired ? $"{b.HostIdentifierString ?? "(no ble)"}|name='{b.ReceiverName ?? "(null)"}'" : "unpaired")}"));

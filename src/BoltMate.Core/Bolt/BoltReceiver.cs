@@ -29,6 +29,7 @@ public sealed class BoltReceiver : IDisposable
     private readonly Subject<HidPpFrame> _rawFrames = new();
     private readonly Subject<PairedDevice> _linkEstablished = new();
     private readonly Subject<PairedDevice> _linkLost = new();
+    private readonly Subject<PairedDevice> _deviceReady = new();
     private readonly CompositeDisposable _disposables = new();
     private bool _started;
 
@@ -104,6 +105,18 @@ public sealed class BoltReceiver : IDisposable
     /// <summary>Stream of slots that just lost their wireless link.</summary>
     public IObservable<PairedDevice> LinkLost => _linkLost.AsObservable();
 
+    /// <summary>
+    /// Fires when a device emits the HID++ 2.0 feature 0x1D4B
+    /// (WIRELESS_DEVICE_STATUS) "reconfig requested" notification — the
+    /// firmware-driven signal that it has finished post-link-up init and is
+    /// ready to answer host reads. DeviceEnricher gates heavy reads on this
+    /// rather than on <see cref="LinkEstablished"/> so chunked reads
+    /// (0x1815 host names, 0x0005 device name) don't race the device's own
+    /// initialisation and come back with cached defaults.
+    /// Can fire repeatedly during one link-up session; consumers dedup.
+    /// </summary>
+    public IObservable<PairedDevice> DeviceReady => _deviceReady.AsObservable();
+
     public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, HidPpClient? client = null, ILogger<BoltReceiver>? logger = null)
     {
         Info = info;
@@ -132,6 +145,7 @@ public sealed class BoltReceiver : IDisposable
         _disposables.Add(_rawFrames);
         _disposables.Add(_linkEstablished);
         _disposables.Add(_linkLost);
+        _disposables.Add(_deviceReady);
         _disposables.Add(_client);
         _disposables.Add(_connection);
     }
@@ -205,9 +219,10 @@ public sealed class BoltReceiver : IDisposable
         device.DeviceNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceName, ct).ConfigureAwait(false))?.Index;
         device.UnifiedBatteryIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.UnifiedBattery, ct).ConfigureAwait(false))?.Index;
         device.DeviceFriendlyNameIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.DeviceFriendlyName, ct).ConfigureAwait(false))?.Index;
+        device.WirelessDeviceStatusIndex ??= (await Root.GetFeatureAsync(deviceIndex, FeatureIds.WirelessDeviceStatus, ct).ConfigureAwait(false))?.Index;
 
         _logger.LogInformation(
-            "Slot {Slot} feature indices: 1B04={Reprog} 1814={Ch} 1815={HI} 0003={DI} 0005={DN} 1004={Bat} 0007={FN}",
+            "Slot {Slot} feature indices: 1B04={Reprog} 1814={Ch} 1815={HI} 0003={DI} 0005={DN} 1004={Bat} 0007={FN} 1D4B={Ready}",
             deviceIndex,
             device.ReprogControlsIndex?.ToString("X2") ?? "-",
             device.ChangeHostIndex?.ToString("X2") ?? "-",
@@ -215,7 +230,8 @@ public sealed class BoltReceiver : IDisposable
             device.DeviceInfoIndex?.ToString("X2") ?? "-",
             device.DeviceNameIndex?.ToString("X2") ?? "-",
             device.UnifiedBatteryIndex?.ToString("X2") ?? "-",
-            device.DeviceFriendlyNameIndex?.ToString("X2") ?? "-");
+            device.DeviceFriendlyNameIndex?.ToString("X2") ?? "-",
+            device.WirelessDeviceStatusIndex?.ToString("X2") ?? "-");
 
         RefreshSlot(deviceIndex);
     }
@@ -831,6 +847,16 @@ public sealed class BoltReceiver : IDisposable
             slot.LastKnownBattery = batteryEvent.Status;
             RefreshSlot(slot.DeviceIndex);
             _batteryStatusChanged.OnNext(batteryEvent);
+            return;
+        }
+
+        if (slot.WirelessDeviceStatusIndex is { } wirelessStatusIndex
+            && WirelessDeviceStatusNotification.TryParse(frame, wirelessStatusIndex, out var statusEvent)
+            && statusEvent.ReconfigRequested)
+        {
+            _logger.LogInformation("Slot {Slot} WIRELESS_DEVICE_STATUS ready (poweredOn={Powered})",
+                slot.DeviceIndex, statusEvent.PoweredOn);
+            _deviceReady.OnNext(slot);
         }
     }
 }

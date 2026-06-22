@@ -33,6 +33,17 @@ public static class FeatureIds
     /// <summary>HOSTS_INFO — host capability/name discovery.</summary>
     public const ushort HostsInfo = 0x1815;
 
+    /// <summary>
+    /// WIRELESS_DEVICE_STATUS — device-initiated "I'm ready, please reapply
+    /// settings" notification. Has no callable functions; the firmware emits
+    /// a frame with function nibble 0 + data[1]==1 once the device has fully
+    /// initialised after a link-up. DeviceEnricher uses this as the gate for
+    /// heavy reads (name, friendly name, host bindings) because the DJ 0x41
+    /// link-up notification fires earlier than the device is ready to answer
+    /// chunked reads. See Solaar lib/logitech_receiver/notifications.py.
+    /// </summary>
+    public const ushort WirelessDeviceStatus = 0x1D4B;
+
     /// <summary>The reserved index of IRoot in every device's feature table.</summary>
     public const byte IRootIndex = 0x00;
 }
