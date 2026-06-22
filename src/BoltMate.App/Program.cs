@@ -1,7 +1,10 @@
 ﻿using Avalonia;
 using System;
 using System.IO;
+using BoltMate.App.Composition;
 using BoltMate.Core;
+using BoltMate.Hid.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BoltMate.App;
 
@@ -39,7 +42,30 @@ class Program
         // its native menu builder picks up the right title. Without this the
         // app menu reads "Avalonia Application".
         MacActivationPolicy.SetProcessName("BoltMate");
+
+        // Composition root — build the DI container BEFORE Avalonia so
+        // App.OnFrameworkInitializationCompleted can resolve singletons.
+        // Container disposal on app exit handles the IDisposable teardown
+        // for every registered service (replaces what was previously
+        // a manual CompositeDisposable in App).
+        var loggerFactory = AppLoggerSetup.Create();
+        var settings = AppSettings.Load();
+        settings.Topology.Enabled = true;
+        IReceiverTransport transport =
+            OperatingSystem.IsMacOS()   ? new BoltMate.Hid.IOKit.IOKitReceiverTransport(loggerFactory) :
+            OperatingSystem.IsWindows() ? new BoltMate.Hid.Win.WinReceiverTransport(loggerFactory) :
+                                          new BoltMate.Hid.HidApi.HidApiReceiverTransport(loggerFactory);
+
+        var services = new ServiceCollection()
+            .AddBoltMateCore(loggerFactory, settings, transport);
+        App.Services = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true });
+
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+
+        // Dispose the container on shutdown — replaces the per-service
+        // _disposables.Add(...) calls that lived in App previously.
+        (App.Services as IDisposable)?.Dispose();
     }
 
     private static void TryWriteCrashRecord(string kind, Exception? ex)

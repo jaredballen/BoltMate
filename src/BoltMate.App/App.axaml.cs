@@ -16,6 +16,7 @@ using BoltMate.Core.Permissions;
 using BoltMate.Core.Switcher;
 using BoltMate.Core.Topology;
 using BoltMate.Hid.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -23,6 +24,17 @@ namespace BoltMate.App;
 
 public partial class App : Application
 {
+    /// <summary>
+    /// DI container, populated by <see cref="Program.Main"/> before Avalonia
+    /// bootstraps. Singletons (PermissionsService, ReceiverManager,
+    /// SwitcherService, DeviceEnricher, UpdateService, AppSettings,
+    /// ILoggerFactory, IReceiverTransport) are resolved from here. Topology
+    /// stack and UI controllers stay manually constructed because they have
+    /// runtime lifecycle (toggle / tray-icon-bound) that DI registration
+    /// doesn't express cleanly.
+    /// </summary>
+    public static IServiceProvider Services { get; internal set; } = default!;
+
     private readonly CompositeDisposable _disposables = new();
     private ReceiverManager? _manager;
     private SwitcherService? _switcher;
@@ -84,7 +96,10 @@ public partial class App : Application
             desktop.Exit += (_, _) => _disposables.Dispose();
         }
 
-        _loggerFactory = AppLoggerSetup.Create();
+        // Pull pre-built dependencies from the container (Program.Main
+        // composed it before Avalonia started).
+        _loggerFactory = Services.GetRequiredService<ILoggerFactory>();
+        _settings = Services.GetRequiredService<AppSettings>();
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("BoltMate.App starting (Avalonia 12)");
 
@@ -98,13 +113,10 @@ public partial class App : Application
             () => MacActivationPolicy.SetAppMenuTitle("BoltMate"),
             Avalonia.Threading.DispatcherPriority.Background);
 
-        _settings = AppSettings.Load();
-        _settings.Topology.Enabled = true;
-
-        // Permissions service is constructed once per process and shared by
-        // every consumer (welcome wizard, tray badge, settings status tab).
-        // Owns a 2s polling timer; pushes deltas to per-permission observables.
-        _permissions = new PermissionsService(_loggerFactory);
+        // Permissions service is a container-managed singleton — same
+        // instance flows to the welcome wizard, tray badge, settings status
+        // tab. Owns a 2s polling timer; pushes deltas via Rx observables.
+        _permissions = Services.GetRequiredService<IPermissionsService>();
 
         // ====================================================================
         // First-run gate
@@ -194,26 +206,16 @@ public partial class App : Application
 
     private void ContinueBootstrap(ILogger log)
     {
-        // Composition root for the HID transport.
-        // macOS: IOKit-direct (libhidapi 0.15.0 ignores shared-access flag,
-        //        breaks device firmware buttons — see project_mac_hid_open_breaks_device
-        //        memory).
-        // Windows: native Win32 HID via setupapi + hid.dll (eliminates HidApi.Net
-        //          long-report write failures and arm64-vs-x64 emulation issues).
-        // Linux: HidApi.Net (libhidapi on Linux works fine with our usage).
-        IReceiverTransport transport =
-            OperatingSystem.IsMacOS()   ? new BoltMate.Hid.IOKit.IOKitReceiverTransport(_loggerFactory) :
-            OperatingSystem.IsWindows() ? new BoltMate.Hid.Win.WinReceiverTransport(_loggerFactory) :
-                                          new BoltMate.Hid.HidApi.HidApiReceiverTransport(_loggerFactory);
-        _manager = new ReceiverManager(transport, loggerFactory: _loggerFactory);
-        _disposables.Add(_manager);
-        _disposables.Add(_loggerFactory);
+        // HID transport + ReceiverManager are container-managed. Transport
+        // selection (OS-specific) happened in Program.Main; ReceiverManager
+        // resolves it via DI. Both are container-disposed at app exit, so
+        // we don't add them to _disposables.
+        _manager = Services.GetRequiredService<ReceiverManager>();
 
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Matches siblings by host friendly name (the
         // OS hostname recorded in each device's host slot at pairing time).
-        _switcher = new SwitcherService(_manager, _loggerFactory.CreateLogger<SwitcherService>());
-        _disposables.Add(_switcher);
+        _switcher = Services.GetRequiredService<SwitcherService>();
 
         // UDP topology — LAN broadcast of receiver state + cross-machine
         // correlator. Opt-in via Settings → Network. Live-toggle: enable /
@@ -221,15 +223,16 @@ public partial class App : Application
         // app restart needed.
         ApplyTopologySettings();
 
-        // Auto-enrich devices on link-up (feature discovery, name, battery, host bindings).
-        // No on-disk persistence — bindings are re-read on every link-up since the
-        // host name we match on is provided fresh by the device each time.
-        _disposables.Add(new DeviceEnricher(_manager, _loggerFactory.CreateLogger<DeviceEnricher>()));
+        // Auto-enrich devices on link-up (feature discovery, name, battery,
+        // host bindings). Resolve once to bind the manager subscription.
+        // No on-disk persistence — bindings are re-read on every link-up
+        // since the host name we match on is provided fresh by the device.
+        _ = Services.GetRequiredService<DeviceEnricher>();
 
         // Update check scaffold — fires once at startup when auto-check is on.
         // Real cast endpoint lives behind UpdateService.CheckAsync (currently
         // a no-op stub that only stamps LastUpdateCheckUtc).
-        _updates = new UpdateService(_settings, _loggerFactory.CreateLogger<UpdateService>());
+        _updates = Services.GetRequiredService<UpdateService>();
         if (_settings.AutoCheckForUpdates)
             _ = _updates.CheckAsync();
 
@@ -297,7 +300,7 @@ public partial class App : Application
         // sync disabled — AppHealthService treats null transports as
         // "not monitored" (not an alertable condition).
         if (_permissions is null || _manager is null) return;
-        _disposables.Add(_permissions);
+        // _permissions is container-owned; do NOT add to _disposables here.
 
         _health = new BoltMate.App.Health.AppHealthService(
             _permissions,
