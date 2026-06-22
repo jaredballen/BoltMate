@@ -4,7 +4,6 @@ using System;
 using System.IO;
 using BoltMate.App.Composition;
 using BoltMate.Core;
-using BoltMate.Hid.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BoltMate.App;
@@ -49,16 +48,18 @@ class Program
         // Container disposal on app exit handles the IDisposable teardown
         // for every registered service (replaces what was previously
         // a manual CompositeDisposable in App).
+        //
+        // NOTE: IReceiverTransport is intentionally a factory inside the
+        // registration — it materialises only when ReceiverManager is
+        // resolved (which only happens after the welcome wizard completes).
+        // Eagerly constructing the IOKit transport here would fire the
+        // Input Monitoring TCC prompt before the user sees the primer.
         var loggerFactory = AppLoggerSetup.Create();
         var settings = AppSettings.Load();
         settings.Topology.Enabled = true;
-        IReceiverTransport transport =
-            OperatingSystem.IsMacOS()   ? new BoltMate.Hid.IOKit.IOKitReceiverTransport(loggerFactory) :
-            OperatingSystem.IsWindows() ? new BoltMate.Hid.Win.WinReceiverTransport(loggerFactory) :
-                                          new BoltMate.Hid.HidApi.HidApiReceiverTransport(loggerFactory);
 
         var services = new ServiceCollection()
-            .AddBoltMateCore(loggerFactory, settings, transport);
+            .AddBoltMateCore(loggerFactory, settings);
         App.Services = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateOnBuild = true });
 

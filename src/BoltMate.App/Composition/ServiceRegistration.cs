@@ -1,3 +1,4 @@
+using System;
 using BoltMate.App.Permissions;
 using BoltMate.App.Updates;
 using BoltMate.Core;
@@ -37,13 +38,27 @@ public static class ServiceRegistration
     public static IServiceCollection AddBoltMateCore(
         this IServiceCollection services,
         ILoggerFactory loggerFactory,
-        AppSettings settings,
-        IReceiverTransport transport)
+        AppSettings settings)
     {
         services.AddSingleton(loggerFactory);
         services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
         services.AddSingleton(settings);
-        services.AddSingleton(transport);
+
+        // IReceiverTransport is registered as a FACTORY (not a pre-built
+        // instance) so the OS-specific HID handle doesn't open until the
+        // first resolve. On macOS the IOKit transport's constructor calls
+        // IOHIDManagerOpen — which triggers the Input Monitoring TCC prompt.
+        // We want that prompt to fire ONLY after the welcome wizard has
+        // primed the user via the HID primer page, so the first resolve
+        // must happen inside App.ContinueBootstrap (which only runs after
+        // wizard completion). Don't resolve this from Program.Main.
+        services.AddSingleton<IReceiverTransport>(sp =>
+        {
+            var lf = sp.GetRequiredService<ILoggerFactory>();
+            if (OperatingSystem.IsMacOS())   return new BoltMate.Hid.IOKit.IOKitReceiverTransport(lf);
+            if (OperatingSystem.IsWindows()) return new BoltMate.Hid.Win.WinReceiverTransport(lf);
+            return new BoltMate.Hid.HidApi.HidApiReceiverTransport(lf);
+        });
 
         services.AddSingleton<IPermissionsService, PermissionsService>();
 
