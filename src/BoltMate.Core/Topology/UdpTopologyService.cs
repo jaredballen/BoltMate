@@ -598,8 +598,11 @@ public sealed class UdpTopologyService : IDisposable
 
     private static string SafeHostname()
     {
-        try { return Dns.GetHostName(); }
-        catch { return "unknown"; }
+        // Broadcast the friendly form Logi+ would have stored on devices —
+        // ComputerName on macOS, MachineName on Windows. Peers correlate this
+        // against their device HostBindings, so a DNS-form mismatch would
+        // silently drop the announcement.
+        return LocalHostIdentity.Canonical;
     }
 }
 

@@ -422,7 +422,7 @@ public partial class App : Application
 
         _correlator = new TopologyCorrelator(_manager, _switcher,
             _topology.Announcements,
-            System.Net.Dns.GetHostName(),
+            BoltMate.Core.Topology.LocalHostIdentity.Names,
             _loggerFactory.CreateLogger<TopologyCorrelator>());
         _disposables.Add(_correlator);
 

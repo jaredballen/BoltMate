@@ -35,7 +35,7 @@ public class TopologyCorrelatorTests
             Manager = new ReceiverManager(Transport, autoStart: false);
             Switcher = new SwitcherService(Manager);
             _sub = Switcher.FanOuts.Subscribe(ev => FanOuts.Add(ev));
-            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements, localHost);
+            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements, new[] { localHost });
             _filteredSub = Correlator.FilteredAnnouncements.Subscribe(a => Filtered.Add(a));
         }
 
@@ -103,7 +103,7 @@ public class TopologyCorrelatorTests
             },
         };
 
-        var pruned = TopologyCorrelator.Prune(source, LocalHost);
+        var pruned = TopologyCorrelator.Prune(source, new[] { LocalHost });
 
         Assert.NotNull(pruned);
         var receiver = Assert.Single(pruned!.Receivers);
@@ -132,7 +132,7 @@ public class TopologyCorrelatorTests
             },
         };
 
-        var pruned = TopologyCorrelator.Prune(source, LocalHost);
+        var pruned = TopologyCorrelator.Prune(source, new[] { LocalHost });
 
         Assert.NotNull(pruned);
         var receiver = Assert.Single(pruned!.Receivers);
@@ -154,7 +154,7 @@ public class TopologyCorrelatorTests
             },
         };
 
-        Assert.Null(TopologyCorrelator.Prune(source, LocalHost));
+        Assert.Null(TopologyCorrelator.Prune(source, new[] { LocalHost }));
     }
 
     [Fact]
@@ -271,13 +271,18 @@ public class TopologyCorrelatorTests
     }
 
     [Theory]
-    [InlineData("Jareds-M4-MBP", "Jareds-M4-MBP.local", true)]
-    [InlineData("Jareds-M4-MBP.allen.family", "jareds-m4-mbp", true)]
     [InlineData("Jareds-M4-MBP", "Jareds-M4-MBP", true)]
+    [InlineData("Jareds-M4-MBP", "jareds-m4-mbp", true)]
+    [InlineData(" Jareds-M4-MBP ", "Jareds-M4-MBP", true)]
+    [InlineData("Jared's M4 MacBook Pro", "Jared's M4 MacBook Pro", true)]
+    // Domain stripping removed — DNS form vs friendly form must NOT collide;
+    // the multi-alias LocalHostIdentity covers the local-machine case.
+    [InlineData("Jareds-M4-MBP.allen.family", "Jareds-M4-MBP", false)]
+    [InlineData("Jareds-M4-MBP", "Jareds-M4-MBP.local", false)]
     [InlineData("Jareds-M4-MBP", "Other-Host", false)]
     [InlineData("", "Other-Host", false)]
     [InlineData("Jareds-M4-MBP", null, false)]
-    public void HostNameMatches_handles_suffixes_and_casing(string? name1, string? name2, bool expected)
+    public void HostNameMatches_is_case_insensitive_exact_compare(string? name1, string? name2, bool expected)
     {
         var result = HostNameHelper.HostNameMatches(name1, name2);
         Assert.Equal(expected, result);

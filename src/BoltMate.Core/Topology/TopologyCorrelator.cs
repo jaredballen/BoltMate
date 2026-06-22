@@ -34,7 +34,7 @@ public sealed class TopologyCorrelator : IDisposable
     private readonly ReceiverManager _manager;
     private readonly SwitcherService _switcher;
     private readonly IObservable<ReceiverAnnouncement> _announcements;
-    private readonly string _localHostName;
+    private readonly IReadOnlyList<string> _localHostNames;
     private readonly ILogger<TopologyCorrelator> _logger;
     private readonly CompositeDisposable _disposables = new();
     private readonly System.Reactive.Subjects.Subject<ReceiverAnnouncement> _filtered = new();
@@ -55,13 +55,13 @@ public sealed class TopologyCorrelator : IDisposable
         ReceiverManager manager,
         SwitcherService switcher,
         IObservable<ReceiverAnnouncement> announcements,
-        string localHostName,
+        IReadOnlyList<string> localHostNames,
         ILogger<TopologyCorrelator>? logger = null)
     {
         _manager = manager;
         _switcher = switcher;
         _announcements = announcements;
-        _localHostName = localHostName;
+        _localHostNames = localHostNames is { Count: > 0 } ? localHostNames : new[] { "unknown" };
         _logger = logger ?? NullLogger<TopologyCorrelator>.Instance;
 
         _disposables.Add(_announcements.Subscribe(OnAnnouncement));
@@ -82,12 +82,24 @@ public sealed class TopologyCorrelator : IDisposable
             announcement.Hostname, announcement.Seq, announcement.Receivers.Count,
             announcement.LastSwitchEvent is null ? "(none)" : $"{announcement.LastSwitchEvent.DeviceSerial ?? "?"}->{announcement.LastSwitchEvent.TargetHostName}");
 
-        var pruned = Prune(announcement, _localHostName);
+        var pruned = Prune(announcement, _localHostNames);
         if (pruned is null)
         {
-            _logger.LogDebug("Topology: announcement from {Machine} pruned to empty — dropping", announcement.Hostname);
+            var preDump = string.Join("; ", announcement.Receivers.SelectMany(r => r.Devices).Select(d =>
+                $"slot{d.Slot} wpid={d.WpidHex} serial={d.Serial ?? "(null)"} linkUp={d.LinkUp} bindings=[" +
+                string.Join(",", d.SlotMap.Select(s => $"h{s.HostIndex}:paired={s.Paired}|name='{s.HostName ?? "(null)"}'")) + "]"));
+            _logger.LogInformation(
+                "Topology: announcement from {Machine} pruned to EMPTY (localHosts=[{Local}]); pre-prune devices: [{Pre}]",
+                announcement.Hostname, string.Join(",", _localHostNames), preDump);
             return;
         }
+
+        var prunedDump = string.Join("; ", pruned.Receivers.SelectMany(r => r.Devices).Select(d =>
+            $"slot{d.Slot} wpid={d.WpidHex} serial={d.Serial ?? "(null)"} linkUp={d.LinkUp} bindings=[" +
+            string.Join(",", d.SlotMap.Select(s => $"h{s.HostIndex}:paired={s.Paired}|name='{s.HostName ?? "(null)"}'")) + "]"));
+        _logger.LogInformation(
+            "Topology: announcement from {Machine} POST-PRUNE devices: [{Dump}]",
+            announcement.Hostname, prunedDump);
 
         _filtered.OnNext(pruned);
 
@@ -98,7 +110,7 @@ public sealed class TopologyCorrelator : IDisposable
         if (ev is not null)
         {
             if (string.IsNullOrWhiteSpace(ev.TargetHostName)) return;
-            if (HostNameHelper.HostNameMatches(ev.TargetHostName, _localHostName))
+            if (LocalHostNameMatches(ev.TargetHostName))
             {
                 _logger.LogDebug("Topology: switch event targets us ({Target}) — no fan-out needed", ev.TargetHostName);
                 return;
@@ -131,13 +143,32 @@ public sealed class TopologyCorrelator : IDisposable
     private void CheckRemoteReappearance(ReceiverAnnouncement pruned)
     {
         var now = DateTimeOffset.UtcNow;
+        var pendingDump = string.Join(",", _pendingLost.Select(kv => $"0x{kv.Key:X4}@{(now-kv.Value).TotalSeconds:F1}s"));
+        _logger.LogInformation(
+            "Topology: CheckRemoteReappearance from {Machine} — pendingLost=[{Pending}], scanning {DevCount} pruned device(s)",
+            pruned.Hostname, pendingDump, pruned.Receivers.Sum(r => r.Devices.Count));
         foreach (var receiver in pruned.Receivers)
         {
             foreach (var device in receiver.Devices)
             {
-                if (!device.LinkUp) continue;
-                if (string.IsNullOrEmpty(device.WpidHex)) continue;
-                if (!ushort.TryParse(device.WpidHex, System.Globalization.NumberStyles.HexNumber, null, out var wpid)) continue;
+                if (!device.LinkUp)
+                {
+                    _logger.LogInformation("Reappearance scan: skip slot{Slot} wpid={Wpid} — LinkUp=false", device.Slot, device.WpidHex);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(device.WpidHex))
+                {
+                    _logger.LogInformation("Reappearance scan: skip slot{Slot} — WpidHex empty", device.Slot);
+                    continue;
+                }
+                if (!ushort.TryParse(device.WpidHex, System.Globalization.NumberStyles.HexNumber, null, out var wpid))
+                {
+                    _logger.LogInformation("Reappearance scan: skip slot{Slot} wpid={Wpid} — unparseable", device.Slot, device.WpidHex);
+                    continue;
+                }
+
+                _logger.LogInformation("Reappearance scan: slot{Slot} wpid=0x{Wpid:X4} pending={Pending}",
+                    device.Slot, wpid, _pendingLost.ContainsKey(wpid));
 
                 if (_pendingLost.TryGetValue(wpid, out var lostAt))
                 {
@@ -175,12 +206,14 @@ public sealed class TopologyCorrelator : IDisposable
 
     /// <summary>
     /// Returns the announcement with devices pruned to those whose slot map
-    /// references <paramref name="localHostName"/>, receivers pruned to those
-    /// with surviving devices, and null if nothing survives.
+    /// references ANY of <paramref name="localHostNames"/>, receivers pruned
+    /// to those with surviving devices, and null if nothing survives. The
+    /// alias list covers the multiple identities a single machine can be
+    /// known by (e.g. macOS friendly name + BSD short name).
     /// </summary>
-    public static ReceiverAnnouncement? Prune(ReceiverAnnouncement source, string localHostName)
+    public static ReceiverAnnouncement? Prune(ReceiverAnnouncement source, IReadOnlyList<string> localHostNames)
     {
-        if (string.IsNullOrWhiteSpace(localHostName)) return null;
+        if (localHostNames is null || localHostNames.Count == 0) return null;
 
         var prunedReceivers = new List<ReceiverAnnouncementEntry>();
         foreach (var receiver in source.Receivers)
@@ -188,7 +221,7 @@ public sealed class TopologyCorrelator : IDisposable
             var keptDevices = new List<DeviceEntry>();
             foreach (var device in receiver.Devices)
             {
-                if (!ReferencesHost(device, localHostName)) continue;
+                if (!ReferencesHost(device, localHostNames)) continue;
                 keptDevices.Add(device);
             }
             if (keptDevices.Count == 0) continue;
@@ -214,15 +247,25 @@ public sealed class TopologyCorrelator : IDisposable
         };
     }
 
-    private static bool ReferencesHost(DeviceEntry device, string hostName)
+    private static bool ReferencesHost(DeviceEntry device, IReadOnlyList<string> localHostNames)
     {
         foreach (var slot in device.SlotMap)
         {
             if (!slot.Paired) continue;
             if (string.IsNullOrWhiteSpace(slot.HostName)) continue;
-            if (HostNameHelper.HostNameMatches(slot.HostName, hostName))
-                return true;
+            foreach (var local in localHostNames)
+                if (HostNameHelper.HostNameMatches(slot.HostName, local))
+                    return true;
         }
+        return false;
+    }
+
+    private bool LocalHostNameMatches(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return false;
+        foreach (var local in _localHostNames)
+            if (HostNameHelper.HostNameMatches(candidate, local))
+                return true;
         return false;
     }
 }
