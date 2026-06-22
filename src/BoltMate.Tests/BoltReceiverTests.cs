@@ -464,4 +464,82 @@ public class BoltReceiverTests
         Assert.Equal((byte?)0x09, slot.ChangeHostIndex);
         Assert.Equal((byte?)0x0B, slot.HostsInfoIndex);
     }
+
+    [Fact]
+    public void WirelessDeviceStatus_notification_routes_to_DeviceReady_when_reconfig_requested()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+
+        // Seed slot 2 with link-up and a cached 0x1D4B index (DeviceEnricher
+        // resolves this on link-up; we set it directly here so we can drive
+        // the dispatch path in isolation).
+        conn.Inject(HidPpFrame.TryParse([0x10, 0x02, 0x41, 0x10, 0x00, 0x12, 0x34])!.Value);
+        var slot = receiver.TryGetDevice(2)!;
+        slot.WirelessDeviceStatusIndex = 0x04;
+
+        var ready = new List<PairedDevice>();
+        using var sub = receiver.DeviceReady.Subscribe(ready.Add);
+
+        // Notification: long frame, slot 2, feature 0x04, fn=0 swid=0,
+        // data[1]==1 (reconfig requested) data[2]==1 (powered on).
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x02;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        bytes[5] = 0x01;
+        bytes[6] = 0x01;
+        conn.Inject(HidPpFrame.TryParse(bytes)!.Value);
+
+        var emitted = Assert.Single(ready);
+        Assert.Equal((byte)2, emitted.DeviceIndex);
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_notification_suppressed_when_data1_is_zero()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+        conn.Inject(HidPpFrame.TryParse([0x10, 0x02, 0x41, 0x10, 0x00, 0x12, 0x34])!.Value);
+        var slot = receiver.TryGetDevice(2)!;
+        slot.WirelessDeviceStatusIndex = 0x04;
+
+        var ready = new List<PairedDevice>();
+        using var sub = receiver.DeviceReady.Subscribe(ready.Add);
+
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x02;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        // data[1]==0 → device alive but NOT signalling ready
+        bytes[5] = 0x00;
+        conn.Inject(HidPpFrame.TryParse(bytes)!.Value);
+
+        Assert.Empty(ready);
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_notification_ignored_when_feature_index_not_cached()
+    {
+        var conn = new FakeReceiverConnection();
+        using var receiver = new BoltReceiver(Info(), conn);
+        conn.Inject(HidPpFrame.TryParse([0x10, 0x02, 0x41, 0x10, 0x00, 0x12, 0x34])!.Value);
+        // WirelessDeviceStatusIndex deliberately NOT set — DeviceEnricher
+        // hasn't resolved it yet (or device doesn't support 0x1D4B at all).
+
+        var ready = new List<PairedDevice>();
+        using var sub = receiver.DeviceReady.Subscribe(ready.Add);
+
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x02;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        bytes[5] = 0x01;
+        conn.Inject(HidPpFrame.TryParse(bytes)!.Value);
+
+        Assert.Empty(ready);
+    }
 }

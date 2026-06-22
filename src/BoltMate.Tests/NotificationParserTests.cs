@@ -182,4 +182,87 @@ public class NotificationParserTests
         var frame = HidPpFrame.TryParse(bytes)!.Value;
         Assert.False(BatteryStatusEvent.TryParse(frame, unifiedBatteryFeatureIndex: 0x0B, out _));
     }
+
+    [Fact]
+    public void WirelessDeviceStatus_decodes_ready_with_powered_on()
+    {
+        // Long report, slot 1, feature index 0x04 (our cached 0x1D4B idx),
+        // fn=0 swid=0 → device-initiated notification. data[1]==1 = reconfig
+        // requested (= ready). data[2]==1 = "powered on" reason.
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        bytes[4] = 0x00; // data[0] reconnection type — Solaar ignores
+        bytes[5] = 0x01; // data[1] reconfig requested
+        bytes[6] = 0x01; // data[2] powered on
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.True(WirelessDeviceStatusNotification.TryParse(frame, wirelessDeviceStatusFeatureIndex: 0x04, out var note));
+        Assert.Equal((byte)1, note.DeviceIndex);
+        Assert.True(note.ReconfigRequested);
+        Assert.True(note.PoweredOn);
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_decodes_not_ready_when_data1_zero()
+    {
+        // data[1]==0 → device is alive but NOT signalling ready-for-reads.
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        bytes[5] = 0x00;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.True(WirelessDeviceStatusNotification.TryParse(frame, wirelessDeviceStatusFeatureIndex: 0x04, out var note));
+        Assert.False(note.ReconfigRequested);
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_rejects_short_frames()
+    {
+        // Notification only fires as long-report; short-report on this
+        // feature must not parse.
+        var bytes = new byte[HidPpConstants.ShortReportLength];
+        bytes[0] = HidPpConstants.ReportIdShort;
+        bytes[1] = 0x01;
+        bytes[2] = 0x04;
+        bytes[3] = 0x00;
+        bytes[5] = 0x01;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.False(WirelessDeviceStatusNotification.TryParse(frame, wirelessDeviceStatusFeatureIndex: 0x04, out _));
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_rejects_wrong_feature_index()
+    {
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x05; // not our cached 0x1D4B idx
+        bytes[3] = 0x00;
+        bytes[5] = 0x01;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.False(WirelessDeviceStatusNotification.TryParse(frame, wirelessDeviceStatusFeatureIndex: 0x04, out _));
+    }
+
+    [Fact]
+    public void WirelessDeviceStatus_rejects_response_frames_with_nonzero_swid()
+    {
+        // Function 1 + our swid would be a response frame, not a notification.
+        var bytes = new byte[HidPpConstants.LongReportLength];
+        bytes[0] = HidPpConstants.ReportIdLong;
+        bytes[1] = 0x01;
+        bytes[2] = 0x04;
+        bytes[3] = (byte)((1 << 4) | HidPpConstants.OurSwId);
+        bytes[5] = 0x01;
+
+        var frame = HidPpFrame.TryParse(bytes)!.Value;
+        Assert.False(WirelessDeviceStatusNotification.TryParse(frame, wirelessDeviceStatusFeatureIndex: 0x04, out _));
+    }
 }
