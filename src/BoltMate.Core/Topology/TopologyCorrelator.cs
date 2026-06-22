@@ -51,18 +51,22 @@ public sealed class TopologyCorrelator : IDisposable
     public IObservable<ReceiverAnnouncement> FilteredAnnouncements =>
         System.Reactive.Linq.Observable.AsObservable(_filtered);
 
+    private readonly TimeProvider _time;
+
     public TopologyCorrelator(
         ReceiverManager manager,
         SwitcherService switcher,
         IObservable<ReceiverAnnouncement> announcements,
         IReadOnlyList<string> localHostNames,
-        ILogger<TopologyCorrelator>? logger = null)
+        ILogger<TopologyCorrelator>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         _manager = manager;
         _switcher = switcher;
         _announcements = announcements;
         _localHostNames = localHostNames is { Count: > 0 } ? localHostNames : new[] { "unknown" };
         _logger = logger ?? NullLogger<TopologyCorrelator>.Instance;
+        _time = timeProvider ?? TimeProvider.System;
 
         _disposables.Add(_announcements.Subscribe(OnAnnouncement));
         _disposables.Add(_filtered);
@@ -137,12 +141,12 @@ public sealed class TopologyCorrelator : IDisposable
         var wpid = device.Wpid;
         if (wpid == 0) return;
         _logger.LogInformation("Topology: local device link-lost observed for wpid 0x{Wpid:X4}", wpid);
-        _pendingLost[wpid] = DateTimeOffset.UtcNow;
+        _pendingLost[wpid] = _time.GetUtcNow();
     }
 
     private void CheckRemoteReappearance(ReceiverAnnouncement pruned)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _time.GetUtcNow();
         var pendingDump = string.Join(",", _pendingLost.Select(kv => $"0x{kv.Key:X4}@{(now-kv.Value).TotalSeconds:F1}s"));
         _logger.LogInformation(
             "Topology: CheckRemoteReappearance from {Machine} — pendingLost=[{Pending}], scanning {DevCount} pruned device(s)",

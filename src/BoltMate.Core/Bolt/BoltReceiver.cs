@@ -571,7 +571,7 @@ public sealed class BoltReceiver : IDisposable
         // Divert every divertable control for the duration.
         foreach (var c in divertable)
         {
-            try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Diverted, ct); }
+            try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Diverted, ct).ConfigureAwait(false); }
             catch { /* best effort */ }
         }
 
@@ -600,7 +600,7 @@ public sealed class BoltReceiver : IDisposable
             foreach (var c in divertable)
             {
                 if (originalDivert.Contains(c.ControlId)) continue;
-                try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Normal, CancellationToken.None); }
+                try { await ReprogControls.SetCidReportingAsync(deviceIndex, reprogIndex, c.ControlId, ReprogControlsService.DivertModes.Normal, CancellationToken.None).ConfigureAwait(false); }
                 catch { /* best effort */ }
             }
         }

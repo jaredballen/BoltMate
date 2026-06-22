@@ -27,6 +27,8 @@ public class TopologyCorrelatorTests
         public Subject<ReceiverAnnouncement> Announcements { get; } = new();
         public TopologyCorrelator Correlator { get; }
         public List<ReceiverAnnouncement> Filtered { get; } = new();
+        public Microsoft.Extensions.Time.Testing.FakeTimeProvider Time { get; } =
+            new(DateTimeOffset.Parse("2026-06-22T20:00:00Z"));
         private readonly IDisposable _sub;
         private readonly IDisposable _filteredSub;
 
@@ -35,7 +37,8 @@ public class TopologyCorrelatorTests
             Manager = new ReceiverManager(Transport, autoStart: false);
             Switcher = new SwitcherService(Manager);
             _sub = Switcher.FanOuts.Subscribe(ev => FanOuts.Add(ev));
-            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements, new[] { localHost });
+            Correlator = new TopologyCorrelator(Manager, Switcher, Announcements,
+                new[] { localHost }, timeProvider: Time);
             _filteredSub = Correlator.FilteredAnnouncements.Subscribe(a => Filtered.Add(a));
         }
 
@@ -351,6 +354,56 @@ public class TopologyCorrelatorTests
         Assert.Equal((byte)2, ev.Target.DeviceIndex);
         Assert.Equal((byte)1, ev.TargetHost);
         Assert.Equal(FanOutSource.RemoteTopology, ev.Source);
+    }
+
+    [Fact]
+    public void Reappearance_after_window_expires_does_not_trigger_fan_out()
+    {
+        // Time-mocked: link-lost stashes wpid at T0. Advance past the 10s
+        // reappearance window. Remote announcement of the same wpid then
+        // arrives → must NOT fan out (stale entry should have been purged).
+        using var f = new Fixture();
+        var r = f.AddReceiver();
+        f.SeedDevice(r, 2, wpid: 0xBBBB, (0, LocalHost), (1, PeerHost));
+        f.SeedDevice(r, 1, wpid: 0xAAAA, (0, LocalHost), (1, PeerHost));
+
+        // Inject local link-lost for mouse 0xAAAA at T0.
+        var conn = f.Transport.Sessions.Single().LastConnection;
+        conn.Inject(HidPpFrame.TryParse([0x10, 0x01, 0x41, 0x10, 0x40, 0xAA, 0xAA])!.Value);
+
+        // Advance past 10s reappearance window.
+        f.Time.Advance(TimeSpan.FromSeconds(11));
+
+        // Send the late remote announcement.
+        var late = new ReceiverAnnouncement
+        {
+            Hostname = PeerHost,
+            Receivers =
+            {
+                new ReceiverAnnouncementEntry
+                {
+                    Serial = "REM-1",
+                    Devices =
+                    {
+                        new DeviceEntry
+                        {
+                            Slot = 1,
+                            WpidHex = "AAAA",
+                            Serial = "M-1",
+                            LinkUp = true,
+                            SlotMap =
+                            {
+                                new DeviceSlotEntry { HostIndex = 0, Paired = true, HostName = LocalHost },
+                                new DeviceSlotEntry { HostIndex = 1, Paired = true, HostName = PeerHost },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+        f.Announcements.OnNext(late);
+
+        Assert.Empty(f.FanOuts);
     }
 
     [Fact]
