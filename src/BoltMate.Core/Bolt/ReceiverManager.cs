@@ -47,6 +47,7 @@ public sealed class ReceiverManager : IDisposable
         bool autoStart = true,
         ILoggerFactory? loggerFactory = null)
     {
+        ArgumentNullException.ThrowIfNull(transport);
         _transport = transport;
         var lf = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = lf.CreateLogger<ReceiverManager>();

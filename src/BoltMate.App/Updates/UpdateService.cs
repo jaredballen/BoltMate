@@ -20,6 +20,8 @@ public sealed class UpdateService
 
     public UpdateService(AppSettings settings, ILogger<UpdateService> logger)
     {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(logger);
         _settings = settings;
         _logger = logger;
     }

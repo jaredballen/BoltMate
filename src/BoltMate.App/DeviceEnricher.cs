@@ -31,6 +31,8 @@ public sealed class DeviceEnricher : IDisposable
 
     public DeviceEnricher(ReceiverManager manager, ILogger<DeviceEnricher> logger)
     {
+        ArgumentNullException.ThrowIfNull(manager);
+        ArgumentNullException.ThrowIfNull(logger);
         _manager = manager;
         _logger = logger;
 

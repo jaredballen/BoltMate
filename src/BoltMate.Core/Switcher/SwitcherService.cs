@@ -54,6 +54,7 @@ public sealed class SwitcherService : IDisposable
 
     public SwitcherService(ReceiverManager manager, ILogger<SwitcherService>? logger = null)
     {
+        ArgumentNullException.ThrowIfNull(manager);
         _manager = manager;
         _logger = logger ?? NullLogger<SwitcherService>.Instance;
 
@@ -164,20 +165,33 @@ public sealed class SwitcherService : IDisposable
                     var rcvr = receiver; var dev = device; var tgt = slot;
                     _ = Task.Run(async () =>
                     {
-                        for (var attempt = 1; attempt <= 2; attempt++)
+                        try
                         {
-                            await Task.Delay(1200).ConfigureAwait(false);
-                            if (!dev.LinkUp) return; // success — device disconnected
-                            _logger.LogWarning(
-                                "CHANGE_HOST appears to have been ignored — device {Slot} ({Name}) still online {Ms}ms after write; retry #{N}",
-                                dev.DeviceIndex, dev.DisplayName, 1200 * attempt, attempt);
-                            try { rcvr.TrySwitchHost(dev.DeviceIndex, tgt); } catch { }
+                            for (var attempt = 1; attempt <= 2; attempt++)
+                            {
+                                await Task.Delay(1200).ConfigureAwait(false);
+                                if (!dev.LinkUp) return; // success — device disconnected
+                                _logger.LogWarning(
+                                    "CHANGE_HOST appears to have been ignored — device {Slot} ({Name}) still online {Ms}ms after write; retry #{N}",
+                                    dev.DeviceIndex, dev.DisplayName, 1200 * attempt, attempt);
+                                try { rcvr.TrySwitchHost(dev.DeviceIndex, tgt); } catch { }
+                            }
+                            if (dev.LinkUp)
+                            {
+                                _logger.LogWarning(
+                                    "CHANGE_HOST gave up — device {Slot} ({Name}) still online after 3 attempts. Likely firmware-rejected (slot {Tgt} unpaired or unreachable).",
+                                    dev.DeviceIndex, dev.DisplayName, tgt);
+                            }
                         }
-                        if (dev.LinkUp)
+                        catch (Exception ex)
                         {
-                            _logger.LogWarning(
-                                "CHANGE_HOST gave up — device {Slot} ({Name}) still online after 3 attempts. Likely firmware-rejected (slot {Tgt} unpaired or unreachable).",
-                                dev.DeviceIndex, dev.DisplayName, tgt);
+                            // Outer guard — without this, any unobserved
+                            // exception in the retry loop disappears into
+                            // TaskScheduler.UnobservedTaskException and we
+                            // lose the diagnostic.
+                            _logger.LogError(ex,
+                                "Verify-and-retry crashed for slot {Slot} ({Name})",
+                                dev.DeviceIndex, dev.DisplayName);
                         }
                     });
                 }
