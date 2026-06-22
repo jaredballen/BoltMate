@@ -10,6 +10,7 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using BoltMate.App.Permissions;
+using BoltMate.App.ViewModels;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
@@ -74,6 +75,10 @@ public partial class WelcomeWindow : Window
     private readonly CompositeDisposable _disposables = new();
     private readonly CancellationTokenSource _grantCts = new();
     private IDisposable? _currentPageSubscription;
+    private readonly WelcomeViewModel _vm = new();
+
+    /// <summary>VM exposed so click-handlers can drive bindable state.</summary>
+    public WelcomeViewModel ViewModel => _vm;
 
     // Flips to true on the happy path (Done / Open BoltMate button). The
     // Closing handler uses this to distinguish "user finished" from "user
@@ -96,6 +101,7 @@ public partial class WelcomeWindow : Window
         _permissions = permissions;
         _isFirstRun = isFirstRun;
         _log = log ?? NullLogger.Instance;
+        DataContext = _vm;
         InitializeComponent();
 
         ShowPage("PageWelcome");
@@ -218,14 +224,9 @@ public partial class WelcomeWindow : Window
 
     private void ShowPage(string controlName)
     {
-        // Hide every page, then show the named one.
-        foreach (var pageName in AllPageNames)
-        {
-            var g = this.FindControl<Grid>(pageName);
-            if (g is not null) g.IsVisible = false;
-        }
-        var target = this.FindControl<Grid>(controlName);
-        if (target is not null) target.IsVisible = true;
+        // Page swap is now VM-driven: setting CurrentPage flips the per-page
+        // IsVisible bindings atomically in XAML.
+        _vm.CurrentPage = controlName;
 
         // Resubscribe the page-scoped permission watcher. While a primer or
         // refusal page is visible we listen to the relevant IPermission and:
@@ -450,8 +451,7 @@ public partial class WelcomeWindow : Window
     /// </summary>
     private async Task GrantOrRefuseAsync(IPermission permission, string? refusalPage, string primerButton)
     {
-        var grantBtn = this.FindControl<Button>(primerButton);
-        if (grantBtn is not null) grantBtn.IsEnabled = false;
+        SetGrantButtonEnabled(primerButton, false);
 
         bool granted = false;
         try
@@ -465,14 +465,13 @@ public partial class WelcomeWindow : Window
 
         // After the await, the window may have started closing — macOS sends
         // a Quit AppleEvent after an HID grant to force a relaunch with the
-        // new entitlement. Touching FindControl / ShowPage on a closing
-        // window throws on Avalonia 12 (XPlatHandle disposed), and because
-        // this method runs as the continuation of an async void event
-        // handler, an uncaught throw aborts the process. Guard everything.
+        // new entitlement. The VM mutation below is safe even during
+        // teardown (no Avalonia handle access), but ShowPage still touches
+        // window state — guard it.
         if (_quitting || _completedSuccessfully) return;
         try
         {
-            if (grantBtn is not null) grantBtn.IsEnabled = true;
+            SetGrantButtonEnabled(primerButton, true);
             if (!granted && refusalPage is not null && CurrentPageName() != refusalPage)
             {
                 ShowPage(refusalPage);
@@ -484,58 +483,36 @@ public partial class WelcomeWindow : Window
         }
     }
 
+    private void SetGrantButtonEnabled(string primerButton, bool enabled)
+    {
+        switch (primerButton)
+        {
+            case "NetworkPrimerGrantButton":         _vm.NetworkPrimerGrantEnabled = enabled; break;
+            case "NetworkRefusalGrantButton":        _vm.NetworkRefusalGrantEnabled = enabled; break;
+            case "InputMonitoringPrimerGrantButton": _vm.InputMonitoringPrimerGrantEnabled = enabled; break;
+            case "InputMonitoringRefusalGrantButton":_vm.InputMonitoringRefusalGrantEnabled = enabled; break;
+        }
+    }
+
     // ====================================================================
     // Helpers
     // ====================================================================
 
     private void UpdateStatusLineForCurrentPage()
     {
-        var pageName = CurrentPageName();
-        switch (pageName)
-        {
-            case "PageNetworkPrimer":
-            case "PageNetworkRefusal":
-                {
-                    var line = this.FindControl<TextBlock>(
-                        pageName == "PageNetworkPrimer"
-                            ? "NetworkPrimerStatusLine"
-                            : "NetworkRefusalStatusLine");
-                    if (line is not null)
-                        line.Text = _permissions.Network.IsGranted
-                            ? "Local Network access: granted"
-                            : "Local Network access: denied";
-                    break;
-                }
-            case "PageInputMonitoringPrimer":
-            case "PageInputMonitoringRefusal":
-                {
-                    var line = this.FindControl<TextBlock>(
-                        pageName == "PageInputMonitoringPrimer"
-                            ? "InputMonitoringPrimerStatusLine"
-                            : "InputMonitoringRefusalStatusLine");
-                    if (line is not null)
-                        line.Text = _permissions.InputMonitoring.IsGranted
-                            ? "HID device access: granted"
-                            : "HID device access: denied";
-                    break;
-                }
-        }
+        _vm.NetworkStatusLine = _permissions.Network.IsGranted
+            ? "Local Network access: granted"
+            : "Local Network access: denied";
+        _vm.InputMonitoringStatusLine = _permissions.InputMonitoring.IsGranted
+            ? "HID device access: granted"
+            : "HID device access: denied";
     }
 
-    private string? CurrentPageName()
-    {
-        foreach (var pageName in AllPageNames)
-        {
-            var g = this.FindControl<Grid>(pageName);
-            if (g?.IsVisible == true) return pageName;
-        }
-        return null;
-    }
+    private string? CurrentPageName() => _vm.CurrentPage;
 
     private async Task ApplyAutostartFromToggleAsync()
     {
-        var toggle = this.FindControl<CheckBox>("WelcomeAutostartToggle");
-        var want = toggle?.IsChecked == true;
+        var want = _vm.AutostartChecked;
         if (!AppAutostart.CanRegister())
         {
             _log.LogInformation("Autostart not applicable (running from 'dotnet run' or unknown binary path)");

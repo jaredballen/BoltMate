@@ -1,7 +1,9 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:vm="using:BoltMate.App.ViewModels"
         x:Class="BoltMate.App.Welcome.WelcomeWindow"
+        x:DataType="vm:WelcomeViewModel"
         Width="560" Height="460"
         MinWidth="520" MinHeight="440"
         Title="Welcome to BoltMate"
@@ -39,6 +41,7 @@
         <!-- =========================== WELCOME ============================ -->
         <Grid x:Name="PageWelcome"
               Margin="32"
+              IsVisible="{Binding ShowWelcome}"
               RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
             <Image Grid.Row="0"
                    Source="avares://BoltMate/Assets/app-icon-1024.png"
@@ -56,9 +59,8 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="20,12,20,0" />
             <CheckBox Grid.Row="4"
-                      x:Name="WelcomeAutostartToggle"
                       Content="Launch BoltMate when I sign in"
-                      IsChecked="True"
+                      IsChecked="{Binding AutostartChecked, Mode=TwoWay}"
                       HorizontalAlignment="Center"
                       Margin="0,0,0,16" />
             <StackPanel Grid.Row="5" Orientation="Horizontal"
@@ -73,7 +75,7 @@
         <!-- =========================== NETWORK PRIMER ===================== -->
         <Grid x:Name="PageNetworkPrimer"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowNetworkPrimer}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Globe"
@@ -92,7 +94,7 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="NetworkPrimerStatusLine"
+                       Text="{Binding NetworkStatusLine}"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
@@ -100,9 +102,9 @@
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Not now" Click="OnNetworkPrimerNotNow" />
-                <Button x:Name="NetworkPrimerGrantButton"
-                        Content="Grant"
+                <Button Content="Grant"
                         Classes="accent"
+                        IsEnabled="{Binding NetworkPrimerGrantEnabled}"
                         Click="OnNetworkPrimerGrant" />
             </StackPanel>
         </Grid>
@@ -110,7 +112,7 @@
         <!-- =========================== NETWORK REFUSAL ==================== -->
         <Grid x:Name="PageNetworkRefusal"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowNetworkRefusal}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Important"
@@ -129,7 +131,7 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="NetworkRefusalStatusLine"
+                       Text="{Binding NetworkStatusLine}"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
@@ -137,9 +139,9 @@
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Quit BoltMate" Click="OnQuitApp" />
-                <Button x:Name="NetworkRefusalGrantButton"
-                        Content="Grant"
+                <Button Content="Grant"
                         Classes="accent"
+                        IsEnabled="{Binding NetworkRefusalGrantEnabled}"
                         Click="OnNetworkRefusalGrant" />
             </StackPanel>
         </Grid>
@@ -147,7 +149,7 @@
         <!-- =========================== HID PRIMER (MAC) =================== -->
         <Grid x:Name="PageInputMonitoringPrimer"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowInputMonitoringPrimer}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Keyboard"
@@ -166,7 +168,7 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="InputMonitoringPrimerStatusLine"
+                       Text="{Binding InputMonitoringStatusLine}"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
@@ -174,9 +176,9 @@
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Not now" Click="OnInputMonitoringPrimerNotNow" />
-                <Button x:Name="InputMonitoringPrimerGrantButton"
-                        Content="Grant"
+                <Button Content="Grant"
                         Classes="accent"
+                        IsEnabled="{Binding InputMonitoringPrimerGrantEnabled}"
                         Click="OnInputMonitoringPrimerGrant" />
             </StackPanel>
         </Grid>
@@ -184,7 +186,7 @@
         <!-- =========================== HID REFUSAL (MAC) ================== -->
         <Grid x:Name="PageInputMonitoringRefusal"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowInputMonitoringRefusal}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Important"
@@ -203,7 +205,7 @@
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
             <TextBlock Grid.Row="3"
-                       x:Name="InputMonitoringRefusalStatusLine"
+                       Text="{Binding InputMonitoringStatusLine}"
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        FontSize="12"
                        TextAlignment="Center" TextWrapping="Wrap"
@@ -211,9 +213,9 @@
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Quit BoltMate" Click="OnQuitApp" />
-                <Button x:Name="InputMonitoringRefusalGrantButton"
-                        Content="Grant"
+                <Button Content="Grant"
                         Classes="accent"
+                        IsEnabled="{Binding InputMonitoringRefusalGrantEnabled}"
                         Click="OnInputMonitoringRefusalGrant" />
             </StackPanel>
         </Grid>
@@ -221,7 +223,7 @@
         <!-- =========================== DONE =============================== -->
         <Grid x:Name="PageDone"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowDone}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Accept"
@@ -251,7 +253,7 @@
         <!-- =========================== LINUX FAST-PATH ==================== -->
         <Grid x:Name="PageLinux"
               Margin="32"
-              IsVisible="False"
+              IsVisible="{Binding ShowLinux}"
               RowDefinitions="Auto,Auto,Auto,*,Auto">
             <Image Grid.Row="0"
                    Source="avares://BoltMate/Assets/app-icon-1024.png"
