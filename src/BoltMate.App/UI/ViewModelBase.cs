@@ -1,6 +1,6 @@
 using ReactiveUI;
 
-namespace BoltMate.App.ViewModels;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// Common base for all view-models in the app. Inherits ReactiveUI's

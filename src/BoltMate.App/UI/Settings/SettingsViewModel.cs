@@ -14,7 +14,7 @@ using BoltMate.Core.Permissions;
 using BoltMate.Core.Topology;
 using ReactiveUI;
 
-namespace BoltMate.App.ViewModels;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// View-model for <see cref="SettingsWindow"/>. Owns all state + behaviour

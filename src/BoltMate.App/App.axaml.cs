@@ -9,7 +9,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using DynamicData;
 using BoltMate.App.Services;
-using BoltMate.App.Welcome;
+using BoltMate.App.UI;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;

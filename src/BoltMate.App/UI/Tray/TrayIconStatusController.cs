@@ -14,7 +14,7 @@ using BoltMate.Core.Topology;
 using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 
-namespace BoltMate.App;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// Owns the tray icon image and updates it based on cross-machine peer

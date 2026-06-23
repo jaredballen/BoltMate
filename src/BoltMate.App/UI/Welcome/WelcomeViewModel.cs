@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ReactiveUI;
 
-namespace BoltMate.App.ViewModels;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// View-model for the first-run welcome / fix-permissions wizard.

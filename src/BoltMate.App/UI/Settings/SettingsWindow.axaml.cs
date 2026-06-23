@@ -6,7 +6,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.ReactiveUI;
 using FluentAvalonia.UI.Controls;
 using BoltMate.App.Services;
-using BoltMate.App.ViewModels;
+using BoltMate.App.UI;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;
@@ -14,7 +14,7 @@ using BoltMate.Core.Topology;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.App;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// Settings shell: Status / About / License (side tabs via FluentAvalonia

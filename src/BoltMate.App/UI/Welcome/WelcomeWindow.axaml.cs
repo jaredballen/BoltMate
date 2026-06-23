@@ -4,13 +4,13 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using BoltMate.App.Services;
-using BoltMate.App.ViewModels;
+using BoltMate.App.UI;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.App.Welcome;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// First-run welcome wizard + on-demand "Fix permissions" entry. All state

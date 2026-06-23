@@ -10,7 +10,7 @@ using BoltMate.Core.Topology;
 using BoltMate.Core.Permissions;
 using Microsoft.Extensions.Logging;
 
-namespace BoltMate.App;
+namespace BoltMate.App.UI;
 
 /// <summary>
 /// Tray menu mirroring the Settings tabs: Status, About, License, plus Quit.
