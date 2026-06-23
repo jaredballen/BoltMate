@@ -155,5 +155,93 @@
     <Message Importance="high" Text="Built macOS app bundle: $(_AppBundlePath)" />
   </Target>
 
+  <!--
+    ===============================================================
+      Windows installer build
+    ===============================================================
+
+    Runs after `dotnet publish` against win-x64 when the BuildInstaller
+    property is set (typical use: `dotnet publish ... -p:BuildInstaller=true`
+    on a tagged release build, NOT on every CI publish). Produces a
+    BoltMate-Setup-<version>.exe inside <repo>/artifacts/win/ on the
+    Mac dev box.
+
+    Pipeline (cross-machine because Inno Setup is Windows-only):
+      1. Push the win-x64 publish tree + the .iss script to the Win VM
+         under C:\boltmate-installer-build\src\ via rsync over SSH.
+      2. SSH-invoke ISCC.exe to compile the installer into
+         C:\boltmate-installer-build\out\.
+      3. Rsync the resulting .exe back to <repo>/artifacts/win/.
+
+    SSH host is the standard `boltmate-win` config from ~/.ssh/config —
+    same one we use for ad-hoc Win deploys. If you've not set that up
+    yet, see project_boltmate_win_vm.md memory.
+
+    Disabled for routine dev publishes — only fires when:
+      • $(BuildInstaller) == true (opt-in)
+      • $(RuntimeIdentifier) == win-x64
+      • Building the App project (skips Hid.* / Core / etc.)
+  -->
+  <PropertyGroup>
+    <BuildInstaller Condition=" '$(BuildInstaller)' == '' ">false</BuildInstaller>
+    <_InstallerSshHost>boltmate-win</_InstallerSshHost>
+    <_InstallerVmStaging>/c/boltmate-installer-build</_InstallerVmStaging>
+    <_InstallerLocalArtifacts>$(MSBuildThisFileDirectory)..\artifacts\win</_InstallerLocalArtifacts>
+    <_InstallerIssFile>$(MSBuildThisFileDirectory)installer\BoltMate.iss</_InstallerIssFile>
+    <!--
+      ISCC.exe is installed by `winget install JRSoftware.InnoSetup` into
+      the standard Program Files (x86) location. SSH command quoting is
+      finicky so we build the path here once and reference it in the Exec.
+    -->
+    <!--
+      winget JRSoftware.InnoSetup installs per-user under
+      %LOCALAPPDATA%\Programs\Inno Setup 6\. The all-users location
+      (C:\Program Files (x86)\Inno Setup 6\) only appears with the
+      legacy .exe installer or a machine-wide MSI deploy.
+    -->
+    <_InstallerIsccPath>C:\Users\jallen\AppData\Local\Programs\Inno Setup 6\ISCC.exe</_InstallerIsccPath>
+  </PropertyGroup>
+
+  <Target Name="BuildWindowsInstaller"
+          AfterTargets="Publish"
+          Condition=" '$(BuildInstaller)' == 'true' and '$(RuntimeIdentifier)' == 'win-x64' and '$(AssemblyName)' == 'BoltMate' ">
+
+    <PropertyGroup>
+      <_ResolvedVersion Condition=" '$(Version)' != '' ">$(Version)</_ResolvedVersion>
+      <_ResolvedVersion Condition=" '$(_ResolvedVersion)' == '' ">0.0.0-dev</_ResolvedVersion>
+    </PropertyGroup>
+
+    <Message Importance="high" Text="BuildWindowsInstaller: version=$(_ResolvedVersion), source=$(PublishDir)" />
+
+    <MakeDir Directories="$(_InstallerLocalArtifacts)" />
+
+    <!--
+      Stage publish output + the .iss script onto the Win VM. Two rsync
+      legs because the publish tree and the script live in different
+      source dirs; combining them under one staging path on the VM
+      keeps ISCC's source/output dirs simple. Each leg uses delete-mode
+      so old leftovers can't sneak into the next installer.
+    -->
+    <Exec Command="ssh $(_InstallerSshHost) &quot;New-Item -ItemType Directory -Force -Path 'C:\boltmate-installer-build\src','C:\boltmate-installer-build\out' | Out-Null&quot;" />
+
+    <Exec Command="rsync -az --delete &quot;$(PublishDir)&quot; $(_InstallerSshHost):$(_InstallerVmStaging)/src/publish/" />
+
+    <Exec Command="rsync -az &quot;$(_InstallerIssFile)&quot; $(_InstallerSshHost):$(_InstallerVmStaging)/src/" />
+
+    <!--
+      Run ISCC on the VM. The /D defines feed the .iss script's
+      version + path placeholders. ISCC paths inside the SSH command use
+      Win-style backslashes; the staging path is /c/-style for rsync's
+      benefit but ISCC sees C:\ via the standard cygdrive-equivalent
+      translation OpenSSH-on-Windows does. The `cmd /c` shell wrapping
+      isolates the quote-escaping mess that arises when ISCC's /D
+      arguments themselves contain spaces.
+    -->
+    <Exec Command="ssh $(_InstallerSshHost) &quot;&amp; '$(_InstallerIsccPath)' '/DMyAppVersion=$(_ResolvedVersion)' '/DSourceDir=C:\boltmate-installer-build\src\publish' '/DOutputDir=C:\boltmate-installer-build\out' 'C:\boltmate-installer-build\src\BoltMate.iss'&quot;" />
+
+    <Exec Command="rsync -az --remove-source-files $(_InstallerSshHost):$(_InstallerVmStaging)/out/BoltMate-Setup-$(_ResolvedVersion).exe &quot;$(_InstallerLocalArtifacts)/&quot;" />
+
+    <Message Importance="high" Text="Built installer: $(_InstallerLocalArtifacts)/BoltMate-Setup-$(_ResolvedVersion).exe" />
+  </Target>
 
 </Project>
