@@ -27,12 +27,14 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
     // want to happen at a moment the wizard has just primed the user
     // for, not at process start.
     private readonly Func<bool> _isInputMonitoringGranted;
+    private readonly IDisposable? _grantSubscription;
     private bool _managerOpen;
     private readonly object _openLock = new();
 
     public IOKitReceiverTransport(
         ILoggerFactory? loggerFactory = null,
-        Func<bool>? isInputMonitoringGranted = null)
+        Func<bool>? isInputMonitoringGranted = null,
+        IObservable<bool>? grantChanges = null)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             throw new PlatformNotSupportedException("IOKitReceiverTransport is macOS-only.");
@@ -42,6 +44,16 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
         // No gate wired → assume granted (legacy / Cli / tests). Production
         // app wires _permissions.InputMonitoring.IsGranted at composition.
         _isInputMonitoringGranted = isInputMonitoringGranted ?? (static () => true);
+        // Mid-run revoke handler. If the user toggles Input Monitoring off
+        // in System Settings while we're running, IOHIDDeviceOpen calls
+        // start returning kIOReturnNotPermitted and existing IOHIDDeviceRefs
+        // become invalid. Close the manager so the next grant cleanly
+        // re-opens; ReceiverManager's poll will see Enumerate return empty
+        // in the meantime and dispose any standing connections.
+        _grantSubscription = grantChanges?.Subscribe(granted =>
+        {
+            if (!granted) ForceClose();
+        });
 
         _manager = IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, IOKitInterop.OptionsNone);
         if (_manager == IntPtr.Zero)
@@ -57,12 +69,22 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
 
     /// <summary>
     /// Lazy IOHIDManagerOpen — first call after the permission gate flips
-    /// open performs the real open. Subsequent calls are no-ops.
+    /// open performs the real open. Subsequent calls are no-ops. Also
+    /// detects a sticky-open state where the gate has since closed (revoke
+    /// mid-run) and closes the manager so a future grant gets a fresh open.
     /// </summary>
     private bool EnsureManagerOpen()
     {
-        if (_managerOpen) return true;
-        if (!_isInputMonitoringGranted()) return false;
+        var granted = _isInputMonitoringGranted();
+        if (_managerOpen)
+        {
+            if (granted) return true;
+            // Granted then revoked — drop the open so the OS doesn't keep
+            // feeding us reads on a stale handle.
+            ForceClose();
+            return false;
+        }
+        if (!granted) return false;
         lock (_openLock)
         {
             if (_managerOpen) return true;
@@ -74,6 +96,18 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
             _managerOpen = true;
             _logger.LogInformation("IOKit manager opened (permission granted)");
             return true;
+        }
+    }
+
+    private void ForceClose()
+    {
+        lock (_openLock)
+        {
+            if (!_managerOpen) return;
+            try { IOKitInterop.IOHIDManagerClose(_manager, IOKitInterop.OptionsNone); }
+            catch { /* best-effort */ }
+            _managerOpen = false;
+            _logger.LogInformation("IOKit manager closed (permission revoked or torn down)");
         }
     }
 
@@ -171,6 +205,7 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
 
     public void Dispose()
     {
+        _grantSubscription?.Dispose();
         if (_manager != IntPtr.Zero)
         {
             if (_managerOpen)

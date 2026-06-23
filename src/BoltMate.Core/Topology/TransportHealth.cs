@@ -17,6 +17,9 @@ public sealed record TransportHealth(
 
     public static TransportHealth PermissionDenied(string endpoint, string message = "Local Network permission denied") =>
         new(TransportState.PermissionDenied, endpoint, message, DateTimeOffset.UtcNow);
+
+    public static TransportHealth Offline(string endpoint, string message = "no usable network interface") =>
+        new(TransportState.Offline, endpoint, message, DateTimeOffset.UtcNow);
 }
 
 /// <summary>
@@ -32,6 +35,10 @@ public sealed record TransportHealth(
 ///         on macOS, Windows Defender firewall) not in place, so the
 ///         service is parked. UI surfaces a different remediation
 ///         (open Settings) vs. <c>Blocked</c> (check the network).</item>
+///   <item><c>Offline</c>: no usable network interface — NIC
+///         disabled, Wi-Fi off, or Ethernet unplugged. Service is
+///         parked the same way as PermissionDenied but with a
+///         distinct remediation (enable adapter / reconnect).</item>
 /// </list>
 /// </summary>
 public enum TransportState
@@ -40,4 +47,5 @@ public enum TransportState
     Healthy,
     Blocked,
     PermissionDenied,
+    Offline,
 }

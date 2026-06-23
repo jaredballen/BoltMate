@@ -120,12 +120,18 @@ public sealed class UdpTopologyService : IUdpTopologyService
 
     private readonly TimeProvider _time;
     private readonly IPermission? _networkPermission;
+    private readonly INetworkAvailabilityWatcher? _networkAvailability;
+    // Cached state of each gate so we can pick the right detail copy
+    // ("permission denied" vs "no NIC") when emitting parked health.
+    private bool _permGranted = true;
+    private bool _nicAvailable = true;
 
     public UdpTopologyService(
         IReceiverManager manager,
         TopologySettings settings,
         string machineId,
         IPermission? networkPermission = null,
+        INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<UdpTopologyService>? logger = null,
         TimeProvider? timeProvider = null)
     {
@@ -134,15 +140,20 @@ public sealed class UdpTopologyService : IUdpTopologyService
         _machineId = machineId;
         _hostname = SafeHostname();
         _networkPermission = networkPermission;
+        _networkAvailability = networkAvailability;
+        _permGranted = networkPermission?.IsGranted ?? true;
+        _nicAvailable = networkAvailability?.IsAvailable ?? true;
         _logger = logger ?? NullLogger<UdpTopologyService>.Instance;
         _time = timeProvider ?? TimeProvider.System;
-        var initial = networkPermission is { IsGranted: false }
-            ? TransportHealth.PermissionDenied(
-                $"{_settings.MulticastGroup}:{_settings.Port}",
-                "Local Network permission not yet granted — UDP topology parked")
-            : TransportHealth.Unknown(
-                $"{_settings.MulticastGroup}:{_settings.Port}",
-                "no broadcasts emitted yet");
+        var endpoint = $"{_settings.MulticastGroup}:{_settings.Port}";
+        var initial = (_permGranted, _nicAvailable) switch
+        {
+            (false, _) => TransportHealth.PermissionDenied(endpoint,
+                "Local Network permission not yet granted — UDP topology parked"),
+            (_, false) => TransportHealth.Offline(endpoint,
+                "no usable network interface — UDP topology parked"),
+            _          => TransportHealth.Unknown(endpoint, "no broadcasts emitted yet"),
+        };
         _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(initial);
         _lastUdpState = initial.State;
         _disposables.Add(_announcements);
@@ -214,30 +225,50 @@ public sealed class UdpTopologyService : IUdpTopologyService
         if (_startRequested) return;
         _startRequested = true;
 
-        // If no permission was wired (legacy / tests), behave as before
-        // and bind unconditionally.
-        if (_networkPermission is null)
+        // If neither gate was wired (legacy / tests), bind unconditionally.
+        if (_networkPermission is null && _networkAvailability is null)
         {
             BindAndSpinLoops();
             return;
         }
 
-        // Observe the permission and gate the bind. Initial value arrives
-        // synchronously via the BehaviorSubject under IsGrantedChanged, so
-        // a transition into the grant happens via the same callback.
-        _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(granted =>
+        // Both gates feed the same evaluate-and-act callback. The
+        // BehaviorSubject on each fires the current value synchronously on
+        // subscribe, so the initial evaluation happens once each gate has
+        // emitted. Reacts to subsequent transitions the same way.
+        if (_networkPermission is not null)
         {
-            if (granted)
-            {
-                BindAndSpinLoops();
-            }
-            else
-            {
-                StopLoopsAndCloseSocket();
-                EmitUdpHealth(TransportState.PermissionDenied,
-                    "Local Network permission not granted — UDP topology parked");
-            }
-        }));
+            _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); }));
+        }
+        if (_networkAvailability is not null)
+        {
+            _disposables.Add(_networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); }));
+        }
+    }
+
+    private void ReevaluateGate()
+    {
+        if (_disposed) return;
+        if (_permGranted && _nicAvailable)
+        {
+            BindAndSpinLoops();
+            return;
+        }
+
+        // Either gate closed → park. PermissionDenied takes priority over
+        // Offline because grant is something the user needs to act on,
+        // while a NIC outage often clears on its own (Wi-Fi reconnect).
+        StopLoopsAndCloseSocket();
+        if (!_permGranted)
+        {
+            EmitUdpHealth(TransportState.PermissionDenied,
+                "Local Network permission not granted — UDP topology parked");
+        }
+        else
+        {
+            EmitUdpHealth(TransportState.Offline,
+                "no usable network interface — UDP topology parked");
+        }
     }
 
     private void BindAndSpinLoops()

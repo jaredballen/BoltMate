@@ -95,6 +95,70 @@ public class PermissionGatedTransportTests
     }
 
     [Fact]
+    public void UdpTopology_starts_in_Offline_when_NIC_unavailable()
+    {
+        var transport = new Support.FakeReceiverTransport();
+        using var manager = new ReceiverManager(transport, autoStart: false);
+        var perm = new FakePermission("network", initial: true);
+        var nic = new FakeNetworkAvailabilityWatcher(initial: false);
+
+        using var topology = new UdpTopologyService(manager, MakeSettings(),
+            machineId: "m1",
+            networkPermission: perm,
+            networkAvailability: nic);
+        topology.Start();
+
+        TransportHealth? observed = null;
+        using var sub = topology.UdpHealth.Subscribe(h => observed = h);
+
+        Assert.NotNull(observed);
+        Assert.Equal(TransportState.Offline, observed!.State);
+    }
+
+    [Fact]
+    public void UdpTopology_PermissionDenied_takes_priority_over_Offline()
+    {
+        var transport = new Support.FakeReceiverTransport();
+        using var manager = new ReceiverManager(transport, autoStart: false);
+        var perm = new FakePermission("network", initial: false);
+        var nic = new FakeNetworkAvailabilityWatcher(initial: false);
+
+        using var topology = new UdpTopologyService(manager, MakeSettings(),
+            machineId: "m1",
+            networkPermission: perm,
+            networkAvailability: nic);
+        topology.Start();
+
+        TransportHealth? observed = null;
+        using var sub = topology.UdpHealth.Subscribe(h => observed = h);
+
+        Assert.NotNull(observed);
+        Assert.Equal(TransportState.PermissionDenied, observed!.State);
+    }
+
+    [Fact]
+    public void UdpTopology_NIC_drop_after_grant_flips_to_Offline()
+    {
+        var transport = new Support.FakeReceiverTransport();
+        using var manager = new ReceiverManager(transport, autoStart: false);
+        var perm = new FakePermission("network", initial: true);
+        var nic = new FakeNetworkAvailabilityWatcher(initial: true);
+
+        using var topology = new UdpTopologyService(manager, MakeSettings(),
+            machineId: "m1",
+            networkPermission: perm,
+            networkAvailability: nic);
+        topology.Start();
+
+        var states = new List<TransportState>();
+        using var sub = topology.UdpHealth.Subscribe(h => states.Add(h.State));
+
+        nic.Set(false);
+
+        Assert.Contains(TransportState.Offline, states);
+    }
+
+    [Fact]
     public void MdnsTcp_SyncHealth_surfaces_PermissionDenied_when_either_path_denied()
     {
         var transport = new Support.FakeReceiverTransport();

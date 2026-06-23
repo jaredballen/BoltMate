@@ -157,6 +157,18 @@ public sealed class AppHealthService : IAppHealthService
             return;
         }
 
+        // Offline — distinct alert from Blocked. Triggers immediately
+        // (no debounce wait); remediation is "enable adapter / reconnect
+        // Wi-Fi", not "check firewall."
+        var anyOffline = _udpHealth.State is TransportState.Offline
+                         || _syncHealth.State is TransportState.Offline;
+        if (anyOffline)
+        {
+            _netTracker.RawBad = true;
+            _netTracker.CurrentDetail = "No network interface available — connect to a network to enable cross-machine sync";
+            return;
+        }
+
         // Two transports surfaced to the user: UDP multicast and the
         // combined Bonjour-mDNS + TCP "reliable sync" path. Network is
         // alertable only when BOTH are Blocked — if either is reachable

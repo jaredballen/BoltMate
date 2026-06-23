@@ -57,6 +57,8 @@ public static class ServiceRegistration
         // wizard completion). Don't resolve this from Program.Main.
         services.AddSingleton<IPermissionsService, PermissionsService>();
 
+        services.AddSingleton<INetworkAvailabilityWatcher, NetworkAvailabilityWatcher>();
+
         services.AddSingleton<IReceiverTransport>(sp =>
         {
             var lf = sp.GetRequiredService<ILoggerFactory>();
@@ -67,7 +69,9 @@ public static class ServiceRegistration
             var perms = sp.GetRequiredService<IPermissionsService>();
             Func<bool> hidGate = () => perms.InputMonitoring.IsGranted;
 
-            if (OperatingSystem.IsMacOS())   return new BoltMate.Hid.IOKit.IOKitReceiverTransport(lf, hidGate);
+            var hidGrantChanges = perms.InputMonitoring.IsGrantedChanged;
+
+            if (OperatingSystem.IsMacOS())   return new BoltMate.Hid.IOKit.IOKitReceiverTransport(lf, hidGate, hidGrantChanges);
             if (OperatingSystem.IsWindows()) return new BoltMate.Hid.Win.WinReceiverTransport(lf);
             return new BoltMate.Hid.HidApi.HidApiReceiverTransport(lf, hidGate);
         });

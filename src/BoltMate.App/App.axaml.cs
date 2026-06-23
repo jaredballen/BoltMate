@@ -435,8 +435,10 @@ public partial class App : Application
             _settings.Save();
         }
 
+        var nicWatcher = Services.GetService<INetworkAvailabilityWatcher>();
         _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
             networkPermission: _permissions?.Network,
+            networkAvailability: nicWatcher,
             logger: _loggerFactory.CreateLogger<UdpTopologyService>());
         _topology.Start();
         _disposables.Add(_topology);
@@ -457,6 +459,7 @@ public partial class App : Application
 
         _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
             networkPermission: _permissions?.Network,
+            networkAvailability: nicWatcher,
             logger: _loggerFactory.CreateLogger<MdnsTcpChannel>());
         _mdnsTcp.Start();
         _disposables.Add(_mdnsTcp);

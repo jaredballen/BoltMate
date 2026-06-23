@@ -20,7 +20,13 @@ namespace BoltMate.App.Services;
 /// </summary>
 public sealed class PermissionsService : IPermissionsService
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    // Backstop poll. macOS exposes no event for TCC state changes (no
+    // NSNotification, no IOKit notify, nothing in CFNotificationCenter)
+    // so polling is unavoidable — but we lean on reactive triggers
+    // (network address change, OS wake) for fast turnaround and let the
+    // backstop catch anything those missed. 1 Hz is cheap (a few syscalls
+    // per tick) and gives a comfortable upper bound on staleness.
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
 
     private readonly DispatcherTimer _timer;
     private readonly ILogger _log;
@@ -53,6 +59,40 @@ public sealed class PermissionsService : IPermissionsService
         _timer = new DispatcherTimer { Interval = PollInterval };
         _timer.Tick += OnTick;
         _timer.Start();
+
+        // Reactive triggers — fire an immediate Refresh on real-world
+        // events that often coincide with permission state changes. Saves
+        // the user from waiting a full poll interval after closing System
+        // Settings or waking the machine.
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+        System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+        if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                MacWakeNotifier.WakeFromSleep += OnWakeFromSleep;
+                MacWakeNotifier.Start(lf.CreateLogger(typeof(MacWakeNotifier).FullName!));
+            }
+            catch (Exception ex) { _log.LogDebug(ex, "MacWakeNotifier.Start failed — wake reactive trigger disabled"); }
+        }
+    }
+
+    private void OnNetworkAddressChanged(object? sender, EventArgs e)
+    {
+        _log.LogDebug("NetworkAddressChanged → immediate Refresh");
+        Dispatcher.UIThread.Post(() => { try { Refresh(); } catch { } });
+    }
+
+    private void OnNetworkAvailabilityChanged(object? sender, System.Net.NetworkInformation.NetworkAvailabilityEventArgs e)
+    {
+        _log.LogDebug("NetworkAvailabilityChanged → immediate Refresh");
+        Dispatcher.UIThread.Post(() => { try { Refresh(); } catch { } });
+    }
+
+    private void OnWakeFromSleep()
+    {
+        _log.LogDebug("Wake from sleep → immediate Refresh");
+        Dispatcher.UIThread.Post(() => { try { Refresh(); } catch { } });
     }
 
     private void OnTick(object? sender, EventArgs e)
@@ -78,6 +118,12 @@ public sealed class PermissionsService : IPermissionsService
         if (_disposed) return;
         _disposed = true;
         _timer.Stop();
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+        System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
+        if (OperatingSystem.IsMacOS())
+        {
+            try { MacWakeNotifier.WakeFromSleep -= OnWakeFromSleep; MacWakeNotifier.Stop(); } catch { }
+        }
         _network.Dispose();
         _inputMonitoring.Dispose();
         _autostart.Dispose();

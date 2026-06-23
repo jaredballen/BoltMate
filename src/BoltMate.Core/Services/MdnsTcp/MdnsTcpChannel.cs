@@ -132,6 +132,15 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             return new TransportHealth(TransportState.PermissionDenied, endpoint,
                 "Local Network permission not granted — Bonjour + TCP parked", now);
         }
+        // Offline dominates Blocked next — no NIC means no transport.
+        // We could merge with PermissionDenied above, but the remediation
+        // is different so the state distinction stays.
+        if (mdns.State is TransportState.Offline
+            || tcp.State is TransportState.Offline)
+        {
+            return new TransportHealth(TransportState.Offline, endpoint,
+                "no usable network interface — Bonjour + TCP parked", now);
+        }
         if (mdns.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
                 $"Bonjour discovery blocked — {mdns.DetailMessage}", now);
@@ -148,12 +157,16 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private readonly TimeProvider _time;
 
     private readonly IPermission? _networkPermission;
+    private readonly INetworkAvailabilityWatcher? _networkAvailability;
+    private bool _permGranted = true;
+    private bool _nicAvailable = true;
 
     public MdnsTcpChannel(
         IUdpTopologyService udp,
         TopologySettings settings,
         string machineId,
         IPermission? networkPermission = null,
+        INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<MdnsTcpChannel>? logger = null,
         TimeProvider? timeProvider = null)
     {
@@ -161,17 +174,25 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         _settings = settings;
         _machineId = machineId;
         _networkPermission = networkPermission;
+        _networkAvailability = networkAvailability;
+        _permGranted = networkPermission?.IsGranted ?? true;
+        _nicAvailable = networkAvailability?.IsAvailable ?? true;
         _logger = logger ?? NullLogger<MdnsTcpChannel>.Instance;
         _time = timeProvider ?? TimeProvider.System;
-        var permDenied = networkPermission is { IsGranted: false };
-        _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
-            permDenied
-                ? TransportHealth.PermissionDenied(MdnsEndpointLabel(), "Local Network permission not yet granted")
-                : TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
-        _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
-            permDenied
-                ? TransportHealth.PermissionDenied(TcpEndpointLabel(), "Local Network permission not yet granted")
-                : TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet"));
+        var (mdnsInit, tcpInit) = (_permGranted, _nicAvailable) switch
+        {
+            (false, _) => (
+                TransportHealth.PermissionDenied(MdnsEndpointLabel(), "Local Network permission not yet granted"),
+                TransportHealth.PermissionDenied(TcpEndpointLabel(), "Local Network permission not yet granted")),
+            (_, false) => (
+                TransportHealth.Offline(MdnsEndpointLabel(), "no usable network interface"),
+                TransportHealth.Offline(TcpEndpointLabel(), "no usable network interface")),
+            _ => (
+                TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"),
+                TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet")),
+        };
+        _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(mdnsInit);
+        _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(tcpInit);
         _lastMdnsState = _mdnsHealth.Value.State;
         _lastTcpState = _tcpHealth.Value.State;
         _disposables.Add(_mdnsHealth);
@@ -270,28 +291,46 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         if (_startRequested) return;
         _startRequested = true;
 
-        if (_networkPermission is null)
+        if (_networkPermission is null && _networkAvailability is null)
         {
             // Legacy / unit-test path — bind unconditionally as before.
             SafeStartCore();
             return;
         }
 
-        _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(granted =>
+        if (_networkPermission is not null)
         {
-            if (granted)
-            {
-                SafeStartCore();
-            }
-            else
-            {
-                StopAndRelease();
-                EmitMdnsHealth(TransportState.PermissionDenied,
-                    "Local Network permission not granted — Bonjour publisher parked");
-                EmitTcpHealth(TransportState.PermissionDenied,
-                    "Local Network permission not granted — TCP listener parked");
-            }
-        }));
+            _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); }));
+        }
+        if (_networkAvailability is not null)
+        {
+            _disposables.Add(_networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); }));
+        }
+    }
+
+    private void ReevaluateGate()
+    {
+        if (_disposed) return;
+        if (_permGranted && _nicAvailable)
+        {
+            SafeStartCore();
+            return;
+        }
+        StopAndRelease();
+        if (!_permGranted)
+        {
+            EmitMdnsHealth(TransportState.PermissionDenied,
+                "Local Network permission not granted — Bonjour publisher parked");
+            EmitTcpHealth(TransportState.PermissionDenied,
+                "Local Network permission not granted — TCP listener parked");
+        }
+        else
+        {
+            EmitMdnsHealth(TransportState.Offline,
+                "no usable network interface — Bonjour publisher parked");
+            EmitTcpHealth(TransportState.Offline,
+                "no usable network interface — TCP listener parked");
+        }
     }
 
     private void SafeStartCore()
