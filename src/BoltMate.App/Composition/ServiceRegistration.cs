@@ -1,10 +1,10 @@
+using BoltMate.Core.Services;
 using System;
 using BoltMate.App.Permissions;
 using BoltMate.App.Updates;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;
-using BoltMate.Core.Switcher;
 using BoltMate.Hid.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

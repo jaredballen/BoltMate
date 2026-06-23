@@ -1,13 +1,14 @@
+using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using BoltMate.Core.Bolt;
-using BoltMate.Core.Switcher;
+
 using DynamicData;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Topology;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// Cross-machine fan-out trigger. Filters inbound
@@ -29,10 +30,10 @@ namespace BoltMate.Core.Topology;
 /// The filter lives at the topology layer so the rest of the app only sees
 /// messages that pertain to peripherals we share with the announcing peer.
 /// </remarks>
-public sealed class TopologyCorrelator : IDisposable
+public sealed class TopologyCorrelator : ITopologyCorrelator
 {
     private readonly ReceiverManager _manager;
-    private readonly SwitcherService _switcher;
+    private readonly ISwitcherService _switcher;
     private readonly IObservable<ReceiverAnnouncement> _announcements;
     private readonly IReadOnlyList<string> _localHostNames;
     private readonly ILogger<TopologyCorrelator> _logger;
@@ -55,7 +56,7 @@ public sealed class TopologyCorrelator : IDisposable
 
     public TopologyCorrelator(
         ReceiverManager manager,
-        SwitcherService switcher,
+        ISwitcherService switcher,
         IObservable<ReceiverAnnouncement> announcements,
         IReadOnlyList<string> localHostNames,
         ILogger<TopologyCorrelator>? logger = null,

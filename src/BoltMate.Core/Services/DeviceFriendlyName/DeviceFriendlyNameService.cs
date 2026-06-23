@@ -15,9 +15,9 @@ namespace BoltMate.Core.Services;
 /// throws <see cref="HidPpException"/> if the firmware refuses, surfacing the
 /// HID++ 2.0 error code so the caller can fall back gracefully.
 /// </remarks>
-public sealed class DeviceFriendlyNameService(HidPpClient client) : IDeviceFriendlyNameService
+public sealed class DeviceFriendlyNameService(IHidPpClient client) : IDeviceFriendlyNameService
 {
-    private readonly HidPpClient _client = client;
+    private readonly IHidPpClient _client = client;
 
     /// <summary>Returns the total length of the friendly name (0..50 bytes typical).</summary>
     public async Task<int> GetLengthAsync(byte deviceIndex, byte featureIndex, CancellationToken ct = default)

@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
@@ -34,8 +35,8 @@ namespace BoltMate.App.Health;
 public sealed class AppHealthService : IDisposable
 {
     private readonly IPermissionsService _permissions;
-    private readonly UdpTopologyService? _udp;
-    private readonly MdnsTcpChannel? _mdns;
+    private readonly IUdpTopologyService? _udp;
+    private readonly IMdnsTcpChannel? _mdns;
     private readonly ReceiverManager _receivers;
     private readonly Func<string, string, bool> _postNotification;
     private readonly Action<OverallStatus> _setTrayStatus;
@@ -56,8 +57,8 @@ public sealed class AppHealthService : IDisposable
 
     public AppHealthService(
         IPermissionsService permissions,
-        UdpTopologyService? udp,
-        MdnsTcpChannel? mdns,
+        IUdpTopologyService? udp,
+        IMdnsTcpChannel? mdns,
         ReceiverManager receivers,
         Func<string, string, bool> postNotification,
         Action<OverallStatus> setTrayStatus,

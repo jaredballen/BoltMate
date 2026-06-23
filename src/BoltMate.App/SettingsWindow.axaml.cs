@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using System;
 using System.Collections.Generic;
 using Avalonia.Controls;

@@ -9,9 +9,9 @@ namespace BoltMate.Core.Services;
 /// chunks. Some firmwares also expose a setName function; that path is wired
 /// up separately when discovered.
 /// </summary>
-public sealed class DeviceNameService(HidPpClient client) : IDeviceNameService
+public sealed class DeviceNameService(IHidPpClient client) : IDeviceNameService
 {
-    private readonly HidPpClient _client = client;
+    private readonly IHidPpClient _client = client;
 
     /// <summary>
     /// Returns the total number of ASCII characters in the device's name.

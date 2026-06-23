@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using BoltMate.Core.Topology;
 using Xunit;
 

@@ -1,3 +1,4 @@
+using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -8,7 +9,7 @@ using Makaretu.Dns;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Topology;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// Parallel-to-UDP transport for topology announcements. Uses mDNS to
@@ -31,9 +32,9 @@ namespace BoltMate.Core.Topology;
 ///         length-prefixed and written to every connected peer.</item>
 /// </list>
 /// </remarks>
-public sealed class MdnsTcpChannel : IDisposable
+public sealed class MdnsTcpChannel : IMdnsTcpChannel
 {
-    private readonly UdpTopologyService _udp;
+    private readonly IUdpTopologyService _udp;
     private readonly TopologySettings _settings;
     private readonly string _machineId;
     private readonly ILogger<MdnsTcpChannel> _logger;
@@ -127,7 +128,7 @@ public sealed class MdnsTcpChannel : IDisposable
     private readonly TimeProvider _time;
 
     public MdnsTcpChannel(
-        UdpTopologyService udp,
+        IUdpTopologyService udp,
         TopologySettings settings,
         string machineId,
         ILogger<MdnsTcpChannel>? logger = null,

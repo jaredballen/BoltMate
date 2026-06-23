@@ -9,9 +9,9 @@ namespace BoltMate.Core.Services;
 /// HID++ 2.0 IRoot (feature 0x0001) — resolves a feature ID into the
 /// firmware-assigned index used on subsequent calls.
 /// </summary>
-public sealed class RootService(HidPpClient client) : IRootService
+public sealed class RootService(IHidPpClient client) : IRootService
 {
-    private readonly HidPpClient _client = client;
+    private readonly IHidPpClient _client = client;
 
     /// <summary>
     /// Asks the device for the index of <paramref name="featureId"/>.

@@ -1,10 +1,11 @@
+using BoltMate.Core.HidPp;
 using System.Collections.Concurrent;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using BoltMate.Hid.Abstractions;
 
-namespace BoltMate.Core.HidPp;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// Layers request/reply correlation and notification routing on top of a raw
@@ -17,7 +18,7 @@ namespace BoltMate.Core.HidPp;
 /// Requests to a single device are serialised by a per-slot semaphore so that
 /// in-flight (deviceIndex, function|swid) keys are always unique.
 /// </remarks>
-public sealed class HidPpClient : IDisposable
+public sealed class HidPpClient : IHidPpClient
 {
     // 3s default — generous enough for Win arm64 emulating x64 where HID
     // round-trips can stretch past 1.5s under load. Per-request override is

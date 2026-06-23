@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using BoltMate.Core.HidPp;
 using BoltMate.Tests.Support;
 using Xunit;

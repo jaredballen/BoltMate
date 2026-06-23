@@ -7,7 +7,7 @@ using BoltMate.Core.HidPp.Notifications;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Switcher;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// Multi-receiver, topology-aware fan-out orchestrator. One instance per
@@ -31,7 +31,7 @@ namespace BoltMate.Core.Switcher;
 /// key. The host friendly name (= system hostname at pairing time) survives
 /// re-pair sessions and is what Logi+ surfaces in the channel picker.
 /// </remarks>
-public sealed class SwitcherService : IDisposable
+public sealed class SwitcherService : ISwitcherService
 {
     private readonly ReceiverManager _manager;
     private readonly ILogger<SwitcherService> _logger;

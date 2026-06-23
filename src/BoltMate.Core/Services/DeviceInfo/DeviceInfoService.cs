@@ -8,9 +8,9 @@ namespace BoltMate.Core.Services;
 /// HID++ 2.0 DEVICE_INFO (feature 0x0003). Provides firmware version,
 /// transport, and serial-number reads.
 /// </summary>
-public sealed class DeviceInfoService(HidPpClient client) : IDeviceInfoService
+public sealed class DeviceInfoService(IHidPpClient client) : IDeviceInfoService
 {
-    private readonly HidPpClient _client = client;
+    private readonly IHidPpClient _client = client;
 
     /// <summary>
     /// Reads firmware info for an entity (0 = main firmware, 1+ = sub-units /

@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;
 using Avalonia.Controls;
@@ -51,7 +52,7 @@ public sealed class TrayMenuController : IDisposable
     public Action? OnFixPermissionsClicked { get; set; }
 
     /// <summary>Bind the topology service. Tray-icon badge owns connection state; nothing to do here.</summary>
-    public void Bind(UdpTopologyService? topology) { }
+    public void Bind(IUdpTopologyService? topology) { }
 
     /// <summary>Stub for legacy callers — host-label customisation was cut.</summary>
     public void RefreshHostLabels() { }

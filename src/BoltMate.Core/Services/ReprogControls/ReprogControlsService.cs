@@ -9,9 +9,9 @@ namespace BoltMate.Core.Services;
 /// HID++ 2.0 REPROG_CONTROLS_V4 (feature 0x1B04) — enumerate and reconfigure
 /// reprogrammable controls (Easy-Switch buttons, gesture buttons, etc.).
 /// </summary>
-public sealed class ReprogControlsService(HidPpClient client) : IReprogControlsService
+public sealed class ReprogControlsService(IHidPpClient client) : IReprogControlsService
 {
-    private readonly HidPpClient _client = client;
+    private readonly IHidPpClient _client = client;
 
     /// <summary>
     /// Returns the number of reprogrammable controls exposed by the device.

@@ -1,7 +1,7 @@
+using BoltMate.Core.Services;
 using DynamicData;
 using BoltMate.Core.Bolt;
 using BoltMate.Hid.Abstractions;
-using BoltMate.Core.Switcher;
 using BoltMate.Tests.Support;
 using Xunit;
 

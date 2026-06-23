@@ -1,7 +1,7 @@
+using BoltMate.Core.Services;
 using System.Reactive.Subjects;
 using DynamicData;
 using BoltMate.Core.Bolt;
-using BoltMate.Core.Switcher;
 using BoltMate.Core.Topology;
 using BoltMate.Hid.Abstractions;
 using BoltMate.Tests.Support;

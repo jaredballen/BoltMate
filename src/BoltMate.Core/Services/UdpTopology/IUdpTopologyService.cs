@@ -1,0 +1,45 @@
+using BoltMate.Core.Topology;
+
+namespace BoltMate.Core.Services;
+
+/// <summary>
+/// UDP-broadcast topology service. Emits per-machine
+/// <see cref="ReceiverAnnouncement"/>s on a loop, ingests peer announcements,
+/// surfaces self-echo health, and records local switch events that piggy-back
+/// onto the next outbound announcement.
+/// </summary>
+public interface IUdpTopologyService : IDisposable
+{
+    /// <summary>Stable per-machine ID this service broadcasts under.</summary>
+    string MachineId { get; }
+
+    /// <summary>Total outbound attempts + errors (lifetime counters).</summary>
+    (long Attempts, long Errors) SendStats { get; }
+
+    /// <summary>Stream of peer announcements that passed the dedup filter.</summary>
+    IObservable<ReceiverAnnouncement> Announcements { get; }
+
+    /// <summary>Stream of every announcement WE emit (for backchannel mirroring).</summary>
+    IObservable<ReceiverAnnouncement> OutgoingAnnouncements { get; }
+
+    /// <summary>Health signal — Healthy / Blocked based on self-echo cadence.</summary>
+    IObservable<TransportHealth> UdpHealth { get; }
+
+    /// <summary>Snapshot of per-peer statistics.</summary>
+    IReadOnlyCollection<PeerStats> PeerSnapshot { get; }
+
+    /// <summary>Most recent announcement seen from each peer.</summary>
+    IReadOnlyCollection<ReceiverAnnouncement> LatestPeerAnnouncements { get; }
+
+    /// <summary>Begin the broadcast loop + open the socket.</summary>
+    void Start();
+
+    /// <summary>Inject an announcement received via an external channel (mDNS+TCP).</summary>
+    void InjectInbound(ReceiverAnnouncement announcement, string channel = "ext");
+
+    /// <summary>
+    /// Stash a switch event to surface on the next outbound announcement's
+    /// <see cref="ReceiverAnnouncement.LastSwitchEvent"/>.
+    /// </summary>
+    void RecordLocalSwitchEvent(string? deviceSerial, string targetHostName);
+}

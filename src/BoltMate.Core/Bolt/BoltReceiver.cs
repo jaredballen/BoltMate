@@ -21,7 +21,7 @@ namespace BoltMate.Core.Bolt;
 public sealed class BoltReceiver : IDisposable
 {
     private readonly IReceiverConnection _connection;
-    private readonly HidPpClient _client;
+    private readonly IHidPpClient _client;
     private readonly ILogger<BoltReceiver> _logger;
     private readonly SourceCache<PairedDevice, byte> _devicesCache;
     private readonly Subject<DivertedButtonsNotification> _hostSwitchPressed = new();
@@ -66,7 +66,7 @@ public sealed class BoltReceiver : IDisposable
     public IDeviceFriendlyNameService DeviceFriendlyName { get; }
 
     /// <summary>The HID++ client (escape hatch — most callers use the typed services above).</summary>
-    public HidPpClient Client => _client;
+    public IHidPpClient Client => _client;
 
     /// <summary>Live cache of paired devices on this receiver, keyed by slot index 1..6.</summary>
     public IObservableCache<PairedDevice, byte> Devices { get; }
@@ -118,7 +118,7 @@ public sealed class BoltReceiver : IDisposable
     /// </summary>
     public IObservable<PairedDevice> DeviceReady => _deviceReady.AsObservable();
 
-    public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, HidPpClient? client = null, ILogger<BoltReceiver>? logger = null)
+    public BoltReceiver(BoltReceiverInfo info, IReceiverConnection connection, IHidPpClient? client = null, ILogger<BoltReceiver>? logger = null)
     {
         Info = info;
         _connection = connection;

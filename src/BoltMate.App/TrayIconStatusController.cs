@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using System;
 using System.IO;
 using System.Reactive.Disposables;
@@ -42,7 +43,7 @@ public sealed class TrayIconStatusController : IDisposable
     private readonly DispatcherTimer _timer;
 
     private readonly IPermissionsService _permissions;
-    private UdpTopologyService? _topology;
+    private IUdpTopologyService? _topology;
     private State _last = State.None;
     private OverallStatus _permissionStatus = OverallStatus.AllGood;
 
@@ -85,7 +86,7 @@ public sealed class TrayIconStatusController : IDisposable
     }
 
     /// <summary>Attach the topology service so we can read peer state. Call after topology starts.</summary>
-    public void Bind(UdpTopologyService? topology)
+    public void Bind(IUdpTopologyService? topology)
     {
         _topology = topology;
         Refresh();

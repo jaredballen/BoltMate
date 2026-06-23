@@ -1,3 +1,4 @@
+using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -11,7 +12,7 @@ using BoltMate.Core.Bolt;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Topology;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// LAN-only UDP broadcast + multicast announcement channel. Each announcement
@@ -29,7 +30,7 @@ namespace BoltMate.Core.Topology;
 /// Peers' correlators are actively watching during exactly this window, so the
 /// tighter cadence increases the chance our announcement lands.
 /// </remarks>
-public sealed class UdpTopologyService : IDisposable
+public sealed class UdpTopologyService : IUdpTopologyService
 {
     private readonly ReceiverManager _manager;
     private readonly TopologySettings _settings;

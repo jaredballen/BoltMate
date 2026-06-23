@@ -1,3 +1,4 @@
+using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
@@ -13,7 +14,6 @@ using BoltMate.App.Welcome;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;
-using BoltMate.Core.Switcher;
 using BoltMate.Core.Topology;
 using BoltMate.Hid.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,13 +37,13 @@ public partial class App : Application
 
     private readonly CompositeDisposable _disposables = new();
     private ReceiverManager? _manager;
-    private SwitcherService? _switcher;
+    private ISwitcherService? _switcher;
     private TrayMenuController? _trayController;
     private TrayIconStatusController? _trayStatus;
     private UpdateService? _updates;
-    private UdpTopologyService? _topology;
-    private MdnsTcpChannel? _mdnsTcp;
-    private TopologyCorrelator? _correlator;
+    private IUdpTopologyService? _topology;
+    private IMdnsTcpChannel? _mdnsTcp;
+    private ITopologyCorrelator? _correlator;
     private AppSettings _settings = new();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private IPermissionsService? _permissions;
@@ -460,7 +460,7 @@ public partial class App : Application
                         : _topology.LatestPeerAnnouncements,
                 PeerStatsProvider = () =>
                     _topology is null
-                        ? Array.Empty<BoltMate.Core.Topology.PeerStats>()
+                        ? Array.Empty<BoltMate.Core.Services.PeerStats>()
                         : _topology.PeerSnapshot,
                 SendStatsProvider = () =>
                     _topology is null ? (0L, 0L) : _topology.SendStats,
