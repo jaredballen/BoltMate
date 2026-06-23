@@ -11,7 +11,7 @@ using DynamicData;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.App.Health;
+namespace BoltMate.App.Services;
 
 /// <summary>
 /// App-wide health monitor. Watches three independent failure surfaces —
@@ -32,7 +32,7 @@ namespace BoltMate.App.Health;
 /// sustained. Per-category state is exposed on <see cref="Health"/> for the
 /// UI / Status tab to render directly.
 /// </remarks>
-public sealed class AppHealthService : IDisposable
+public sealed class AppHealthService : IAppHealthService
 {
     private readonly IPermissionsService _permissions;
     private readonly IUdpTopologyService? _udp;

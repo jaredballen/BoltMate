@@ -5,7 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.ReactiveUI;
 using FluentAvalonia.UI.Controls;
-using BoltMate.App.Updates;
+using BoltMate.App.Services;
 using BoltMate.App.ViewModels;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;

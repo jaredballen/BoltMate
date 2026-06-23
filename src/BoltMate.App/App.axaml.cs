@@ -8,8 +8,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using DynamicData;
-using BoltMate.App.Permissions;
-using BoltMate.App.Updates;
+using BoltMate.App.Services;
 using BoltMate.App.Welcome;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
@@ -302,7 +301,7 @@ public partial class App : Application
         if (_permissions is null || _manager is null) return;
         // _permissions is container-owned; do NOT add to _disposables here.
 
-        _health = new BoltMate.App.Health.AppHealthService(
+        _health = new AppHealthService(
             _permissions,
             _topology,
             _mdnsTcp,
@@ -319,11 +318,11 @@ public partial class App : Application
                 _trayStatus?.SetPermissionStatus(status);
                 _trayController?.SetPermissionStatus(status);
             },
-            logger: _loggerFactory.CreateLogger<BoltMate.App.Health.AppHealthService>());
+            logger: _loggerFactory.CreateLogger<AppHealthService>());
         _disposables.Add(_health);
     }
 
-    private BoltMate.App.Health.AppHealthService? _health;
+    private AppHealthService? _health;
 
     /// <summary>
     /// Opens the WelcomeWindow positioned at the first permission that is

@@ -11,7 +11,7 @@ using BoltMate.Core.HidPp.Features;
 using BoltMate.Core.Services;
 using Microsoft.Extensions.Logging;
 
-namespace BoltMate.App;
+namespace BoltMate.App.Services;
 
 /// <summary>
 /// Watches every receiver attached via <see cref="ReceiverManager"/> and runs
@@ -19,7 +19,7 @@ namespace BoltMate.App;
 /// device-side name read, battery read. Keeps the tray menu fresh without
 /// the user having to click anything.
 /// </summary>
-public sealed class DeviceEnricher : IDisposable
+public sealed class DeviceEnricher : IDeviceEnricher
 {
     private readonly IReceiverManager _manager;
     private readonly ILogger<DeviceEnricher> _logger;

@@ -1,7 +1,6 @@
 using BoltMate.Core.Services;
 using System;
-using BoltMate.App.Permissions;
-using BoltMate.App.Updates;
+using BoltMate.App.Services;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using BoltMate.Hid.Abstractions;

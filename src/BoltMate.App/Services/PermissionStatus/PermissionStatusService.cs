@@ -1,4 +1,4 @@
-namespace BoltMate.App;
+namespace BoltMate.App.Services;
 
 /// <summary>Aggregate roll-up across every permission the app cares about.</summary>
 /// <remarks>

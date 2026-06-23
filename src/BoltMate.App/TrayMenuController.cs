@@ -1,3 +1,4 @@
+using BoltMate.App.Services;
 using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;

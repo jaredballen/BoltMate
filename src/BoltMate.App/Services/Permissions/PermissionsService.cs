@@ -10,7 +10,7 @@ using BoltMate.Hid.IOKit;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.App.Permissions;
+namespace BoltMate.App.Services;
 
 /// <summary>
 /// App-wide OS permission tracker. Owns one polling timer that re-probes the

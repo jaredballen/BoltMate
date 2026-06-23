@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using BoltMate.App.Permissions;
+using BoltMate.App.Services;
 using BoltMate.App.ViewModels;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;

@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using BoltMate.Core;
 using Microsoft.Extensions.Logging;
 
-namespace BoltMate.App.Updates;
+namespace BoltMate.App.Services;
 
 /// <summary>
 /// Update check scaffold. v1 has no backing server — <see cref="CheckAsync"/>
@@ -13,7 +13,7 @@ namespace BoltMate.App.Updates;
 /// be wired now and the real cast endpoint (Sparkle/SparkleAppCast on Mac,
 /// equivalent JSON manifest on Win) drops in without UI churn later.
 /// </summary>
-public sealed class UpdateService
+public sealed class UpdateService : IUpdateService
 {
     private readonly AppSettings _settings;
     private readonly ILogger<UpdateService> _logger;
