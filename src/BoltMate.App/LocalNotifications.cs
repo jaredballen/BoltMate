@@ -39,7 +39,9 @@ public static class LocalNotifications
         {
             if (OperatingSystem.IsMacOS())
                 return PostMac(title, body);
-            // Windows + Linux: tray-only fallback (see remarks above).
+            if (OperatingSystem.IsWindows())
+                return WinToast.TryPost(title, body);
+            // Linux: tray-only fallback (see remarks above).
             return false;
         }
         catch

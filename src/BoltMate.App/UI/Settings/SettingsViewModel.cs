@@ -221,6 +221,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> OpenNetworkSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
+    // TEMP: notification probe — remove once OS-toast wiring is verified.
+    public ReactiveCommand<Unit, Unit> SendTestNotificationCommand { get; }
 
     public SettingsViewModel(
         IReceiverManager manager,
@@ -270,6 +272,16 @@ public sealed class SettingsViewModel : ViewModelBase
             this.WhenAnyValue(x => x.CanCheckForUpdates));
 
         OpenLogsFolderCommand = ReactiveCommand.Create(() => RevealInFileManager(AppPaths.LogsDirectory));
+
+        // TEMP: end-to-end probe so the user can verify Mac/Win toast wiring
+        // from the UI without waiting for a real health-alert. Drop with the
+        // matching XAML button once both platforms are confirmed working.
+        SendTestNotificationCommand = ReactiveCommand.Create(() =>
+        {
+            LocalNotifications.TryPost(
+                "BoltMate · Test notification",
+                $"Posted at {DateTime.Now:HH:mm:ss}. If you see this, OS notifications are wired up.");
+        });
     }
 
     /// <summary>
