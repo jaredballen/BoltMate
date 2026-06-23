@@ -33,11 +33,13 @@ public sealed class PermissionsService : IPermissionsService
     private readonly PermissionBase _network;
     private readonly PermissionBase _inputMonitoring;
     private readonly PermissionBase _autostart;
+    private readonly PermissionBase _notifications;
     private bool _disposed;
 
     public IPermission Network => _network;
     public IPermission InputMonitoring => _inputMonitoring;
     public IPermission Autostart => _autostart;
+    public IPermission Notifications => _notifications;
 
     public PermissionsService(ILoggerFactory? loggerFactory = null)
     {
@@ -55,6 +57,16 @@ public sealed class PermissionsService : IPermissionsService
             ? new InputMonitoringPermissionImpl(lf.CreateLogger<InputMonitoringPermissionImpl>())
             : new AlwaysGrantedPermission("input-monitoring");
         _autostart = new AutostartPermissionImpl(lf.CreateLogger<AutostartPermissionImpl>());
+
+        // Pipe app logger into the Mac UN bridge so authorisation prompts
+        // and getNotificationSettings outcomes land in the Serilog file.
+        if (OperatingSystem.IsMacOS())
+            MacUserNotifications.Log = lf.CreateLogger(typeof(MacUserNotifications).FullName!);
+        _notifications = OperatingSystem.IsMacOS()
+            ? new MacNotificationsPermissionImpl(lf.CreateLogger<MacNotificationsPermissionImpl>())
+            : OperatingSystem.IsWindows()
+                ? new WinNotificationsPermissionImpl(lf.CreateLogger<WinNotificationsPermissionImpl>())
+                : new AlwaysGrantedPermission("notifications");
 
         _timer = new DispatcherTimer { Interval = PollInterval };
         _timer.Tick += OnTick;
@@ -111,6 +123,7 @@ public sealed class PermissionsService : IPermissionsService
         _network.PollAndPublish();
         _inputMonitoring.PollAndPublish();
         _autostart.PollAndPublish();
+        _notifications.PollAndPublish();
     }
 
     public void Dispose()
@@ -127,6 +140,7 @@ public sealed class PermissionsService : IPermissionsService
         _network.Dispose();
         _inputMonitoring.Dispose();
         _autostart.Dispose();
+        _notifications.Dispose();
     }
 
     // ====================================================================
@@ -405,5 +419,75 @@ public sealed class PermissionsService : IPermissionsService
         public override bool CanRevoke => false;
         protected override ProbeStatus ProbeOs() => ProbeStatus.Granted;
         protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// macOS notifications gated by UNUserNotificationCenter. Probe maps
+    /// the auth-status enum to ProbeStatus; grant dispatch calls
+    /// requestAuthorization (fires the OS prompt on NotDetermined, opens
+    /// System Settings on Denied since the prompt can't be re-issued).
+    /// </summary>
+    internal sealed class MacNotificationsPermissionImpl : PermissionBase
+    {
+        public MacNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
+        public override bool CanRevoke => false;
+
+        protected override ProbeStatus ProbeOs()
+        {
+            var status = MacUserNotifications.GetAuthorizationStatus();
+            return status switch
+            {
+                MacUserNotifications.AuthorizationStatus.Authorized  => ProbeStatus.Granted,
+                MacUserNotifications.AuthorizationStatus.Provisional => ProbeStatus.Granted,
+                MacUserNotifications.AuthorizationStatus.Denied      => ProbeStatus.Denied,
+                _                                                    => ProbeStatus.Denied,
+            };
+        }
+
+        protected override async Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
+        {
+            if (!target) return;
+            var status = MacUserNotifications.GetAuthorizationStatus();
+            if (status is MacUserNotifications.AuthorizationStatus.Authorized
+                or MacUserNotifications.AuthorizationStatus.Provisional)
+                return;
+
+            if (status is MacUserNotifications.AuthorizationStatus.Denied)
+            {
+                Log.LogInformation("Notifications denied — opening System Settings");
+                NotificationsSettings.OpenOsSettings();
+                return;
+            }
+
+            Log.LogInformation("Notifications not determined — issuing requestAuthorization");
+            await MacUserNotifications.RequestAuthorizationAsync(ct: ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Windows toast gating. Reads the per-AUMID HKCU registry key. No
+    /// programmatic grant — the user toggles in Settings → System →
+    /// Notifications → BoltMate, or the first toast fire is their
+    /// introduction (toggle on by default).
+    /// </summary>
+    internal sealed class WinNotificationsPermissionImpl : PermissionBase
+    {
+        public WinNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
+        public override bool CanRevoke => false;
+
+        protected override ProbeStatus ProbeOs()
+        {
+            if (!OperatingSystem.IsWindows()) return ProbeStatus.Granted;
+            return WinNotifications.IsEnabled() ? ProbeStatus.Granted : ProbeStatus.Denied;
+        }
+
+        protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
+        {
+            if (!target) return Task.CompletedTask;
+            // Win has no grant API — best we can do is land the user on
+            // the right Settings pane. If they need to flip it on.
+            NotificationsSettings.OpenOsSettings();
+            return Task.CompletedTask;
+        }
     }
 }

@@ -219,6 +219,80 @@
             </StackPanel>
         </Grid>
 
+        <!-- ====================== NOTIFICATIONS PRIMER ==================== -->
+        <Grid x:Name="PageNotificationsPrimer"
+              Margin="32"
+              IsVisible="{Binding ShowNotificationsPrimer}"
+              RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <ui:FASymbolIcon Grid.Row="0"
+                             Symbol="Comment"
+                             FontSize="56"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,16" />
+            <TextBlock Grid.Row="1"
+                       Text="Allow BoltMate to send notifications"
+                       FontSize="22" FontWeight="SemiBold"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" />
+            <TextBlock Grid.Row="2"
+                       Text="BoltMate uses OS notifications to surface alerts when something needs your attention — a permission gets revoked, the LAN drops, or no Bolt receiver is connected. Notifications are optional; BoltMate works fine without them, but you'll only see issues via the tray badge."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,12,10,0" />
+            <TextBlock Grid.Row="3"
+                       Text="{Binding NotificationsStatusLine}"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="12"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,16,10,0" />
+            <StackPanel Grid.Row="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Not now" Command="{Binding NotificationsPrimerNotNowCommand}" />
+                <Button Content="Allow"
+                        Classes="accent"
+                        IsEnabled="{Binding NotificationsPrimerGrantEnabled}"
+                        Command="{Binding NotificationsPrimerGrantCommand}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ====================== NOTIFICATIONS REFUSAL =================== -->
+        <Grid x:Name="PageNotificationsRefusal"
+              Margin="32"
+              IsVisible="{Binding ShowNotificationsRefusal}"
+              RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <ui:FASymbolIcon Grid.Row="0"
+                             Symbol="Comment"
+                             FontSize="56"
+                             Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,16" />
+            <TextBlock Grid.Row="1"
+                       Text="Notifications are off"
+                       FontSize="22" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Grid.Row="2"
+                       Text="No problem — BoltMate works the same without notifications. You'll still see issues via the tray badge. If you change your mind, you can flip the toggle from Settings → About → Notifications or by clicking Open notification settings below."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,12,10,0" />
+            <TextBlock Grid.Row="3"
+                       Text="{Binding NotificationsStatusLine}"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="12"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,16,10,0" />
+            <StackPanel Grid.Row="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Open notification settings"
+                        Command="{Binding NotificationsRefusalOpenSettingsCommand}" />
+                <Button Content="Continue"
+                        Classes="accent"
+                        Command="{Binding NotificationsRefusalContinueCommand}" />
+            </StackPanel>
+        </Grid>
+
         <!-- =========================== DONE =============================== -->
         <Grid x:Name="PageDone"
               Margin="32"

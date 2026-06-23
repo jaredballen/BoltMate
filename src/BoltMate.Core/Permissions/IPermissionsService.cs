@@ -17,6 +17,15 @@ public interface IPermissionsService : IDisposable
     /// <summary>Launch at login (Mac LaunchAgent; Win Task Scheduler onlogon).</summary>
     IPermission Autostart { get; }
 
+    /// <summary>
+    /// OS-level notification delivery. Mac probes
+    /// <c>UNUserNotificationCenter.authorizationStatus</c>; Win reads the
+    /// per-AUMID HKCU notification settings registry key. Non-blocking —
+    /// denial does not affect core function, the app falls back to tray-
+    /// only signalling.
+    /// </summary>
+    IPermission Notifications { get; }
+
     /// <summary>Force an immediate re-probe of every permission. Updates fire on change.</summary>
     void Refresh();
 }

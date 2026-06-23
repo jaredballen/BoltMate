@@ -174,6 +174,20 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _logsPathLine, value);
     }
 
+    private bool _notificationsEnabled;
+    public bool NotificationsEnabled
+    {
+        get => _notificationsEnabled;
+        set => this.RaiseAndSetIfChanged(ref _notificationsEnabled, value);
+    }
+
+    private string _notificationsStatusLine = "";
+    public string NotificationsStatusLine
+    {
+        get => _notificationsStatusLine;
+        set => this.RaiseAndSetIfChanged(ref _notificationsStatusLine, value);
+    }
+
     private bool _launchAtLoginEnabled;
     public bool LaunchAtLoginEnabled
     {
@@ -316,6 +330,15 @@ public sealed class SettingsViewModel : ViewModelBase
 
         Activation.Add(_permissions.Autostart.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
+
+        Activation.Add(_permissions.Notifications.IsGrantedChanged
+            .Subscribe(granted => Dispatcher.UIThread.Post(() =>
+            {
+                NotificationsEnabled = granted;
+                NotificationsStatusLine = granted
+                    ? "Status: Enabled in System Settings"
+                    : "Status: Disabled — click the toggle to open System Settings";
+            })));
     }
 
     /// <summary>Dispose per-activation subscriptions (window hide / close).</summary>

@@ -37,6 +37,7 @@ public sealed class AppSettings
     public bool WelcomeStepCompleted { get; set; } = false;
     public bool NetworkStepCompleted { get; set; } = false;
     public bool InputMonitoringStepCompleted { get; set; } = false;
+    public bool NotificationsStepCompleted { get; set; } = false;
 
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
