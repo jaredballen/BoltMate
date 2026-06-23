@@ -37,7 +37,18 @@ public sealed class AppSettings
     public bool WelcomeStepCompleted { get; set; } = false;
     public bool NetworkStepCompleted { get; set; } = false;
     public bool InputMonitoringStepCompleted { get; set; } = false;
-    public bool NotificationsStepCompleted { get; set; } = false;
+
+    /// <summary>
+    /// Tri-state notifications preference. Initial <see cref="NotificationsState.Disabled"/>
+    /// suppresses every post; <see cref="NotificationsState.UserRequested"/> is set when
+    /// the user opts in on the welcome page but we haven't yet confirmed the OS has
+    /// allowed delivery; <see cref="NotificationsState.OSGranted"/> is set once we observe
+    /// the OS letting our notifications through (transition driven by the
+    /// <c>getNotificationSettings</c> probe — currently stubbed, see MacUserNotifications.
+    /// Until the probe lands, the state stays at <see cref="NotificationsState.UserRequested"/>
+    /// after the welcome opt-in; delivery still works via the legacy NSUserNotification path).
+    /// </summary>
+    public NotificationsState NotificationsState { get; set; } = NotificationsState.Disabled;
 
     /// <summary>Telemetry opt-in flag. Defaults to false; switches to Azure App Insights when true.</summary>
     public bool TelemetryEnabled { get; set; } = false;
@@ -151,6 +162,20 @@ public sealed class TopologySettings
 
     /// <summary>mDNS service type. Convention: <c>_appname._proto.local</c>.</summary>
     public string MdnsServiceType { get; set; } = "_boltmate._udp.local";
+}
+
+/// <summary>
+/// Tri-state notifications preference. See <see cref="AppSettings.NotificationsState"/>
+/// for the per-state semantics.
+/// </summary>
+public enum NotificationsState
+{
+    /// <summary>User has not opted in (default) or OS observed denying delivery.</summary>
+    Disabled = 0,
+    /// <summary>User opted in on the welcome page; OS approval not yet confirmed.</summary>
+    UserRequested = 1,
+    /// <summary>OS confirmed via getNotificationSettings that delivery is authorised.</summary>
+    OSGranted = 2,
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]

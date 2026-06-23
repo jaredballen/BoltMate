@@ -8,29 +8,30 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BoltMate.App.Services;
 
 /// <summary>
-/// macOS notification surface. Currently a thin wrapper over the legacy
-/// NSUserNotification path that lands properly on the now-correctly-
-/// signed bundle (com.jaredballen.BoltMate identifier bound to plist —
-/// see Directory.Build.targets). UNUserNotificationCenter integration
-/// is deferred: hand-rolling the Objective-C block ABI for the
-/// completion handlers is fragile and crashed at startup on our first
-/// attempt. The Settings-managed permission state path covers the user-
-/// visible state-tracking requirement without needing UN.
+/// macOS notification surface. <b>Currently delivers via the legacy
+/// NSUserNotification path</b> — the OS still routes them properly now
+/// that the bundle is signed with com.jaredballen.BoltMate (see the
+/// ad-hoc resign step in Directory.Build.targets), so banners fire on
+/// modern macOS without needing UNUserNotificationCenter for delivery.
 /// </summary>
 /// <remarks>
-/// What we lose by NOT switching to UN center:
-///   • No programmatic <c>requestAuthorization</c> — first-time users
-///     are introduced to the notification by it firing, exactly like the
-///     pre-existing NSUserNotification behaviour. The Settings card +
-///     welcome page both expose the OS settings pane via the
-///     "Open notification settings" deep-link so users can find the
-///     real toggle when they want to.
-///   • No accurate auth-status probe. We return Authorized as a
-///     placeholder; the platform-specific permission impl in
-///     PermissionsService will still query state via a future hook —
-///     for now its toggle reflects "always on" on Mac. We'll wire the
-///     real getNotificationSettings call once we have a tested
-///     completion-handler block helper.
+/// UN center integration is deferred. Two attempts to hand-roll the
+/// Objective-C block ABI in pure C# segfaulted on init — the second one
+/// with a "Data Abort byte write Permission fault" at address 0 during
+/// what looked like the OS's Block_copy step. The most likely fix is to
+/// declare blocks with <c>_NSConcreteMallocBlock</c> + a proper refcount
+/// in the flags field (rather than <c>_NSConcreteStackBlock</c>), but
+/// that needs careful testing in isolation. Until then,
+/// <see cref="GetAuthorizationStatus"/> returns <c>NotDetermined</c> as
+/// a placeholder so callers fall back to the locally-persisted
+/// <c>AppSettings.NotificationsState</c> as the source of truth.
+///
+/// Delivery uses NSUserNotification: works for unsigned/sideloaded apps
+/// after the bundle's signing identity is consistent with its
+/// CFBundleIdentifier, which we have now. The first notification fired
+/// after a clean install triggers the OS's reactive "Allow / Don't Allow"
+/// banner; the app's row appears in System Settings → Notifications
+/// after that.
 /// </remarks>
 [System.Runtime.Versioning.SupportedOSPlatform("macos")]
 internal static class MacUserNotifications
@@ -71,37 +72,33 @@ internal static class MacUserNotifications
     [DllImport(ObjC, EntryPoint = "objc_msgSend")]
     private static extern IntPtr Send_obj(IntPtr receiver, IntPtr sel, IntPtr a);
 
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
-    private static extern IntPtr Send_obj_obj(IntPtr receiver, IntPtr sel, IntPtr a1, IntPtr a2);
+    /// <summary>
+    /// Stubbed until the UN bridge lands — returns NotDetermined so the
+    /// caller falls back to the persisted user preference.
+    /// </summary>
+    public static AuthorizationStatus GetAuthorizationStatus() => AuthorizationStatus.NotDetermined;
 
-    private static IntPtr NSString(string s)
-    {
-        var nsString = GetClass("NSString");
-        return Send_str(nsString, GetSelector("stringWithUTF8String:"), s);
-    }
+    public static Task<AuthorizationStatus> GetAuthorizationStatusAsync()
+        => Task.FromResult(AuthorizationStatus.NotDetermined);
 
-    public static AuthorizationStatus GetAuthorizationStatus()
-    {
-        // Stub: until we have a tested completion-handler bridge we report
-        // Authorized so the Settings toggle defaults to on (matching the
-        // OS default for unsigned/sideloaded apps that haven't been
-        // explicitly muted). Real state-probe lands when UN integration
-        // does — issue tracked in commit message.
-        return AuthorizationStatus.Authorized;
-    }
-
+    /// <summary>
+    /// Stubbed until the UN bridge lands — opens System Settings since
+    /// we have no API to drive the prompt without UN.
+    /// </summary>
     public static Task<bool> RequestAuthorizationAsync(
         AuthorizationOptions options = AuthorizationOptions.Alert | AuthorizationOptions.Sound,
         CancellationToken ct = default)
     {
-        // No-op for now — without UN center we have no API to drive the
-        // request. The welcome-page Allow button on Mac therefore just
-        // opens System Settings; the OS prompt fires the first time we
-        // actually post a notification through the legacy path.
         NotificationsSettings.OpenOsSettings();
         return Task.FromResult(true);
     }
 
+    /// <summary>
+    /// NSUserNotification delivery. Works on the now-correctly-signed
+    /// bundle. Returns true if the deliverNotification: send completed
+    /// without throwing — not a guarantee the banner rendered, the OS
+    /// can still drop it under Focus / Do Not Disturb.
+    /// </summary>
     public static bool Deliver(string title, string body)
     {
         try
