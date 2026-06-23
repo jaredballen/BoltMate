@@ -48,4 +48,22 @@ public interface IPermission
     /// </summary>
     /// <returns>True if the permission reached not-Granted before cancellation; false otherwise or if revoke is unsupported.</returns>
     Task<bool> RevokeAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Push empirical evidence that this permission IS granted, even when
+    /// the OS-level probe disagrees. macOS's TCC per-process cache for
+    /// <c>IOHIDCheckAccess</c> can return <c>Unknown</c> intermittently
+    /// after running for a while, even though the actual grant is still
+    /// in place and HID I/O continues to work. Successful device opens
+    /// are proof of the real grant — call this from the transport layer
+    /// when one happens so the cached <see cref="IsGranted"/> doesn't
+    /// downgrade and trigger a false "Fix permissions" alert.
+    /// </summary>
+    /// <remarks>
+    /// Once acknowledged, subsequent <c>ProbeOs</c> calls that return
+    /// <c>Unknown</c> won't downgrade. An explicit <c>Denied</c> still
+    /// does — if the user revokes the permission in System Settings, we
+    /// want the alert to fire.
+    /// </remarks>
+    void AcknowledgeExternalGrant();
 }

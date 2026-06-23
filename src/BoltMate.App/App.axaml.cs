@@ -211,6 +211,20 @@ public partial class App : Application
         // we don't add them to _disposables.
         _manager = Services.GetRequiredService<IReceiverManager>();
 
+        // A successful receiver attach is proof of the Input Monitoring
+        // grant being in place — IOKit wouldn't hand us the device
+        // otherwise. Push that empirical fact into the permission
+        // service so a flapping IOHIDCheckAccess (TCC's per-process
+        // cache occasionally goes Unknown after hours of runtime)
+        // can't downgrade IsGranted and trip a false "Fix permissions"
+        // alert while we're literally talking to the device.
+        if (_permissions is not null && OperatingSystem.IsMacOS())
+        {
+            _disposables.Add(_manager.Receivers.CountChanged
+                .Where(c => c > 0)
+                .Subscribe(_ => _permissions.InputMonitoring.AcknowledgeExternalGrant()));
+        }
+
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Matches siblings by host friendly name (the
         // OS hostname recorded in each device's host slot at pairing time).
@@ -331,6 +345,20 @@ public partial class App : Application
     /// </summary>
     private void OpenWelcomeToFirstUngranted()
     {
+        // Re-poll BEFORE deciding — the alert that triggered this click may
+        // be stale (CategoryTracker only re-evaluates on a 1Hz tick or on
+        // input change). A spurious "Fix permissions" tap shouldn't drag
+        // the user into the wizard if everything is actually fine.
+        (_permissions as PermissionsService)?.Refresh();
+        if (_permissions is not null
+            && _permissions.Network.IsGranted
+            && _permissions.InputMonitoring.IsGranted)
+        {
+            _trayStatus?.SetPermissionStatus(OverallStatus.AllGood);
+            _trayController?.SetPermissionStatus(OverallStatus.AllGood);
+            return;
+        }
+
         string primerId = WelcomeWindow.PermissionNetwork;
         if (_permissions is not null)
         {
@@ -413,6 +441,18 @@ public partial class App : Application
         _disposables.Add(_topology);
         _trayController?.Bind(_topology);
         _trayStatus?.Bind(_topology);
+
+        // A Healthy UDP self-echo means the LAN-broadcast roundtrip ran
+        // successfully — proof the Local Network grant is in place even
+        // when the OS-level probe has gone Unknown. Same cure for the
+        // same TCC-cache flap that hits Input Monitoring.
+        if (_permissions is not null)
+        {
+            _disposables.Add(_topology.UdpHealth
+                .Where(h => h.State is BoltMate.Core.Topology.TransportState.Healthy)
+                .Take(1)
+                .Subscribe(_ => _permissions.Network.AcknowledgeExternalGrant()));
+        }
 
         _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
             _loggerFactory.CreateLogger<MdnsTcpChannel>());

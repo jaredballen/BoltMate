@@ -87,18 +87,27 @@ public sealed class PermissionsService : IPermissionsService
     // Per-permission implementations
     // ====================================================================
 
+    /// <summary>Tri-state probe outcome — distinguishes "definitely no" from "OS didn't answer."</summary>
+    internal enum ProbeStatus { Granted, Denied, Unknown }
+
     internal abstract class PermissionBase : IPermission, IDisposable
     {
         private readonly BehaviorSubject<bool> _subject;
         protected readonly ILogger Log;
         private bool _disposed;
+        // Once true, an Unknown probe outcome will NOT flip IsGranted back
+        // to false — only an explicit Denied will. Acknowledged by the
+        // transport layer when a HID device-open succeeds; that's
+        // empirical proof the OS grant is still in place even when
+        // IOHIDCheckAccess has gone stale and reports Unknown.
+        private bool _externallyAcknowledged;
 
         protected PermissionBase(string name, ILogger log)
         {
             Name = name;
             Log = log;
             _subject = new BehaviorSubject<bool>(false);
-            try { _subject.OnNext(ProbeOs()); }
+            try { _subject.OnNext(ProbeOs() is ProbeStatus.Granted); }
             catch (Exception ex) { Log.LogWarning(ex, "Initial probe failed for {Name}", name); }
         }
 
@@ -107,7 +116,28 @@ public sealed class PermissionsService : IPermissionsService
         public IObservable<bool> IsGrantedChanged => _subject.AsObservable();
         public abstract bool CanRevoke { get; }
 
-        protected abstract bool ProbeOs();
+        /// <summary>
+        /// Probe the OS for current grant state. Returns
+        /// <see cref="ProbeStatus.Unknown"/> when the OS won't commit
+        /// either way (TCC cache miss, IOKit reports Unknown, etc.) so
+        /// the base class can decide whether to downgrade IsGranted.
+        /// </summary>
+        protected abstract ProbeStatus ProbeOs();
+
+        public void AcknowledgeExternalGrant()
+        {
+            if (_disposed) return;
+            _externallyAcknowledged = true;
+            try
+            {
+                if (!_subject.Value)
+                {
+                    Log.LogInformation("Permission {Name} → True (external acknowledgement)", Name);
+                    _subject.OnNext(true);
+                }
+            }
+            catch (ObjectDisposedException) { /* shutdown race */ }
+        }
 
         /// <summary>
         /// Dispatch the OS-side action that should drive the permission
@@ -169,18 +199,30 @@ public sealed class PermissionsService : IPermissionsService
         public void PollAndPublish()
         {
             if (_disposed) return;
-            bool next;
-            try { next = ProbeOs(); }
+            ProbeStatus status;
+            try { status = ProbeOs(); }
             catch (Exception ex)
             {
                 Log.LogWarning(ex, "Probe threw for {Name}", Name);
                 return;
             }
+
+            // Resolve the published bool. Unknown is sticky once we've
+            // either seen Granted or had an external acknowledgement —
+            // macOS TCC's per-process cache can flap to Unknown after
+            // hours of running and we don't want a phantom downgrade.
+            bool next = status switch
+            {
+                ProbeStatus.Granted => true,
+                ProbeStatus.Denied  => false,
+                _                   => _externallyAcknowledged || _subject.Value,
+            };
+
             try
             {
                 if (next != _subject.Value)
                 {
-                    Log.LogInformation("Permission {Name} → {Granted}", Name, next);
+                    Log.LogInformation("Permission {Name} → {Granted} (probe={Probe})", Name, next, status);
                     _subject.OnNext(next);
                 }
             }
@@ -200,10 +242,15 @@ public sealed class PermissionsService : IPermissionsService
         public NetworkPermissionImpl(ILogger log) : base("network", log) { }
         public override bool CanRevoke => false;
 
-        protected override bool ProbeOs()
+        protected override ProbeStatus ProbeOs()
         {
             NetworkPermission.Invalidate();
-            return NetworkPermission.Check().Status is NetworkPermission.Status.Granted;
+            return NetworkPermission.Check().Status switch
+            {
+                NetworkPermission.Status.Granted => ProbeStatus.Granted,
+                NetworkPermission.Status.Denied  => ProbeStatus.Denied,
+                _                                => ProbeStatus.Unknown,
+            };
         }
 
         protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
@@ -240,8 +287,13 @@ public sealed class PermissionsService : IPermissionsService
         public InputMonitoringPermissionImpl(ILogger log) : base("input-monitoring", log) { }
         public override bool CanRevoke => false;
 
-        protected override bool ProbeOs()
-            => InputMonitoringPermission.Check() == InputMonitoringPermission.Status.Granted;
+        protected override ProbeStatus ProbeOs()
+            => InputMonitoringPermission.Check() switch
+            {
+                InputMonitoringPermission.Status.Granted => ProbeStatus.Granted,
+                InputMonitoringPermission.Status.Denied  => ProbeStatus.Denied,
+                _                                        => ProbeStatus.Unknown,
+            };
 
         protected override async Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
         {
@@ -271,7 +323,9 @@ public sealed class PermissionsService : IPermissionsService
 
         // Mirror System Settings → Login Items semantics: the plist on disk
         // is install-time concern; runtime "is autostart on?" = loaded state.
-        protected override bool ProbeOs() => AppAutostart.IsLoaded();
+        // Boolean OS query, no Unknown state possible.
+        protected override ProbeStatus ProbeOs() =>
+            AppAutostart.IsLoaded() ? ProbeStatus.Granted : ProbeStatus.Denied;
 
         protected override async Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
         {
@@ -303,7 +357,7 @@ public sealed class PermissionsService : IPermissionsService
     {
         public AlwaysGrantedPermission(string name) : base(name, NullLogger.Instance) { }
         public override bool CanRevoke => false;
-        protected override bool ProbeOs() => true;
+        protected override ProbeStatus ProbeOs() => ProbeStatus.Granted;
         protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct) => Task.CompletedTask;
     }
 }
