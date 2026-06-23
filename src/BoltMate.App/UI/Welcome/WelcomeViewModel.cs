@@ -417,16 +417,22 @@ public sealed class WelcomeViewModel : ViewModelBase
             SaveCheckpoint(PermissionInputMonitoring);
         }
 
-        // Notifications primer — non-blocking. Only show on first run until
-        // the user has resolved it (either Allow or Not now). After the
-        // checkpoint is saved, subsequent fix-permissions flows skip
-        // straight to whichever required permission is still missing.
+        // Notifications primer — non-blocking + optional. Skip entirely
+        // when already granted (e.g. user previously allowed BoltMate and
+        // is going through the welcome again after a reinstall). Only
+        // show on first run until the user has resolved it (Allow or Not
+        // now). After the checkpoint is saved subsequent fix-permissions
+        // flows skip straight to whichever required permission is missing.
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
-            if (_isFirstRun && !_settings.NotificationsStepCompleted
-                && !_primersShownThisSession.Contains(PermissionNotifications))
+            if (_permissions.Notifications.IsGranted)
             {
-                _log.LogInformation("Permission gate: notifications — showing primer");
+                SaveCheckpoint(PermissionNotifications);
+            }
+            else if (_isFirstRun && !_settings.NotificationsStepCompleted
+                     && !_primersShownThisSession.Contains(PermissionNotifications))
+            {
+                _log.LogInformation("Permission gate: notifications not granted — showing primer");
                 _primersShownThisSession.Add(PermissionNotifications);
                 ShowPage(PageNotificationsPrimer);
                 return;
