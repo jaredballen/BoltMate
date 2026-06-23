@@ -1,53 +1,50 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 using System.Runtime.Versioning;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoltMate.App;
 
 /// <summary>
-/// Windows toast surface. Targets the Microsoft.Toolkit.Uwp.Notifications
-/// path proved too heavy for our net10.0 (TFM-agnostic) build — it needs
-/// a Windows-flavoured TFM to resolve the .Show() extension. PowerShell is
-/// the simplest portable alternative: spawn a one-shot powershell.exe that
-/// invokes <c>Windows.UI.Notifications.ToastNotificationManager</c> via the
-/// built-in WinRT projection. No package dependency, no AUMID setup, works
-/// on every Win 10/11.
+/// Windows toast surface. Spawns a PowerShell child that invokes the
+/// WinRT projection of <c>Windows.UI.Notifications.ToastNotificationManager</c>
+/// against our AUMID ("BoltMate" — registered by the installer's
+/// Start Menu shortcut). The script lives on disk next to our exe so
+/// PowerShell parsing isn't a fragile inline string, and we read
+/// stderr on the failure path so a misbehaving toast pipeline is
+/// loud, not silent.
 /// </summary>
-/// <remarks>
-/// Per-toast cost is ~80 ms (powershell.exe cold start). Acceptable for
-/// the once-per-condition health alerts that drive this path; if we ever
-/// start firing toasts at sub-second cadence we'll want a long-running
-/// helper process or a real WinRT-targeted build.
-/// </remarks>
 internal static class WinToast
 {
+    public static ILogger Log { get; set; } = NullLogger.Instance;
+
     [SupportedOSPlatform("windows")]
     public static bool TryPost(string title, string body)
     {
         try
         {
-            // Escape ' for the PowerShell single-quoted string literal.
-            var t = title.Replace("'", "''");
-            var b = body.Replace("'", "''");
-
-            // WinRT projection: pull the ToastGeneric template, swap in our
-            // title/body, queue the toast against the BoltMate AUMID. The
-            // AUMID we use ("BoltMate") doesn't have to be pre-registered —
-            // Windows accepts it and uses the app name fallback.
-            var script =
-                "$ErrorActionPreference='Stop';" +
-                "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]>$null;" +
-                "$tpl=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);" +
-                "$tn=$tpl.GetElementsByTagName('text');" +
-                $"$tn.Item(0).AppendChild($tpl.CreateTextNode('{t}'))>$null;" +
-                $"$tn.Item(1).AppendChild($tpl.CreateTextNode('{b}'))>$null;" +
-                "$toast=[Windows.UI.Notifications.ToastNotification]::new($tpl);" +
-                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('BoltMate').Show($toast);";
+            var script = ResolveScriptPath();
+            if (script is null)
+            {
+                Log.LogWarning("WinToast: post-toast.ps1 not found alongside binary");
+                return false;
+            }
 
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command \"{script.Replace("\"", "\\\"")}\"",
+                ArgumentList =
+                {
+                    "-NoLogo", "-NoProfile", "-NonInteractive",
+                    "-WindowStyle", "Hidden",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", script,
+                    "-Title", title,
+                    "-Body", body,
+                },
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardError = true,
@@ -55,15 +52,38 @@ internal static class WinToast
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            // Fire-and-forget within reason — short timeout so a wedged
-            // powershell.exe can't block the calling tick. The toast
-            // typically renders before powershell exits but we don't
-            // depend on it.
-            return p.WaitForExit(2000);
+            if (!p.WaitForExit(5000))
+            {
+                try { p.Kill(); } catch { }
+                Log.LogWarning("WinToast: powershell.exe timed out after 5s");
+                return false;
+            }
+            var stderr = p.StandardError.ReadToEnd();
+            var stdout = p.StandardOutput.ReadToEnd();
+            if (p.ExitCode != 0 || !string.IsNullOrWhiteSpace(stderr))
+            {
+                Log.LogWarning("WinToast: powershell exit={Exit} stderr={Stderr} stdout={Stdout}",
+                    p.ExitCode, stderr.Trim(), stdout.Trim());
+                return false;
+            }
+            Log.LogDebug("WinToast: posted title={Title}", title);
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.LogWarning(ex, "WinToast.TryPost threw");
             return false;
         }
+    }
+
+    private static string? ResolveScriptPath()
+    {
+        // The script ships in Native/Win/ relative to the binary —
+        // installer stages it under Program Files\BoltMate\Native\Win\
+        // alongside BoltMate.exe.
+        var exeDir = Path.GetDirectoryName(Assembly.GetEntryAssembly()?.Location)
+                     ?? AppContext.BaseDirectory;
+        var path = Path.Combine(exeDir, "Native", "Win", "post-toast.ps1");
+        return File.Exists(path) ? path : null;
     }
 }

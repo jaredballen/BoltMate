@@ -50,6 +50,8 @@ public sealed class PermissionsService : IPermissionsService
         // every IOHIDCheckAccess / SocketException / firewall-rule decision
         // lands in the Serilog file. Default is NullLogger; set once.
         NetworkPermission.Log = lf.CreateLogger(typeof(NetworkPermission).FullName!);
+        if (OperatingSystem.IsWindows())
+            WinToast.Log = lf.CreateLogger(typeof(WinToast).FullName!);
         InputMonitoringPermission.Log = lf.CreateLogger(typeof(InputMonitoringPermission).FullName!);
 
         _network = new NetworkPermissionImpl(lf.CreateLogger<NetworkPermissionImpl>());

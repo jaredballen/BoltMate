@@ -66,6 +66,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Win toast PowerShell helper. Copies to the publish output (and
+      from there into the installer's payload) at Native/Win/
+      alongside the binary so WinToast.cs can resolve it relative to
+      the entry assembly's directory at runtime.
+    -->
+    <None Include="Native/Win/post-toast.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Pack>false</Pack>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Bitmap resources loaded at runtime via avares:// -->
     <AvaloniaResource Include="Assets/tray-icon-light.png" />
     <AvaloniaResource Include="Assets/tray-icon-light@2x.png" />
