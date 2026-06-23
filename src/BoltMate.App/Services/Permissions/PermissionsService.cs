@@ -489,28 +489,40 @@ public sealed class PermissionsService : IPermissionsService
     }
 
     /// <summary>
-    /// Windows toast gating. Reads the per-AUMID HKCU registry key. No
-    /// programmatic grant — the user toggles in Settings → System →
-    /// Notifications → BoltMate, or the first toast fire is their
-    /// introduction (toggle on by default).
+    /// Windows toast gating. Reads + writes the per-AUMID HKCU registry
+    /// key BoltMate shares with the OS Settings panel. There's no
+    /// "request" API the way Mac has UNUserNotificationCenter, but
+    /// because we own the same registry slot as Settings, we can flip
+    /// the value directly — both the welcome-page Allow click and the
+    /// Settings-card toggle write here, and the OS picks up the change
+    /// on its next read.
     /// </summary>
     internal sealed class WinNotificationsPermissionImpl : PermissionBase
     {
         public WinNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
-        public override bool CanRevoke => false;
+
+        // Win toggle is bidirectional: our Settings card can disable as
+        // well as enable. Mac stays CanRevoke=false because the UN
+        // center exposes no programmatic revoke; on Win we're just
+        // writing the same registry value the OS Settings panel does.
+        public override bool CanRevoke => true;
 
         protected override ProbeStatus ProbeOs()
         {
             if (!OperatingSystem.IsWindows()) return ProbeStatus.Granted;
-            return WinNotifications.IsEnabled() ? ProbeStatus.Granted : ProbeStatus.Denied;
+            return WinNotifications.GetStatus() switch
+            {
+                WinNotifications.Status.Authorized    => ProbeStatus.Granted,
+                WinNotifications.Status.Denied        => ProbeStatus.Denied,
+                _                                     => ProbeStatus.Denied, // NotDetermined → primer fires
+            };
         }
 
         protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
         {
-            if (!target) return Task.CompletedTask;
-            // Win has no grant API — best we can do is land the user on
-            // the right Settings pane. If they need to flip it on.
-            NotificationsSettings.OpenOsSettings();
+            if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
+            var ok = WinNotifications.WriteEnabled(target);
+            Log.LogInformation("Win notifications WriteEnabled({Target}) → {Ok}", target, ok);
             return Task.CompletedTask;
         }
     }

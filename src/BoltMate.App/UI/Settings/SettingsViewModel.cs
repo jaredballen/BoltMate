@@ -293,21 +293,28 @@ public sealed class SettingsViewModel : ViewModelBase
             NotificationsSettings.OpenOsSettings();
         });
 
-        // Hybrid toggle click. Drives the smart-action flow:
-        //   • Status NotDetermined → fire UN requestAuthorization (modal)
-        //   • Status Denied / Authorized → open System Settings
-        // Routed through IPermission.GrantAsync so the per-platform impl
-        // owns the policy. Win has no modal API; it always opens Settings.
+        // Hybrid toggle click. Bidirectional on platforms whose
+        // permission impl supports CanRevoke (currently Win, where we
+        // own the registry value the OS reads); one-way on Mac (UN
+        // center has no programmatic revoke).
+        //   • Granted + CanRevoke → RevokeAsync → permission off
+        //   • Granted + !CanRevoke → GrantAsync → impl decides (Mac
+        //     opens System Settings since the modal can't re-fire)
+        //   • Not granted → GrantAsync → impl drives the right action
+        //     (Mac requestAuthorization modal; Win registry write)
         NotificationsToggleClickedCommand = ReactiveCommand.CreateFromTask(async () =>
         {
             try
             {
-                await _permissions.Notifications.GrantAsync();
+                var perm = _permissions.Notifications;
+                if (perm.IsGranted && perm.CanRevoke)
+                    await perm.RevokeAsync();
+                else
+                    await perm.GrantAsync();
             }
-            catch (Exception ex)
+            catch
             {
                 Dispatcher.UIThread.Post(() => RefreshNotificationsCard());
-                _ = ex; // swallow; UI will refresh on next IsGrantedChanged tick anyway
             }
         });
 
