@@ -8,7 +8,7 @@ namespace BoltMate.Core.Services;
 /// surfaces self-echo health, and records local switch events that piggy-back
 /// onto the next outbound announcement.
 /// </summary>
-public interface IUdpTopologyService : IDisposable
+public interface IUdpTopologyService : IAsyncDisposable, IDisposable
 {
     /// <summary>Stable per-machine ID this service broadcasts under.</summary>
     string MachineId { get; }

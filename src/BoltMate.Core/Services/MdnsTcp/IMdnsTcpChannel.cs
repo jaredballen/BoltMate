@@ -7,7 +7,7 @@ namespace BoltMate.Core.Services;
 /// topology stream. Lets peers find each other even when LAN multicast is
 /// blocked, and gives the UI two independent health signals (mDNS vs TCP).
 /// </summary>
-public interface IMdnsTcpChannel : IDisposable
+public interface IMdnsTcpChannel : IAsyncDisposable, IDisposable
 {
     /// <summary>Bonjour publisher / browser health.</summary>
     IObservable<TransportHealth> MdnsHealth { get; }

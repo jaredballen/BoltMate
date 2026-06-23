@@ -41,6 +41,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private readonly CompositeDisposable _disposables = new();
     private readonly ConcurrentDictionary<string, TcpClient> _peerClients = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource _cts = new();
+    private readonly ConcurrentBag<Task> _backgroundTasks = new();
 
     private TcpListener? _listener;
     private MulticastService? _multicast;
@@ -259,7 +260,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         {
             _listener = new TcpListener(IPAddress.Any, _settings.TcpPort);
             _listener.Start();
-            _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
+            _backgroundTasks.Add(Task.Run(() => AcceptLoopAsync(_cts.Token)));
             _logger.LogInformation("MdnsTcp: listening on TCP port {Port}", _settings.TcpPort);
         }
         catch (Exception ex)
@@ -326,7 +327,9 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         _disposables.Add(_udp.OutgoingAnnouncements.Subscribe(BroadcastToPeers));
     }
 
-    public void Dispose()
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
@@ -343,6 +346,17 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             try { c.Close(); } catch { }
         }
         _peerClients.Clear();
+
+        // Drain Accept / Read / Connect loops before disposing the CTS so
+        // any in-flight async op observes the cancellation first. Cap at
+        // 2s so a stuck socket can't hang the shutdown.
+        var pending = _backgroundTasks.ToArray();
+        if (pending.Length > 0)
+        {
+            try { await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch { /* timeout / cancellation / per-task exception — swallow */ }
+        }
+
         _cts.Dispose();
     }
 
@@ -361,7 +375,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             catch (Exception ex) { _logger.LogDebug(ex, "MdnsTcp accept failed; retrying"); continue; }
 
             _logger.LogDebug("MdnsTcp: inbound TCP connection from {Endpoint}", peer.Client.RemoteEndPoint);
-            _ = Task.Run(() => ReadLoopAsync(peer, ct));
+            _backgroundTasks.Add(Task.Run(() => ReadLoopAsync(peer, ct)));
         }
     }
 
@@ -483,7 +497,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         // Already connected?
         if (_peerClients.TryGetValue(peerMachineId, out var existing) && existing.Connected) return;
 
-        _ = Task.Run(async () =>
+        _backgroundTasks.Add(Task.Run(async () =>
         {
             System.Threading.Interlocked.Increment(ref _tcpConnectAttempts);
             try
@@ -504,7 +518,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
                     peerMachineId, endpoint);
                 RecomputeTcpHealth();
             }
-        });
+        }));
     }
 
     private void BroadcastToPeers(ReceiverAnnouncement ann)

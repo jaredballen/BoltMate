@@ -70,6 +70,8 @@ public sealed class UdpTopologyService : IUdpTopologyService
     private long _nextSeq;                 // monotonic sequence counter
     private long _burstUntilTicks;         // DateTime.UtcNow.Ticks; <= now means not bursting
     private readonly ManualResetEventSlim _kickBroadcast = new(false);  // wakes the broadcast loop early
+    private Task? _receiveTask;
+    private Task? _broadcastTask;
     private bool _disposed;
 
     /// <summary>Hot stream of remote-only announcements (own machineId + duplicate seqs filtered).</summary>
@@ -257,8 +259,8 @@ public sealed class UdpTopologyService : IUdpTopologyService
             try { _socket?.Close(); } catch { }
         }));
 
-        _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
-        _ = Task.Run(() => BroadcastLoopAsync(_cts.Token));
+        _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        _broadcastTask = Task.Run(() => BroadcastLoopAsync(_cts.Token));
 
         _logger.LogInformation(
             "UDP topology started: port {Port}, machineId {MachineId}, hostname {Hostname}, multicast={Mcast}, repeat={Repeat}",
@@ -266,12 +268,31 @@ public sealed class UdpTopologyService : IUdpTopologyService
             _multicastAddress?.ToString() ?? "(off)", _settings.RepeatCount);
     }
 
-    public void Dispose()
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _disposed = true;
+        // Cancel first so the loops observe the token before we tear down
+        // the resources they read from.
+        try { _cts?.Cancel(); } catch { /* already disposed */ }
         _disposables.Dispose();
         _socket?.Dispose();
+
+        // Drain the loops before disposing the CTS — disposing it under a
+        // still-running ReceiveAsync would race the token registration and
+        // throw ObjectDisposedException out of the loop's catch block.
+        // Cap the wait at 2s so a stuck loop can't hang shutdown.
+        var pending = new List<Task>(2);
+        if (_receiveTask is not null) pending.Add(_receiveTask);
+        if (_broadcastTask is not null) pending.Add(_broadcastTask);
+        if (pending.Count > 0)
+        {
+            try { await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch { /* timeout or task-level exception — swallow during teardown */ }
+        }
+
         _cts?.Dispose();
         _kickBroadcast.Dispose();
     }
