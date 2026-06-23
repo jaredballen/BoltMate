@@ -249,13 +249,29 @@
                                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="10">
+                                    <TextBlock Text="Notifications" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
+                                        BoltMate uses OS notifications to surface alerts for permission, network, and receiver
+                                        issues. Notifications are managed entirely by the operating system; toggle the
+                                        per-app switch from System Settings.
+                                    </TextBlock>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Open notification settings"
+                                                Command="{Binding OpenNotificationSettingsCommand}" />
+                                        <Button Content="Send test notification"
+                                                Command="{Binding SendTestNotificationCommand}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="6" Padding="14">
+                                <StackPanel Spacing="10">
                                     <TextBlock Text="Diagnostics" FontSize="14" FontWeight="SemiBold" />
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Button Content="Open logs folder"
                                                 Command="{Binding OpenLogsFolderCommand}" />
-                                        <!-- TEMP: notification probe — remove once OS-toast wiring is verified on both platforms. -->
-                                        <Button Content="Send test notification"
-                                                Command="{Binding SendTestNotificationCommand}" />
                                     </StackPanel>
                                     <TextBlock Text="{Binding LogsPathLine}"
                                                Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />

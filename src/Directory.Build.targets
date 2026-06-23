@@ -114,6 +114,30 @@
 
     <Exec Command="chmod +x &quot;$(_AppMacOS)/BoltMate&quot;" IgnoreExitCode="true" />
 
+    <!--
+      Re-sign the bundle ad-hoc with our CFBundleIdentifier so the signing
+      identity matches the Info.plist. Without this step the .NET apphost
+      stub ships with Identifier=apphost + Info.plist=not bound, which
+      makes macOS treat the bundle as an unverified identity. The user-
+      facing symptom is that UNUserNotificationCenter / NSUserNotification
+      can't register the app properly in System Settings; even after the
+      user toggles Allow Notifications, banners are suppressed (the OS
+      routes them to Notification Center in deliver-silently mode).
+      Re-signing with the proper identifier binds the plist into the seal
+      and gives the bundle a stable identity the OS recognises.
+
+      The deep flag re-signs every nested binary (.NET framework dylibs)
+      so nothing in the bundle carries a stale signature that would fail
+      Gatekeeper inspection. The dash signing identity is ad-hoc: free,
+      works on the dev machine and for sideloaded installs, but won't
+      bypass Gatekeeper on other Macs. When the Apple Developer Program
+      enrolment lands, swap the dash for a "Developer ID Application:..."
+      identity (and follow with notarisation + stapling); the rest of
+      this command is unchanged.
+    -->
+    <Exec Command="codesign -f --deep -s - -i com.jaredballen.BoltMate &quot;$(_AppBundlePath)&quot;"
+          IgnoreExitCode="true" />
+
     <Message Importance="high" Text="Built macOS app bundle: $(_AppBundlePath)" />
   </Target>
 

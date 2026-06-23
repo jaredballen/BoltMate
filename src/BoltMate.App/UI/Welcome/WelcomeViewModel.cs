@@ -300,24 +300,39 @@ public sealed class WelcomeViewModel : ViewModelBase
         };
         if (permission is null) return null;
 
-        return permission.IsGrantedChanged.Subscribe(granted =>
+        // Skip the initial synchronous replay from IsGrantedChanged's
+        // BehaviorSubject. Auto-advance is meant to handle "user clicked
+        // Grant (or granted elsewhere) WHILE on the primer page" — not
+        // "permission was already granted at first render." Without this
+        // skip, opening a primer whose permission is already granted
+        // (re-launch, fix-flow with no real change, multicast probe
+        // optimistically returning Granted at boot) auto-advances within
+        // milliseconds and the user never sees the page. Status line is
+        // still refreshed via a separate observable so the page reflects
+        // the current grant state immediately.
+        permission.IsGrantedChanged.Subscribe(_ =>
         {
             if (_torndown || _completedSuccessfully) return;
-            try
+            try { UpdateStatusLines(); } catch { /* swallow */ }
+        });
+        return permission.IsGrantedChanged
+            .DistinctUntilChanged()
+            .Skip(1)
+            .Subscribe(granted =>
             {
-                UpdateStatusLines();
-                if (granted)
+                if (_torndown || _completedSuccessfully) return;
+                if (!granted) return;
+                try
                 {
                     _log.LogInformation("Auto-advance: {Permission} granted while on {Page}", permission.Name, pageName);
                     SaveCheckpoint(permission.Name);
                     AdvanceToNextRequiredPermissionOrDone();
                 }
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Page watcher swallowed for {Permission}", permission.Name);
-            }
-        });
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Page watcher swallowed for {Permission}", permission.Name);
+                }
+            });
     }
 
     private void AdvanceToNextRequiredPermissionOrDone()
@@ -419,7 +434,21 @@ public sealed class WelcomeViewModel : ViewModelBase
         try
         {
             setEnabled(true);
-            if (!granted && refusalPage is not null && CurrentPage != refusalPage)
+            if (granted)
+            {
+                // Explicit advance on successful grant — the WatchPermission
+                // subscriber Skip(1)s the initial replay, so it'll only fire
+                // on a denied→granted transition. When the permission was
+                // already granted at button-press, GrantAsync returns true
+                // synchronously with no state change → no emission to catch.
+                // Driving the advance from here covers both cases (already
+                // granted + just granted) without risk of double-advancing
+                // because AdvanceToNextRequiredPermissionOrDone is idempotent
+                // wrt the current page.
+                SaveCheckpoint(permission.Name);
+                AdvanceToNextRequiredPermissionOrDone();
+            }
+            else if (refusalPage is not null && CurrentPage != refusalPage)
             {
                 ShowPage(refusalPage);
             }

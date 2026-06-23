@@ -221,7 +221,7 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> OpenNetworkSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
-    // TEMP: notification probe — remove once OS-toast wiring is verified.
+    public ReactiveCommand<Unit, Unit> OpenNotificationSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> SendTestNotificationCommand { get; }
 
     public SettingsViewModel(
@@ -273,9 +273,15 @@ public sealed class SettingsViewModel : ViewModelBase
 
         OpenLogsFolderCommand = ReactiveCommand.Create(() => RevealInFileManager(AppPaths.LogsDirectory));
 
-        // TEMP: end-to-end probe so the user can verify Mac/Win toast wiring
-        // from the UI without waiting for a real health-alert. Drop with the
-        // matching XAML button once both platforms are confirmed working.
+        OpenNotificationSettingsCommand = ReactiveCommand.Create(() =>
+        {
+            NotificationsSettings.OpenOsSettings();
+        });
+
+        // End-to-end probe so the user can verify the OS-toast wiring from
+        // the UI without waiting for a real health-alert. Lives alongside
+        // the Open-Settings button so a denied permission can be flipped on
+        // then re-tested without leaving the page.
         SendTestNotificationCommand = ReactiveCommand.Create(() =>
         {
             LocalNotifications.TryPost(
