@@ -58,14 +58,11 @@
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="20,12,20,0" />
-            <StackPanel Grid.Row="4" Orientation="Vertical"
-                        HorizontalAlignment="Center"
-                        Margin="0,0,0,16" Spacing="6">
-                <CheckBox Content="Launch BoltMate when I sign in"
-                          IsChecked="{Binding AutostartChecked, Mode=TwoWay}" />
-                <CheckBox Content="Allow BoltMate to send notifications"
-                          IsChecked="{Binding NotificationsRequestedAtWelcome, Mode=TwoWay}" />
-            </StackPanel>
+            <CheckBox Grid.Row="4"
+                      Content="Launch BoltMate when I sign in"
+                      IsChecked="{Binding AutostartChecked, Mode=TwoWay}"
+                      HorizontalAlignment="Center"
+                      Margin="0,0,0,16" />
             <StackPanel Grid.Row="5" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Get started"
@@ -219,6 +216,46 @@
                         Classes="accent"
                         IsEnabled="{Binding InputMonitoringRefusalGrantEnabled}"
                         Command="{Binding InputMonitoringRefusalGrantCommand}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ====================== NOTIFICATIONS PRIMER ==================== -->
+        <Grid x:Name="PageNotificationsPrimer"
+              Margin="32"
+              IsVisible="{Binding ShowNotificationsPrimer}"
+              RowDefinitions="Auto,Auto,Auto,*,Auto">
+            <ui:FASymbolIcon Grid.Row="0"
+                             Symbol="Comment"
+                             FontSize="56"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,16" />
+            <TextBlock Grid.Row="1"
+                       Text="Allow BoltMate to send notifications"
+                       FontSize="22" FontWeight="SemiBold"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       HorizontalAlignment="Center" />
+            <TextBlock Grid.Row="2"
+                       Text="BoltMate uses OS notifications to surface alerts when something needs your attention — a permission gets revoked, the LAN drops, or no Bolt receiver is connected. Notifications are optional; BoltMate works fine without them. Tap Allow to bring up the OS prompt."
+                       FontSize="13"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,12,10,0" />
+            <TextBlock Grid.Row="3"
+                       Text="{Binding NotificationsStatusLine}"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       FontSize="12"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Margin="10,16,10,0" />
+            <StackPanel Grid.Row="4" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Open notification settings"
+                        Command="{Binding NotificationsPrimerOpenSettingsCommand}" />
+                <Button Content="Not now"
+                        Command="{Binding NotificationsPrimerNotNowCommand}" />
+                <Button Content="Allow"
+                        Classes="accent"
+                        IsEnabled="{Binding NotificationsPrimerGrantEnabled}"
+                        Command="{Binding NotificationsPrimerAllowCommand}" />
             </StackPanel>
         </Grid>
 

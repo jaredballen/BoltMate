@@ -236,6 +236,7 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenNotificationSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsToggleClickedCommand { get; }
     public ReactiveCommand<Unit, Unit> SendTestNotificationCommand { get; }
 
     public SettingsViewModel(
@@ -292,17 +293,31 @@ public sealed class SettingsViewModel : ViewModelBase
             NotificationsSettings.OpenOsSettings();
         });
 
+        // Hybrid toggle click. Drives the smart-action flow:
+        //   • Status NotDetermined → fire UN requestAuthorization (modal)
+        //   • Status Denied / Authorized → open System Settings
+        // Routed through IPermission.GrantAsync so the per-platform impl
+        // owns the policy. Win has no modal API; it always opens Settings.
+        NotificationsToggleClickedCommand = ReactiveCommand.CreateFromTask(async () =>
+        {
+            try
+            {
+                await _permissions.Notifications.GrantAsync();
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() => RefreshNotificationsCard());
+                _ = ex; // swallow; UI will refresh on next IsGrantedChanged tick anyway
+            }
+        });
+
         // End-to-end probe so the user can verify the OS-toast wiring from
         // the UI without waiting for a real health-alert. Lives alongside
         // the Open-Settings button so a denied permission can be flipped on
         // then re-tested without leaving the page.
         SendTestNotificationCommand = ReactiveCommand.Create(() =>
         {
-            // Unconditional post — the user explicitly asked for a test, so
-            // honour it even if the persisted state is Disabled. Lets them
-            // verify the OS-side wiring + see the reactive Allow / Don't
-            // Allow banner without first having to flip a setting.
-            LocalNotifications.PostUnconditional(
+            LocalNotifications.TryPost(
                 "BoltMate · Test notification",
                 $"Posted at {DateTime.Now:HH:mm:ss}. If you see this, OS notifications are wired up.");
         });
@@ -335,25 +350,24 @@ public sealed class SettingsViewModel : ViewModelBase
         Activation.Add(_permissions.Autostart.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
 
-        // Notifications card binds to the persisted tri-state instead of
-        // an IPermission probe — until the UN bridge lands we have no
-        // reliable Mac-side live OS state to surface, and on Win the
-        // registry probe runs from the permission path already. The
-        // tri-state captures the user's preference and any future probe
-        // observation (Disabled / UserRequested / OSGranted).
+        // Notifications card binds to the live IPermission state. The Mac
+        // impl probes UNUserNotificationCenter.authorizationStatus via
+        // the boltmate_un sidecar; Win reads the per-AUMID registry key.
+        // Both flow through PermissionsService's 1Hz backstop poll plus
+        // the reactive wake / network-change triggers, so a flip in OS
+        // Settings reflects within ~1s in the card.
+        Activation.Add(_permissions.Notifications.IsGrantedChanged
+            .Subscribe(_ => Dispatcher.UIThread.Post(RefreshNotificationsCard)));
         RefreshNotificationsCard();
     }
 
     private void RefreshNotificationsCard()
     {
-        var state = _settings.NotificationsState;
-        NotificationsEnabled = state is not NotificationsState.Disabled;
-        NotificationsStatusLine = state switch
-        {
-            NotificationsState.OSGranted     => "Status: Enabled — confirmed by the OS",
-            NotificationsState.UserRequested => "Status: Enabled — awaiting OS confirmation",
-            _                                => "Status: Disabled — click the toggle to open System Settings",
-        };
+        var granted = _permissions.Notifications.IsGranted;
+        NotificationsEnabled = granted;
+        NotificationsStatusLine = granted
+            ? "Status: Enabled in System Settings"
+            : "Status: Disabled — click the toggle to manage in System Settings";
     }
 
     /// <summary>Dispose per-activation subscriptions (window hide / close).</summary>

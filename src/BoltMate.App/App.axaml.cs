@@ -102,14 +102,6 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("BoltMate.App starting (Avalonia 12)");
 
-        // Notifications gate — LocalNotifications.TryPost reads this on
-        // every call so we honour mid-session preference changes (Settings
-        // toggle opens System Settings; user can flip OS state which
-        // PermissionsService observes and writes back into _settings
-        // when the UN bridge lands). Reading via closure means we don't
-        // need to push state updates into the static class.
-        LocalNotifications.StateProvider = () => _settings.NotificationsState;
-
         // macOS menubar app-name fix. SetProcessName in Program.Main ran
         // before Avalonia bootstrapped, but Avalonia builds NSApp.mainMenu
         // using its own cached title. Rewrite the menu item title here AND

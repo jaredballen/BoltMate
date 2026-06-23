@@ -38,12 +38,14 @@ public sealed class WelcomeViewModel : ViewModelBase
 {
     public const string PermissionNetwork = "network";
     public const string PermissionInputMonitoring = "input-monitoring";
+    public const string PermissionNotifications = "notifications";
 
     public const string PageWelcome = "PageWelcome";
     public const string PageNetworkPrimer = "PageNetworkPrimer";
     public const string PageNetworkRefusal = "PageNetworkRefusal";
     public const string PageInputMonitoringPrimer = "PageInputMonitoringPrimer";
     public const string PageInputMonitoringRefusal = "PageInputMonitoringRefusal";
+    public const string PageNotificationsPrimer = "PageNotificationsPrimer";
     public const string PageDone = "PageDone";
     public const string PageLinux = "PageLinux";
 
@@ -51,6 +53,7 @@ public sealed class WelcomeViewModel : ViewModelBase
     {
         PageWelcome, PageNetworkPrimer, PageNetworkRefusal,
         PageInputMonitoringPrimer, PageInputMonitoringRefusal,
+        PageNotificationsPrimer,
         PageDone, PageLinux,
     };
 
@@ -96,6 +99,7 @@ public sealed class WelcomeViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(ShowNetworkRefusal));
             this.RaisePropertyChanged(nameof(ShowInputMonitoringPrimer));
             this.RaisePropertyChanged(nameof(ShowInputMonitoringRefusal));
+            this.RaisePropertyChanged(nameof(ShowNotificationsPrimer));
             this.RaisePropertyChanged(nameof(ShowDone));
             this.RaisePropertyChanged(nameof(ShowLinux));
         }
@@ -106,6 +110,7 @@ public sealed class WelcomeViewModel : ViewModelBase
     public bool ShowNetworkRefusal => CurrentPage == PageNetworkRefusal;
     public bool ShowInputMonitoringPrimer => CurrentPage == PageInputMonitoringPrimer;
     public bool ShowInputMonitoringRefusal => CurrentPage == PageInputMonitoringRefusal;
+    public bool ShowNotificationsPrimer => CurrentPage == PageNotificationsPrimer;
     public bool ShowDone => CurrentPage == PageDone;
     public bool ShowLinux => CurrentPage == PageLinux;
 
@@ -153,11 +158,18 @@ public sealed class WelcomeViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _inputMonitoringRefusalGrantEnabled, value);
     }
 
-    private bool _notificationsRequestedAtWelcome = true;
-    public bool NotificationsRequestedAtWelcome
+    private string _notificationsStatusLine = "";
+    public string NotificationsStatusLine
     {
-        get => _notificationsRequestedAtWelcome;
-        set => this.RaiseAndSetIfChanged(ref _notificationsRequestedAtWelcome, value);
+        get => _notificationsStatusLine;
+        set => this.RaiseAndSetIfChanged(ref _notificationsStatusLine, value);
+    }
+
+    private bool _notificationsPrimerGrantEnabled = true;
+    public bool NotificationsPrimerGrantEnabled
+    {
+        get => _notificationsPrimerGrantEnabled;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPrimerGrantEnabled, value);
     }
 
     private bool _autostartChecked = true;
@@ -176,6 +188,9 @@ public sealed class WelcomeViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> InputMonitoringPrimerGrantCommand { get; }
     public ReactiveCommand<Unit, Unit> InputMonitoringPrimerNotNowCommand { get; }
     public ReactiveCommand<Unit, Unit> InputMonitoringRefusalGrantCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsPrimerAllowCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsPrimerNotNowCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsPrimerOpenSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> QuitCommand { get; }
     public ReactiveCommand<Unit, Unit> DoneOpenCommand { get; }
 
@@ -216,6 +231,34 @@ public sealed class WelcomeViewModel : ViewModelBase
         InputMonitoringRefusalGrantCommand = ReactiveCommand.CreateFromTask(() =>
             GrantOrRefuseAsync(_permissions.InputMonitoring, refusalPage: null,
                 setEnabled: v => InputMonitoringRefusalGrantEnabled = v));
+
+        // Notifications primer: Allow → fires UNUserNotificationCenter.
+        // requestAuthorization which drives the OS modal. Whatever the
+        // user picks, advance to Done — notifications are non-blocking.
+        // If we're past NotDetermined (the user previously denied),
+        // GrantOrRefuseAsync's DispatchSetGrantedAsync transparently
+        // opens System Settings instead because the OS won't re-fire
+        // the modal once denied.
+        NotificationsPrimerAllowCommand = ReactiveCommand.CreateFromTask(async () =>
+        {
+            await GrantOrRefuseAsync(_permissions.Notifications, refusalPage: null,
+                setEnabled: v => NotificationsPrimerGrantEnabled = v);
+            // Whether the user said yes or no, this step is "done" — we
+            // got a definitive answer, no need to keep showing the primer.
+            SaveCheckpoint(PermissionNotifications);
+            AdvanceToNextRequiredPermissionOrDone();
+        });
+        NotificationsPrimerNotNowCommand = ReactiveCommand.Create(() =>
+        {
+            _log.LogInformation("User tapped Not now on notifications primer");
+            SaveCheckpoint(PermissionNotifications);
+            AdvanceToNextRequiredPermissionOrDone();
+        });
+        NotificationsPrimerOpenSettingsCommand = ReactiveCommand.Create(() =>
+        {
+            _log.LogInformation("User tapped Open notification settings");
+            NotificationsSettings.OpenOsSettings();
+        });
 
         QuitCommand = ReactiveCommand.Create(() =>
         {
@@ -268,6 +311,7 @@ public sealed class WelcomeViewModel : ViewModelBase
         {
             PermissionNetwork         => PageNetworkPrimer,
             PermissionInputMonitoring => PageInputMonitoringPrimer,
+            PermissionNotifications   => PageNotificationsPrimer,
             _                         => PageNetworkPrimer,
         };
         ShowPage(target);
@@ -304,6 +348,7 @@ public sealed class WelcomeViewModel : ViewModelBase
         {
             PageNetworkPrimer or PageNetworkRefusal => _permissions.Network,
             PageInputMonitoringPrimer or PageInputMonitoringRefusal => _permissions.InputMonitoring,
+            PageNotificationsPrimer => _permissions.Notifications,
             _ => null,
         };
         if (permission is null) return null;
@@ -378,6 +423,22 @@ public sealed class WelcomeViewModel : ViewModelBase
             SaveCheckpoint(PermissionInputMonitoring);
         }
 
+        // Notifications primer — non-blocking. Only show on first run until
+        // the user has resolved it (either Allow or Not now). After the
+        // checkpoint is saved, subsequent fix-permissions flows skip
+        // straight to whichever required permission is still missing.
+        if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
+        {
+            if (_isFirstRun && !_settings.NotificationsStepCompleted
+                && !_primersShownThisSession.Contains(PermissionNotifications))
+            {
+                _log.LogInformation("Permission gate: notifications — showing primer");
+                _primersShownThisSession.Add(PermissionNotifications);
+                ShowPage(PageNotificationsPrimer);
+                return;
+            }
+        }
+
         _log.LogInformation("Permission gate: all required permissions granted — Done");
         ShowPage(PageDone);
     }
@@ -390,6 +451,9 @@ public sealed class WelcomeViewModel : ViewModelBase
         InputMonitoringStatusLine = _permissions.InputMonitoring.IsGranted
             ? "HID device access: granted"
             : "HID device access: denied";
+        NotificationsStatusLine = _permissions.Notifications.IsGranted
+            ? "Notifications: enabled"
+            : "Notifications: not yet enabled";
     }
 
     private void SaveCheckpoint(string step)
@@ -401,6 +465,7 @@ public sealed class WelcomeViewModel : ViewModelBase
                 case PageWelcome:                       _settings.WelcomeStepCompleted = true; break;
                 case PermissionNetwork:                 _settings.NetworkStepCompleted = true; break;
                 case PermissionInputMonitoring:         _settings.InputMonitoringStepCompleted = true; break;
+                case PermissionNotifications:           _settings.NotificationsStepCompleted = true; break;
                 case "welcome":                         _settings.WelcomeStepCompleted = true; break;
             }
             _settings.Save();
@@ -416,34 +481,10 @@ public sealed class WelcomeViewModel : ViewModelBase
 
     private async Task OnGetStartedAsync()
     {
-        _log.LogInformation("User clicked Get started (autostart={Autostart}, notifications={Notifications})",
-            AutostartChecked, NotificationsRequestedAtWelcome);
+        _log.LogInformation("User clicked Get started (autostart={Autostart})", AutostartChecked);
         await ApplyAutostartFromToggleAsync();
-        ApplyNotificationsFromCheckbox();
         SaveCheckpoint("welcome");
         AdvanceToNextRequiredPermissionOrDone();
-    }
-
-    /// <summary>
-    /// Captures the welcome-page Notifications checkbox into the
-    /// persisted tri-state. Checked → UserRequested (we'll trust the
-    /// user's intent until either the OS confirms with OSGranted or
-    /// observation flips us back to Disabled). Unchecked → Disabled —
-    /// LocalNotifications short-circuits on this and never posts.
-    /// </summary>
-    private void ApplyNotificationsFromCheckbox()
-    {
-        try
-        {
-            _settings.NotificationsState = NotificationsRequestedAtWelcome
-                ? NotificationsState.UserRequested
-                : NotificationsState.Disabled;
-            _settings.Save();
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to persist Notifications welcome choice");
-        }
     }
 
     private async Task GrantOrRefuseAsync(IPermission permission, string? refusalPage, Action<bool> setEnabled)

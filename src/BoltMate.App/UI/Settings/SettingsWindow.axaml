@@ -263,7 +263,7 @@
                                         -->
                                         <ToggleSwitch Grid.Column="1"
                                                       IsChecked="{Binding NotificationsEnabled, Mode=OneWay}"
-                                                      Command="{Binding OpenNotificationSettingsCommand}"
+                                                      Command="{Binding NotificationsToggleClickedCommand}"
                                                       OnContent="" OffContent=""
                                                       MinWidth="0" />
                                     </Grid>

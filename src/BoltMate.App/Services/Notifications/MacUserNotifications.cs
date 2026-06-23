@@ -8,31 +8,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BoltMate.App.Services;
 
 /// <summary>
-/// macOS notification surface. <b>Currently delivers via the legacy
-/// NSUserNotification path</b> — the OS still routes them properly now
-/// that the bundle is signed with com.jaredballen.BoltMate (see the
-/// ad-hoc resign step in Directory.Build.targets), so banners fire on
-/// modern macOS without needing UNUserNotificationCenter for delivery.
+/// macOS notification surface — UNUserNotificationCenter via the
+/// <c>libboltmate_un.dylib</c> sidecar. The dylib is a tiny Objective-C
+/// translation unit (see <c>Native/Mac/boltmate_un.m</c>) that wraps
+/// the three calls we need in plain C functions so the .NET host can
+/// hit them through ordinary <see cref="DllImport"/>. Blocks live
+/// entirely on the Objective-C side, which sidesteps the libdispatch /
+/// foreign-thread reverse-P/Invoke instability we kept hitting when we
+/// tried to construct blocks from C#.
 /// </summary>
-/// <remarks>
-/// UN center integration is deferred. Two attempts to hand-roll the
-/// Objective-C block ABI in pure C# segfaulted on init — the second one
-/// with a "Data Abort byte write Permission fault" at address 0 during
-/// what looked like the OS's Block_copy step. The most likely fix is to
-/// declare blocks with <c>_NSConcreteMallocBlock</c> + a proper refcount
-/// in the flags field (rather than <c>_NSConcreteStackBlock</c>), but
-/// that needs careful testing in isolation. Until then,
-/// <see cref="GetAuthorizationStatus"/> returns <c>NotDetermined</c> as
-/// a placeholder so callers fall back to the locally-persisted
-/// <c>AppSettings.NotificationsState</c> as the source of truth.
-///
-/// Delivery uses NSUserNotification: works for unsigned/sideloaded apps
-/// after the bundle's signing identity is consistent with its
-/// CFBundleIdentifier, which we have now. The first notification fired
-/// after a clean install triggers the OS's reactive "Allow / Don't Allow"
-/// banner; the app's row appears in System Settings → Notifications
-/// after that.
-/// </remarks>
 [System.Runtime.Versioning.SupportedOSPlatform("macos")]
 internal static class MacUserNotifications
 {
@@ -55,78 +39,83 @@ internal static class MacUserNotifications
 
     public static ILogger Log { get; set; } = NullLogger.Instance;
 
-    private const string ObjC = "/usr/lib/libobjc.A.dylib";
+    // The dylib is staged into Contents/MacOS/ next to the host binary
+    // by Directory.Build.targets. dlopen's default search includes that
+    // directory when launched via the .app bundle, so this base name
+    // resolves without an absolute path.
+    private const string Lib = "libboltmate_un";
 
-    [DllImport(ObjC, EntryPoint = "objc_getClass")]
-    private static extern IntPtr GetClass(string name);
+    [DllImport(Lib, EntryPoint = "bm_un_get_status")]
+    private static extern int NativeGetStatus();
 
-    [DllImport(ObjC, EntryPoint = "sel_registerName")]
-    private static extern IntPtr GetSelector(string name);
+    [DllImport(Lib, EntryPoint = "bm_un_request_authorization")]
+    private static extern int NativeRequestAuthorization(int options);
 
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
-    private static extern IntPtr Send(IntPtr receiver, IntPtr sel);
-
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
-    private static extern IntPtr Send_str(IntPtr receiver, IntPtr sel, [MarshalAs(UnmanagedType.LPStr)] string s);
-
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
-    private static extern IntPtr Send_obj(IntPtr receiver, IntPtr sel, IntPtr a);
+    [DllImport(Lib, EntryPoint = "bm_un_deliver", CharSet = CharSet.Ansi)]
+    private static extern int NativeDeliver(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string title,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string body);
 
     /// <summary>
-    /// Stubbed until the UN bridge lands — returns NotDetermined so the
-    /// caller falls back to the persisted user preference.
+    /// Synchronous status probe. Returns <see cref="AuthorizationStatus.NotDetermined"/>
+    /// on any error so callers can fall through to the "ask the user"
+    /// path.
     /// </summary>
-    public static AuthorizationStatus GetAuthorizationStatus() => AuthorizationStatus.NotDetermined;
-
-    public static Task<AuthorizationStatus> GetAuthorizationStatusAsync()
-        => Task.FromResult(AuthorizationStatus.NotDetermined);
+    public static AuthorizationStatus GetAuthorizationStatus()
+    {
+        try
+        {
+            var raw = NativeGetStatus();
+            if (raw < 0) return AuthorizationStatus.NotDetermined;
+            return (AuthorizationStatus)raw;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "bm_un_get_status threw");
+            return AuthorizationStatus.NotDetermined;
+        }
+    }
 
     /// <summary>
-    /// Stubbed until the UN bridge lands — opens System Settings since
-    /// we have no API to drive the prompt without UN.
+    /// Drives the OS modal Allow / Don't Allow prompt. Sync over async at
+    /// the native layer — the sidecar semaphore-waits on the OS callback.
+    /// Wrapped in <see cref="Task.Run"/> here so the caller can await
+    /// without blocking the UI thread; the modal can sit on screen for
+    /// many seconds while the user decides.
     /// </summary>
     public static Task<bool> RequestAuthorizationAsync(
         AuthorizationOptions options = AuthorizationOptions.Alert | AuthorizationOptions.Sound,
         CancellationToken ct = default)
     {
-        NotificationsSettings.OpenOsSettings();
-        return Task.FromResult(true);
+        return Task.Run(() =>
+        {
+            try
+            {
+                var raw = NativeRequestAuthorization((int)options);
+                return raw == 1;
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(ex, "bm_un_request_authorization threw");
+                return false;
+            }
+        }, ct);
     }
 
     /// <summary>
-    /// NSUserNotification delivery. Works on the now-correctly-signed
-    /// bundle. Returns true if the deliverNotification: send completed
-    /// without throwing — not a guarantee the banner rendered, the OS
-    /// can still drop it under Focus / Do Not Disturb.
+    /// Fires a UNNotificationRequest. Auth-gated by the OS — denied
+    /// posts drop silently, no exception here. Returns false only on
+    /// argument / encoding failure.
     /// </summary>
     public static bool Deliver(string title, string body)
     {
         try
         {
-            var nsStringClass = GetClass("NSString");
-            var stringWithUtf8 = GetSelector("stringWithUTF8String:");
-            var titleNs = Send_str(nsStringClass, stringWithUtf8, title);
-            var bodyNs  = Send_str(nsStringClass, stringWithUtf8, body);
-
-            var nunClass = GetClass("NSUserNotification");
-            if (nunClass == IntPtr.Zero) return false;
-            var notif = Send(nunClass, GetSelector("alloc"));
-            notif = Send(notif, GetSelector("init"));
-            if (notif == IntPtr.Zero) return false;
-
-            Send_obj(notif, GetSelector("setTitle:"), titleNs);
-            Send_obj(notif, GetSelector("setInformativeText:"), bodyNs);
-
-            var centerClass = GetClass("NSUserNotificationCenter");
-            if (centerClass == IntPtr.Zero) return false;
-            var center = Send(centerClass, GetSelector("defaultUserNotificationCenter"));
-            if (center == IntPtr.Zero) return false;
-            Send_obj(center, GetSelector("deliverNotification:"), notif);
-            return true;
+            return NativeDeliver(title ?? "", body ?? "") == 1;
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "NSUserNotification deliver threw");
+            Log.LogWarning(ex, "bm_un_deliver threw");
             return false;
         }
     }

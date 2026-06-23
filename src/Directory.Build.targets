@@ -115,6 +115,20 @@
     <Exec Command="chmod +x &quot;$(_AppMacOS)/BoltMate&quot;" IgnoreExitCode="true" />
 
     <!--
+      Compile the Objective-C UNUserNotificationCenter sidecar into a
+      tiny dylib alongside the main binary. Lets the .NET host call into
+      the modern notifications API via plain DllImports — blocks stay
+      entirely on the Objective-C side rather than crossing the managed
+      boundary, which is the only reliable way to talk to libdispatch-
+      backed completion-handler APIs from C#. The dylib is placed in
+      Contents/MacOS so the default dlopen search picks it up next to
+      the executable; this step runs BEFORE the codesign step below so
+      the dylib gets sealed into the bundle's signature.
+    -->
+    <Exec Command="clang -arch arm64 -fobjc-arc -dynamiclib -framework Foundation -framework UserNotifications -o &quot;$(_AppMacOS)/libboltmate_un.dylib&quot; &quot;$(MSBuildThisFileDirectory)BoltMate.App/Native/Mac/boltmate_un.m&quot;"
+          IgnoreExitCode="false" />
+
+    <!--
       Re-sign the bundle ad-hoc with our CFBundleIdentifier so the signing
       identity matches the Info.plist. Without this step the .NET apphost
       stub ships with Identifier=apphost + Info.plist=not bound, which

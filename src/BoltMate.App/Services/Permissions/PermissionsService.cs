@@ -427,15 +427,32 @@ public sealed class PermissionsService : IPermissionsService
     /// requestAuthorization (fires the OS prompt on NotDetermined, opens
     /// System Settings on Denied since the prompt can't be re-issued).
     /// </summary>
+    /// <summary>
+    /// macOS notifications gated by UNUserNotificationCenter via the
+    /// boltmate_un sidecar dylib. Probe is a synchronous status read;
+    /// grant dispatch differentiates by current state so the click /
+    /// Allow action does the right thing:
+    ///   • NotDetermined → requestAuthorization (drives the modal)
+    ///   • Denied        → open System Settings (modal won't fire again)
+    ///   • Authorized    → no-op (already granted)
+    /// </summary>
     internal sealed class MacNotificationsPermissionImpl : PermissionBase
     {
         public MacNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
         public override bool CanRevoke => false;
 
+        /// <summary>
+        /// Exposes the raw UN authorization status so the UI can
+        /// distinguish NotDetermined from Denied — needed to pick the
+        /// right click action on the About-tab toggle.
+        /// </summary>
+        public MacUserNotifications.AuthorizationStatus CurrentStatus { get; private set; }
+            = MacUserNotifications.AuthorizationStatus.NotDetermined;
+
         protected override ProbeStatus ProbeOs()
         {
-            var status = MacUserNotifications.GetAuthorizationStatus();
-            return status switch
+            CurrentStatus = MacUserNotifications.GetAuthorizationStatus();
+            return CurrentStatus switch
             {
                 MacUserNotifications.AuthorizationStatus.Authorized  => ProbeStatus.Granted,
                 MacUserNotifications.AuthorizationStatus.Provisional => ProbeStatus.Granted,
@@ -448,6 +465,8 @@ public sealed class PermissionsService : IPermissionsService
         {
             if (!target) return;
             var status = MacUserNotifications.GetAuthorizationStatus();
+            CurrentStatus = status;
+
             if (status is MacUserNotifications.AuthorizationStatus.Authorized
                 or MacUserNotifications.AuthorizationStatus.Provisional)
                 return;
@@ -460,7 +479,12 @@ public sealed class PermissionsService : IPermissionsService
             }
 
             Log.LogInformation("Notifications not determined — issuing requestAuthorization");
-            await MacUserNotifications.RequestAuthorizationAsync(ct: ct).ConfigureAwait(false);
+            var granted = await MacUserNotifications.RequestAuthorizationAsync(ct: ct).ConfigureAwait(false);
+            Log.LogInformation("requestAuthorization returned granted={Granted}", granted);
+            // Re-probe so CurrentStatus reflects the user's choice + the
+            // PermissionBase's published IsGranted lights up on the next
+            // tick of the 1Hz backstop.
+            CurrentStatus = MacUserNotifications.GetAuthorizationStatus();
         }
     }
 
