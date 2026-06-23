@@ -418,16 +418,26 @@ public sealed class WelcomeViewModel : ViewModelBase
         }
 
         // Notifications primer — non-blocking + optional. Skip entirely
-        // when already granted (e.g. user previously allowed BoltMate and
-        // is going through the welcome again after a reinstall). Only
-        // show on first run until the user has resolved it (Allow or Not
-        // now). After the checkpoint is saved subsequent fix-permissions
-        // flows skip straight to whichever required permission is missing.
+        // when already granted; on first run, show the primer and STAY
+        // until the user acts via Allow or Not now (both buttons save the
+        // checkpoint explicitly so the next Advance walks past).
+        //
+        // Previously this branch fell through to Done when the primer had
+        // been "shown this session" but the checkpoint hadn't been saved
+        // yet — meaning a spurious second Advance call (TcpListener
+        // release event, etc.) could silently dump the user onto Done
+        // even though they hadn't seen any prompt. Now: if we're already
+        // on the primer page and not granted, return without advancing.
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
             if (_permissions.Notifications.IsGranted)
             {
                 SaveCheckpoint(PermissionNotifications);
+            }
+            else if (CurrentPage == PageNotificationsPrimer)
+            {
+                // User is on the primer and hasn't acted. Wait for them.
+                return;
             }
             else if (_isFirstRun && !_settings.NotificationsStepCompleted
                      && !_primersShownThisSession.Contains(PermissionNotifications))
