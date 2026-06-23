@@ -32,7 +32,7 @@ namespace BoltMate.Core.Services;
 /// </remarks>
 public sealed class TopologyCorrelator : ITopologyCorrelator
 {
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly ISwitcherService _switcher;
     private readonly IObservable<ReceiverAnnouncement> _announcements;
     private readonly IReadOnlyList<string> _localHostNames;
@@ -55,7 +55,7 @@ public sealed class TopologyCorrelator : ITopologyCorrelator
     private readonly TimeProvider _time;
 
     public TopologyCorrelator(
-        ReceiverManager manager,
+        IReceiverManager manager,
         ISwitcherService switcher,
         IObservable<ReceiverAnnouncement> announcements,
         IReadOnlyList<string> localHostNames,

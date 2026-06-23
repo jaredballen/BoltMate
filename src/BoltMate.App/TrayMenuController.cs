@@ -21,7 +21,7 @@ namespace BoltMate.App;
 public sealed class TrayMenuController : IDisposable
 {
     private readonly NativeMenu _menu;
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly IPermissionsService _permissions;
     private readonly ILogger<TrayMenuController> _logger;
     private readonly CompositeDisposable _disposables = new();
@@ -32,7 +32,7 @@ public sealed class TrayMenuController : IDisposable
 
     public TrayMenuController(
         NativeMenu menu,
-        ReceiverManager manager,
+        IReceiverManager manager,
         IPermissionsService permissions,
         ILogger<TrayMenuController> logger)
     {

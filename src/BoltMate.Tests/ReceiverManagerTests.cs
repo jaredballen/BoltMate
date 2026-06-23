@@ -1,5 +1,6 @@
 using DynamicData;
 using BoltMate.Core.Bolt;
+using BoltMate.Core.Services;
 using BoltMate.Tests.Support;
 using Xunit;
 

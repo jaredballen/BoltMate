@@ -1,5 +1,6 @@
 using DynamicData;
 using BoltMate.Core.Bolt;
+using BoltMate.Core.Services;
 using BoltMate.Hid.Abstractions;
 using BoltMate.Core.HidPp;
 using BoltMate.Core.HidPp.Notifications;

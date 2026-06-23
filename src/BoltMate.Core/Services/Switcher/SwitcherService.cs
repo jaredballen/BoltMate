@@ -33,7 +33,7 @@ namespace BoltMate.Core.Services;
 /// </remarks>
 public sealed class SwitcherService : ISwitcherService
 {
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly ILogger<SwitcherService> _logger;
     private readonly Subject<FanOutEvent> _fanOuts = new();
     private readonly Subject<LocalSwitchTrigger> _triggers = new();
@@ -52,7 +52,7 @@ public sealed class SwitcherService : ISwitcherService
     /// </summary>
     public IObservable<LocalSwitchTrigger> LocalSwitchTriggers => _triggers.AsObservable();
 
-    public SwitcherService(ReceiverManager manager, ILogger<SwitcherService>? logger = null)
+    public SwitcherService(IReceiverManager manager, ILogger<SwitcherService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(manager);
         _manager = manager;

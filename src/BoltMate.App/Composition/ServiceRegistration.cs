@@ -3,7 +3,6 @@ using System;
 using BoltMate.App.Permissions;
 using BoltMate.App.Updates;
 using BoltMate.Core;
-using BoltMate.Core.Bolt;
 using BoltMate.Core.Permissions;
 using BoltMate.Hid.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -67,16 +66,16 @@ public static class ServiceRegistration
 
         services.AddSingleton<IPermissionsService, PermissionsService>();
 
-        services.AddSingleton<ReceiverManager>(sp => new ReceiverManager(
+        services.AddSingleton<IReceiverManager>(sp => new ReceiverManager(
             sp.GetRequiredService<IReceiverTransport>(),
             loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
 
         services.AddSingleton<SwitcherService>(sp => new SwitcherService(
-            sp.GetRequiredService<ReceiverManager>(),
+            sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<ILogger<SwitcherService>>()));
 
         services.AddSingleton<DeviceEnricher>(sp => new DeviceEnricher(
-            sp.GetRequiredService<ReceiverManager>(),
+            sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<ILogger<DeviceEnricher>>()));
 
         services.AddSingleton<UpdateService>(sp => new UpdateService(

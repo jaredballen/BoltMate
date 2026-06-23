@@ -3,10 +3,10 @@ using System.Runtime.InteropServices;
 using DynamicData;
 using BoltMate.Core;
 using BoltMate.Core.Bolt;
+using BoltMate.Core.Services;
 using BoltMate.Hid.Abstractions;
 using BoltMate.Hid.IOKit;
 using BoltMate.Core.HidPp;
-using BoltMate.Core.Switcher;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 

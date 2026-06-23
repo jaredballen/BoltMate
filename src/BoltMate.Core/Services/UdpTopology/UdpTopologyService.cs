@@ -32,7 +32,7 @@ namespace BoltMate.Core.Services;
 /// </remarks>
 public sealed class UdpTopologyService : IUdpTopologyService
 {
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly TopologySettings _settings;
     private readonly string _machineId;
     private readonly string _hostname;
@@ -114,7 +114,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
     private readonly TimeProvider _time;
 
     public UdpTopologyService(
-        ReceiverManager manager,
+        IReceiverManager manager,
         TopologySettings settings,
         string machineId,
         ILogger<UdpTopologyService>? logger = null,

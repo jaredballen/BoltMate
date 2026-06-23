@@ -62,7 +62,7 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
     }
 
     public SettingsWindow(
-        ReceiverManager manager,
+        IReceiverManager manager,
         AppSettings settings,
         IPermissionsService permissions,
         IObservable<TransportHealth>? udpHealth = null,

@@ -37,7 +37,7 @@ public sealed class AppHealthService : IDisposable
     private readonly IPermissionsService _permissions;
     private readonly IUdpTopologyService? _udp;
     private readonly IMdnsTcpChannel? _mdns;
-    private readonly ReceiverManager _receivers;
+    private readonly IReceiverManager _receivers;
     private readonly Func<string, string, bool> _postNotification;
     private readonly Action<OverallStatus> _setTrayStatus;
     private readonly ILogger _log;
@@ -59,7 +59,7 @@ public sealed class AppHealthService : IDisposable
         IPermissionsService permissions,
         IUdpTopologyService? udp,
         IMdnsTcpChannel? mdns,
-        ReceiverManager receivers,
+        IReceiverManager receivers,
         Func<string, string, bool> postNotification,
         Action<OverallStatus> setTrayStatus,
         ILogger<AppHealthService>? logger = null)

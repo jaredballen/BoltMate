@@ -6,7 +6,7 @@ using BoltMate.Hid.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Bolt;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// Watches USB for Bolt receivers attaching and detaching, opens a
@@ -20,7 +20,7 @@ namespace BoltMate.Core.Bolt;
 /// avoids platform-specific dependencies. Bumps to OS notifications can be
 /// layered in later without changing this type's public surface.
 /// </remarks>
-public sealed class ReceiverManager : IDisposable
+public sealed class ReceiverManager : IReceiverManager
 {
     private readonly IReceiverTransport _transport;
     private readonly Func<BoltReceiverInfo, IReceiverConnection, BoltReceiver> _factory;

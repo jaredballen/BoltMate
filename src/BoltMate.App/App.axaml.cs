@@ -36,7 +36,7 @@ public partial class App : Application
     public static IServiceProvider Services { get; internal set; } = default!;
 
     private readonly CompositeDisposable _disposables = new();
-    private ReceiverManager? _manager;
+    private IReceiverManager? _manager;
     private ISwitcherService? _switcher;
     private TrayMenuController? _trayController;
     private TrayIconStatusController? _trayStatus;
@@ -210,7 +210,7 @@ public partial class App : Application
         // selection (OS-specific) happened in Program.Main; ReceiverManager
         // resolves it via DI. Both are container-disposed at app exit, so
         // we don't add them to _disposables.
-        _manager = Services.GetRequiredService<ReceiverManager>();
+        _manager = Services.GetRequiredService<IReceiverManager>();
 
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Matches siblings by host friendly name (the

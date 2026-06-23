@@ -21,7 +21,7 @@ namespace BoltMate.App;
 /// </summary>
 public sealed class DeviceEnricher : IDisposable
 {
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly ILogger<DeviceEnricher> _logger;
     private readonly CompositeDisposable _disposables = new();
     // One gate per receiver. Serialises enrichment across slots so we don't
@@ -30,7 +30,7 @@ public sealed class DeviceEnricher : IDisposable
     // time out while slot 2 succeeded, leaving the keyboard unfit for fan-out.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _receiverGates = new();
 
-    public DeviceEnricher(ReceiverManager manager, ILogger<DeviceEnricher> logger)
+    public DeviceEnricher(IReceiverManager manager, ILogger<DeviceEnricher> logger)
     {
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(logger);

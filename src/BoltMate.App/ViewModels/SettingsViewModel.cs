@@ -24,7 +24,7 @@ namespace BoltMate.App.ViewModels;
 /// </summary>
 public sealed class SettingsViewModel : ViewModelBase
 {
-    private readonly ReceiverManager _manager;
+    private readonly IReceiverManager _manager;
     private readonly AppSettings _settings;
     private readonly IPermissionsService _permissions;
     private readonly UpdateService _updates;
@@ -39,7 +39,7 @@ public sealed class SettingsViewModel : ViewModelBase
     // Exposed so the window's BindHealth() can re-construct the VM with
     // fresh transport-health observables when the user toggles topology on
     // or off without restarting the app.
-    internal ReceiverManager Manager => _manager;
+    internal IReceiverManager Manager => _manager;
     internal AppSettings Settings => _settings;
     internal IPermissionsService Permissions => _permissions;
     internal UpdateService Updates => _updates;
@@ -223,7 +223,7 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
 
     public SettingsViewModel(
-        ReceiverManager manager,
+        IReceiverManager manager,
         AppSettings settings,
         IPermissionsService permissions,
         UpdateService updates,

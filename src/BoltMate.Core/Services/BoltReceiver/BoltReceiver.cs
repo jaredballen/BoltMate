@@ -4,14 +4,14 @@ using System.Reactive.Subjects;
 using System.Reactive.Threading.Tasks;
 using DynamicData;
 using BoltMate.Hid.Abstractions;
+using BoltMate.Core.Bolt;
 using BoltMate.Core.HidPp;
 using BoltMate.Core.HidPp.Features;
-using BoltMate.Core.Services;
 using BoltMate.Core.HidPp.Notifications;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BoltMate.Core.Bolt;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// High-level controller for a single Bolt receiver. Owns the underlying HID
