@@ -348,12 +348,16 @@ public sealed class WelcomeViewModel : ViewModelBase
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
             _permissions.Refresh();
-            var alreadyShown = _primersShownThisSession.Contains(PermissionNetwork);
-            var requireShow = _isFirstRun && !alreadyShown && !_settings.NetworkStepCompleted;
-            if (requireShow || !_permissions.Network.IsGranted)
+            // Show the primer only when the permission isn't already granted.
+            // The previous logic also forced the primer on first-run-not-yet-
+            // checkpointed for "educational visibility", but that misbehaved
+            // on the post-grant relaunch macOS forces after IOHIDRequestAccess:
+            // permission was true but the checkpoint save was interrupted, so
+            // we'd re-show the primer the user had just satisfied.
+            if (!_permissions.Network.IsGranted)
             {
-                _log.LogInformation("Permission gate: network granted={Granted}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
-                    _permissions.Network.IsGranted, _isFirstRun, alreadyShown, _settings.NetworkStepCompleted);
+                _log.LogInformation("Permission gate: network not granted — showing primer (firstRun={First}, ckpt={Ckpt})",
+                    _isFirstRun, _settings.NetworkStepCompleted);
                 _primersShownThisSession.Add(PermissionNetwork);
                 ShowPage(PageNetworkPrimer);
                 return;
@@ -363,12 +367,10 @@ public sealed class WelcomeViewModel : ViewModelBase
 
         if (OperatingSystem.IsMacOS())
         {
-            var alreadyShown = _primersShownThisSession.Contains(PermissionInputMonitoring);
-            var requireShow = _isFirstRun && !alreadyShown && !_settings.InputMonitoringStepCompleted;
-            if (requireShow || !_permissions.InputMonitoring.IsGranted)
+            if (!_permissions.InputMonitoring.IsGranted)
             {
-                _log.LogInformation("Permission gate: input-monitoring granted={Granted}, firstRun={First}, alreadyShown={Shown}, ckpt={Ckpt} — showing primer",
-                    _permissions.InputMonitoring.IsGranted, _isFirstRun, alreadyShown, _settings.InputMonitoringStepCompleted);
+                _log.LogInformation("Permission gate: input-monitoring not granted — showing primer (firstRun={First}, ckpt={Ckpt})",
+                    _isFirstRun, _settings.InputMonitoringStepCompleted);
                 _primersShownThisSession.Add(PermissionInputMonitoring);
                 ShowPage(PageInputMonitoringPrimer);
                 return;
