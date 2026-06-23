@@ -190,7 +190,6 @@ public sealed class WelcomeViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> InputMonitoringRefusalGrantCommand { get; }
     public ReactiveCommand<Unit, Unit> NotificationsPrimerAllowCommand { get; }
     public ReactiveCommand<Unit, Unit> NotificationsPrimerNotNowCommand { get; }
-    public ReactiveCommand<Unit, Unit> NotificationsPrimerOpenSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> QuitCommand { get; }
     public ReactiveCommand<Unit, Unit> DoneOpenCommand { get; }
 
@@ -253,11 +252,6 @@ public sealed class WelcomeViewModel : ViewModelBase
             _log.LogInformation("User tapped Not now on notifications primer");
             SaveCheckpoint(PermissionNotifications);
             AdvanceToNextRequiredPermissionOrDone();
-        });
-        NotificationsPrimerOpenSettingsCommand = ReactiveCommand.Create(() =>
-        {
-            _log.LogInformation("User tapped Open notification settings");
-            NotificationsSettings.OpenOsSettings();
         });
 
         QuitCommand = ReactiveCommand.Create(() =>

@@ -248,8 +248,6 @@
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Open notification settings"
-                        Command="{Binding NotificationsPrimerOpenSettingsCommand}" />
                 <Button Content="Not now"
                         Command="{Binding NotificationsPrimerNotNowCommand}" />
                 <Button Content="Allow"
