@@ -1,3 +1,4 @@
+using BoltMate.Core.Permissions;
 using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
 using System.Net;
@@ -72,6 +73,10 @@ public sealed class UdpTopologyService : IUdpTopologyService
     private readonly ManualResetEventSlim _kickBroadcast = new(false);  // wakes the broadcast loop early
     private Task? _receiveTask;
     private Task? _broadcastTask;
+    // Per-bind subscriptions (receiver-event hooks, socket-teardown action).
+    // Disposed + recreated on every permission revoke so a grant/revoke
+    // cycle doesn't pile up duplicate Subscribe handlers.
+    private CompositeDisposable _runtime = new();
     private bool _disposed;
 
     /// <summary>Hot stream of remote-only announcements (own machineId + duplicate seqs filtered).</summary>
@@ -114,11 +119,13 @@ public sealed class UdpTopologyService : IUdpTopologyService
         HandleInbound(announcement, channel);
 
     private readonly TimeProvider _time;
+    private readonly IPermission? _networkPermission;
 
     public UdpTopologyService(
         IReceiverManager manager,
         TopologySettings settings,
         string machineId,
+        IPermission? networkPermission = null,
         ILogger<UdpTopologyService>? logger = null,
         TimeProvider? timeProvider = null)
     {
@@ -126,12 +133,18 @@ public sealed class UdpTopologyService : IUdpTopologyService
         _settings = settings;
         _machineId = machineId;
         _hostname = SafeHostname();
+        _networkPermission = networkPermission;
         _logger = logger ?? NullLogger<UdpTopologyService>.Instance;
         _time = timeProvider ?? TimeProvider.System;
-        _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
-            TransportHealth.Unknown(
+        var initial = networkPermission is { IsGranted: false }
+            ? TransportHealth.PermissionDenied(
                 $"{_settings.MulticastGroup}:{_settings.Port}",
-                "no broadcasts emitted yet"));
+                "Local Network permission not yet granted — UDP topology parked")
+            : TransportHealth.Unknown(
+                $"{_settings.MulticastGroup}:{_settings.Port}",
+                "no broadcasts emitted yet");
+        _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(initial);
+        _lastUdpState = initial.State;
         _disposables.Add(_announcements);
         _disposables.Add(_udpHealth);
     }
@@ -193,10 +206,43 @@ public sealed class UdpTopologyService : IUdpTopologyService
     }
 
     /// <summary>Opens the socket, starts the broadcast timer and the receive loop. Idempotent.</summary>
+    private bool _startRequested;
+
     public void Start()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(UdpTopologyService));
-        if (_socket is not null) return;
+        if (_startRequested) return;
+        _startRequested = true;
+
+        // If no permission was wired (legacy / tests), behave as before
+        // and bind unconditionally.
+        if (_networkPermission is null)
+        {
+            BindAndSpinLoops();
+            return;
+        }
+
+        // Observe the permission and gate the bind. Initial value arrives
+        // synchronously via the BehaviorSubject under IsGrantedChanged, so
+        // a transition into the grant happens via the same callback.
+        _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(granted =>
+        {
+            if (granted)
+            {
+                BindAndSpinLoops();
+            }
+            else
+            {
+                StopLoopsAndCloseSocket();
+                EmitUdpHealth(TransportState.PermissionDenied,
+                    "Local Network permission not granted — UDP topology parked");
+            }
+        }));
+    }
+
+    private void BindAndSpinLoops()
+    {
+        if (_disposed || _socket is not null) return;
 
         try
         {
@@ -237,10 +283,12 @@ public sealed class UdpTopologyService : IUdpTopologyService
         // about to start watching; tight cadence helps. Local link-UP → some
         // peer's correlator is watching for THIS device; we need to tell
         // them ASAP. Both fire an immediate kick PLUS a burst window.
-        _disposables.Add(_manager.Receivers.Connect()
+        // Goes on _runtime (not _disposables) so a permission revoke can
+        // tear them down without losing the long-lived subjects.
+        _runtime.Add(_manager.Receivers.Connect()
             .MergeMany(r => r.LinkLost)
             .Subscribe(d => TriggerImmediateBroadcast(d.DeviceIndex, "link-lost")));
-        _disposables.Add(_manager.Receivers.Connect()
+        _runtime.Add(_manager.Receivers.Connect()
             .MergeMany(r => r.LinkEstablished)
             .Subscribe(d => TriggerImmediateBroadcast(d.DeviceIndex, "link-up")));
 
@@ -248,16 +296,10 @@ public sealed class UdpTopologyService : IUdpTopologyService
         // CurrentHost, name) so the per-device data in the announcement
         // updates as soon as enrichment completes — critical when a device
         // arrives and its HostBindings aren't read yet at link-UP time.
-        _disposables.Add(_manager.Receivers.Connect()
+        _runtime.Add(_manager.Receivers.Connect()
             .MergeMany(r => r.Devices.Connect().WhereReasonsAre(DynamicData.ChangeReason.Refresh))
             .Sample(TimeSpan.FromMilliseconds(250))    // coalesce enrichment bursts
             .Subscribe(_ => TriggerImmediateBroadcast(0, "device-refresh")));
-
-        _disposables.Add(Disposable.Create(() =>
-        {
-            try { _cts?.Cancel(); } catch { }
-            try { _socket?.Close(); } catch { }
-        }));
 
         _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
         _broadcastTask = Task.Run(() => BroadcastLoopAsync(_cts.Token));
@@ -266,6 +308,32 @@ public sealed class UdpTopologyService : IUdpTopologyService
             "UDP topology started: port {Port}, machineId {MachineId}, hostname {Hostname}, multicast={Mcast}, repeat={Repeat}",
             _settings.Port, _machineId, _hostname,
             _multicastAddress?.ToString() ?? "(off)", _settings.RepeatCount);
+    }
+
+    private void StopLoopsAndCloseSocket()
+    {
+        if (_socket is null) return;
+        try { _cts?.Cancel(); } catch { /* already cancelled */ }
+        _runtime.Dispose();
+        _runtime = new CompositeDisposable();
+        try { _socket?.Close(); } catch { /* best-effort */ }
+        try { _socket?.Dispose(); } catch { /* idempotent */ }
+        _socket = null;
+
+        var pending = new List<Task>(2);
+        if (_receiveTask is not null) pending.Add(_receiveTask);
+        if (_broadcastTask is not null) pending.Add(_broadcastTask);
+        if (pending.Count > 0)
+        {
+            try { Task.WhenAll(pending).Wait(TimeSpan.FromSeconds(1)); }
+            catch { /* timeout / per-task exception — swallow during revoke */ }
+        }
+        _receiveTask = null;
+        _broadcastTask = null;
+
+        try { _cts?.Dispose(); } catch { }
+        _cts = null;
+        _logger.LogInformation("UDP topology stopped (permission revoked or torn down)");
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -277,6 +345,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         // Cancel first so the loops observe the token before we tear down
         // the resources they read from.
         try { _cts?.Cancel(); } catch { /* already disposed */ }
+        _runtime.Dispose();
         _disposables.Dispose();
         _socket?.Dispose();
 

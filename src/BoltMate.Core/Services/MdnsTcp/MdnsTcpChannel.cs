@@ -1,3 +1,4 @@
+using BoltMate.Core.Permissions;
 using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
 using System.Net;
@@ -40,8 +41,17 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private readonly ILogger<MdnsTcpChannel> _logger;
     private readonly CompositeDisposable _disposables = new();
     private readonly ConcurrentDictionary<string, TcpClient> _peerClients = new(StringComparer.OrdinalIgnoreCase);
-    private readonly CancellationTokenSource _cts = new();
-    private readonly ConcurrentBag<Task> _backgroundTasks = new();
+    // Nullable + recreated per Start so a permission revoke can cancel,
+    // and a subsequent grant can begin again with a fresh token. The
+    // ConnectAsync site at line 518 falls back to a no-op if _cts is
+    // null (caller has just been revoked / disposed).
+    private CancellationTokenSource? _cts;
+    private ConcurrentBag<Task> _backgroundTasks = new();
+    // Per-Start subscriptions + the OutgoingAnnouncements mirror. Disposed
+    // and recreated on permission revoke so a grant→revoke→grant cycle
+    // doesn't stack duplicate subscribers on the long-lived UDP service.
+    private CompositeDisposable _runtime = new();
+    private bool _startRequested;
 
     private TcpListener? _listener;
     private MulticastService? _multicast;
@@ -113,6 +123,15 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     {
         const string endpoint = "Bonjour / mDNS + TCP sync";
         var now = _time.GetUtcNow();
+        // PermissionDenied dominates Blocked — same idea as
+        // AppHealthService: if the OS is keeping us off the network,
+        // there's no point telling the user the transport is blocked.
+        if (mdns.State is TransportState.PermissionDenied
+            || tcp.State is TransportState.PermissionDenied)
+        {
+            return new TransportHealth(TransportState.PermissionDenied, endpoint,
+                "Local Network permission not granted — Bonjour + TCP parked", now);
+        }
         if (mdns.State is TransportState.Blocked)
             return new TransportHealth(TransportState.Blocked, endpoint,
                 $"Bonjour discovery blocked — {mdns.DetailMessage}", now);
@@ -128,22 +147,33 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
 
     private readonly TimeProvider _time;
 
+    private readonly IPermission? _networkPermission;
+
     public MdnsTcpChannel(
         IUdpTopologyService udp,
         TopologySettings settings,
         string machineId,
+        IPermission? networkPermission = null,
         ILogger<MdnsTcpChannel>? logger = null,
         TimeProvider? timeProvider = null)
     {
         _udp = udp;
         _settings = settings;
         _machineId = machineId;
+        _networkPermission = networkPermission;
         _logger = logger ?? NullLogger<MdnsTcpChannel>.Instance;
         _time = timeProvider ?? TimeProvider.System;
+        var permDenied = networkPermission is { IsGranted: false };
         _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
-            TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
+            permDenied
+                ? TransportHealth.PermissionDenied(MdnsEndpointLabel(), "Local Network permission not yet granted")
+                : TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"));
         _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(
-            TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet"));
+            permDenied
+                ? TransportHealth.PermissionDenied(TcpEndpointLabel(), "Local Network permission not yet granted")
+                : TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet"));
+        _lastMdnsState = _mdnsHealth.Value.State;
+        _lastTcpState = _tcpHealth.Value.State;
         _disposables.Add(_mdnsHealth);
         _disposables.Add(_tcpHealth);
     }
@@ -237,19 +267,78 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     public void Start()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(MdnsTcpChannel));
-        if (_listener is not null) return;
+        if (_startRequested) return;
+        _startRequested = true;
 
+        if (_networkPermission is null)
+        {
+            // Legacy / unit-test path — bind unconditionally as before.
+            SafeStartCore();
+            return;
+        }
+
+        _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(granted =>
+        {
+            if (granted)
+            {
+                SafeStartCore();
+            }
+            else
+            {
+                StopAndRelease();
+                EmitMdnsHealth(TransportState.PermissionDenied,
+                    "Local Network permission not granted — Bonjour publisher parked");
+                EmitTcpHealth(TransportState.PermissionDenied,
+                    "Local Network permission not granted — TCP listener parked");
+            }
+        }));
+    }
+
+    private void SafeStartCore()
+    {
+        if (_listener is not null) return;
         // Wrap EVERYTHING — any unexpected throw from Makaretu.Dns (e.g.
         // UDP 5353 bind contention on Windows when Bonjour service is
         // already running) must not take down the host app process.
         try
         {
+            _cts ??= new CancellationTokenSource();
             StartCore();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "MdnsTcp.Start failed catastrophically — channel disabled this session");
         }
+    }
+
+    private void StopAndRelease()
+    {
+        if (_listener is null && _multicast is null) return;
+        try { _cts?.Cancel(); } catch { }
+        _runtime.Dispose();
+        _runtime = new CompositeDisposable();
+        try { _mdnsHealthTimer?.Dispose(); } catch { }
+        _mdnsHealthTimer = null;
+        try { _listener?.Stop(); } catch { }
+        _listener = null;
+        try { _serviceDiscovery?.Dispose(); } catch { }
+        _serviceDiscovery = null;
+        try { _multicast?.Stop(); _multicast?.Dispose(); } catch { }
+        _multicast = null;
+        foreach (var c in _peerClients.Values) { try { c.Close(); } catch { } }
+        _peerClients.Clear();
+
+        var pending = _backgroundTasks.ToArray();
+        if (pending.Length > 0)
+        {
+            try { Task.WhenAll(pending).Wait(TimeSpan.FromSeconds(1)); }
+            catch { /* swallow during revoke */ }
+        }
+        _backgroundTasks = new ConcurrentBag<Task>();
+
+        try { _cts?.Dispose(); } catch { }
+        _cts = null;
+        _logger.LogInformation("MdnsTcp: stopped (permission revoked or torn down)");
     }
 
     private void StartCore()
@@ -260,7 +349,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         {
             _listener = new TcpListener(IPAddress.Any, _settings.TcpPort);
             _listener.Start();
-            _backgroundTasks.Add(Task.Run(() => AcceptLoopAsync(_cts.Token)));
+            _backgroundTasks.Add(Task.Run(() => AcceptLoopAsync(_cts!.Token)));
             _logger.LogInformation("MdnsTcp: listening on TCP port {Port}", _settings.TcpPort);
         }
         catch (Exception ex)
@@ -324,7 +413,9 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         }
 
         // 3. Mirror UDP outgoing announcements onto every TCP peer.
-        _disposables.Add(_udp.OutgoingAnnouncements.Subscribe(BroadcastToPeers));
+        // Goes on _runtime so a permission revoke can drop the subscription
+        // without the long-lived host re-emitting into a closed listener.
+        _runtime.Add(_udp.OutgoingAnnouncements.Subscribe(BroadcastToPeers));
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -333,7 +424,8 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     {
         if (_disposed) return;
         _disposed = true;
-        try { _cts.Cancel(); } catch { }
+        try { _cts?.Cancel(); } catch { }
+        _runtime.Dispose();
         _disposables.Dispose();
 
         try { _mdnsHealthTimer?.Dispose(); } catch { }
@@ -357,7 +449,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             catch { /* timeout / cancellation / per-task exception — swallow */ }
         }
 
-        _cts.Dispose();
+        try { _cts?.Dispose(); } catch { /* idempotent */ }
     }
 
     // ---------------------------------------------------------------
@@ -496,6 +588,9 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     {
         // Already connected?
         if (_peerClients.TryGetValue(peerMachineId, out var existing) && existing.Connected) return;
+        // Permission revoked / not yet granted? Skip the connect.
+        var cts = _cts;
+        if (cts is null) return;
 
         _backgroundTasks.Add(Task.Run(async () =>
         {
@@ -503,7 +598,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             try
             {
                 var client = new TcpClient { NoDelay = true };
-                await client.ConnectAsync(endpoint.Address, endpoint.Port, _cts.Token).ConfigureAwait(false);
+                await client.ConnectAsync(endpoint.Address, endpoint.Port, cts.Token).ConfigureAwait(false);
                 _peerClients[peerMachineId] = client;
                 _lastTcpConnectSuccess = _time.GetUtcNow();
                 _logger.LogInformation("MdnsTcp: outbound TCP connected to peer {Machine} at {Endpoint}",

@@ -55,15 +55,22 @@ public static class ServiceRegistration
         // primed the user via the HID primer page, so the first resolve
         // must happen inside App.ContinueBootstrap (which only runs after
         // wizard completion). Don't resolve this from Program.Main.
+        services.AddSingleton<IPermissionsService, PermissionsService>();
+
         services.AddSingleton<IReceiverTransport>(sp =>
         {
             var lf = sp.GetRequiredService<ILoggerFactory>();
-            if (OperatingSystem.IsMacOS())   return new BoltMate.Hid.IOKit.IOKitReceiverTransport(lf);
-            if (OperatingSystem.IsWindows()) return new BoltMate.Hid.Win.WinReceiverTransport(lf);
-            return new BoltMate.Hid.HidApi.HidApiReceiverTransport(lf);
-        });
+            // Input Monitoring gate — passed to the Mac transport so
+            // IOHIDManagerOpen / hid_open are deferred until the OS has
+            // granted access. Without this, those calls trigger the TCC
+            // system prompt at the wrong moment (process start vs. wizard).
+            var perms = sp.GetRequiredService<IPermissionsService>();
+            Func<bool> hidGate = () => perms.InputMonitoring.IsGranted;
 
-        services.AddSingleton<IPermissionsService, PermissionsService>();
+            if (OperatingSystem.IsMacOS())   return new BoltMate.Hid.IOKit.IOKitReceiverTransport(lf, hidGate);
+            if (OperatingSystem.IsWindows()) return new BoltMate.Hid.Win.WinReceiverTransport(lf);
+            return new BoltMate.Hid.HidApi.HidApiReceiverTransport(lf, hidGate);
+        });
 
         services.AddSingleton<IReceiverManager>(sp => new ReceiverManager(
             sp.GetRequiredService<IReceiverTransport>(),

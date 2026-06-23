@@ -21,14 +21,27 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<IOKitReceiverTransport> _logger;
     private readonly IntPtr _manager;
+    // Permission gate. Returns true once the OS has granted Input
+    // Monitoring. We never call IOHIDManagerOpen until it does, because
+    // doing so under TCC=Unknown triggers the system prompt — which we
+    // want to happen at a moment the wizard has just primed the user
+    // for, not at process start.
+    private readonly Func<bool> _isInputMonitoringGranted;
+    private bool _managerOpen;
+    private readonly object _openLock = new();
 
-    public IOKitReceiverTransport(ILoggerFactory? loggerFactory = null)
+    public IOKitReceiverTransport(
+        ILoggerFactory? loggerFactory = null,
+        Func<bool>? isInputMonitoringGranted = null)
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             throw new PlatformNotSupportedException("IOKitReceiverTransport is macOS-only.");
 
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = _loggerFactory.CreateLogger<IOKitReceiverTransport>();
+        // No gate wired → assume granted (legacy / Cli / tests). Production
+        // app wires _permissions.InputMonitoring.IsGranted at composition.
+        _isInputMonitoringGranted = isInputMonitoringGranted ?? (static () => true);
 
         _manager = IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, IOKitInterop.OptionsNone);
         if (_manager == IntPtr.Zero)
@@ -39,15 +52,34 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
         IOKitInterop.IOHIDManagerSetDeviceMatching(_manager, match);
         IOKitInterop.CFRelease(match);
 
-        var openResult = IOKitInterop.IOHIDManagerOpen(_manager, IOKitInterop.OptionsNone);
-        if (openResult != IOKitInterop.Success)
-            _logger.LogWarning("IOHIDManagerOpen returned 0x{Code:X8} — enumeration may still work", openResult);
+        _logger.LogInformation("IOKit transport initialised — IOHIDManagerOpen deferred until permission grant");
+    }
 
-        _logger.LogInformation("IOKit transport initialised");
+    /// <summary>
+    /// Lazy IOHIDManagerOpen — first call after the permission gate flips
+    /// open performs the real open. Subsequent calls are no-ops.
+    /// </summary>
+    private bool EnsureManagerOpen()
+    {
+        if (_managerOpen) return true;
+        if (!_isInputMonitoringGranted()) return false;
+        lock (_openLock)
+        {
+            if (_managerOpen) return true;
+            var openResult = IOKitInterop.IOHIDManagerOpen(_manager, IOKitInterop.OptionsNone);
+            if (openResult != IOKitInterop.Success)
+            {
+                _logger.LogWarning("IOHIDManagerOpen returned 0x{Code:X8} — enumeration may still work", openResult);
+            }
+            _managerOpen = true;
+            _logger.LogInformation("IOKit manager opened (permission granted)");
+            return true;
+        }
     }
 
     public IReadOnlyList<BoltReceiverInfo> Enumerate()
     {
+        if (!EnsureManagerOpen()) return Array.Empty<BoltReceiverInfo>();
         var set = IOKitInterop.IOHIDManagerCopyDevices(_manager);
         if (set == IntPtr.Zero) return Array.Empty<BoltReceiverInfo>();
 
@@ -88,6 +120,10 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
 
     public IReceiverConnection Open(BoltReceiverInfo info)
     {
+        if (!EnsureManagerOpen())
+            throw new InvalidOperationException(
+                "Input Monitoring permission not granted — cannot open IOKit device.");
+
         // Path format: "iokit:<locationId>:<deviceRef>". Re-enumerate to
         // find the live IOHIDDeviceRef matching that location, then open it.
         // (Stashing the pointer in the path string is fine within a single
@@ -137,7 +173,10 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
     {
         if (_manager != IntPtr.Zero)
         {
-            IOKitInterop.IOHIDManagerClose(_manager, IOKitInterop.OptionsNone);
+            if (_managerOpen)
+            {
+                IOKitInterop.IOHIDManagerClose(_manager, IOKitInterop.OptionsNone);
+            }
             IOKitInterop.CFRelease(_manager);
         }
     }

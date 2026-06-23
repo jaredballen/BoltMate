@@ -143,6 +143,20 @@ public sealed class AppHealthService : IAppHealthService
             return;
         }
 
+        // PermissionDenied wins — there's no point telling the user
+        // "all transports blocked" when the real issue is "OS won't let
+        // us bind." Permission-tracker covers the OS grant itself; the
+        // network alert here would just duplicate it. Treat the network
+        // category as healthy in that case so we don't double-toast.
+        var anyPermDenied = _udpHealth.State is TransportState.PermissionDenied
+                            || _syncHealth.State is TransportState.PermissionDenied;
+        if (anyPermDenied)
+        {
+            _netTracker.RawBad = false;
+            _netTracker.CurrentDetail = "Local Network permission not granted — see Permissions alert";
+            return;
+        }
+
         // Two transports surfaced to the user: UDP multicast and the
         // combined Bonjour-mDNS + TCP "reliable sync" path. Network is
         // alertable only when BOTH are Blocked — if either is reachable

@@ -436,7 +436,8 @@ public partial class App : Application
         }
 
         _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
-            _loggerFactory.CreateLogger<UdpTopologyService>());
+            networkPermission: _permissions?.Network,
+            logger: _loggerFactory.CreateLogger<UdpTopologyService>());
         _topology.Start();
         _disposables.Add(_topology);
         _trayController?.Bind(_topology);
@@ -455,7 +456,8 @@ public partial class App : Application
         }
 
         _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
-            _loggerFactory.CreateLogger<MdnsTcpChannel>());
+            networkPermission: _permissions?.Network,
+            logger: _loggerFactory.CreateLogger<MdnsTcpChannel>());
         _mdnsTcp.Start();
         _disposables.Add(_mdnsTcp);
 
