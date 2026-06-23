@@ -1,3 +1,4 @@
+using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
@@ -126,6 +127,37 @@ public sealed class UdpTopologyService : IUdpTopologyService
     private bool _permGranted = true;
     private bool _nicAvailable = true;
 
+    /// <summary>
+    /// DI-friendly ctor — pulls TopologySettings out of AppSettings and
+    /// generates+persists a stable MachineId if one isn't already cached
+    /// in the settings file. Use this from <see cref="ServiceRegistration"/>.
+    /// </summary>
+    public UdpTopologyService(
+        IReceiverManager manager,
+        AppSettings appSettings,
+        IPermission? networkPermission = null,
+        INetworkAvailabilityWatcher? networkAvailability = null,
+        ILogger<UdpTopologyService>? logger = null,
+        TimeProvider? timeProvider = null)
+        : this(manager, appSettings.Topology, EnsureMachineId(appSettings),
+               networkPermission, networkAvailability, logger, timeProvider)
+    {
+    }
+
+    private static string EnsureMachineId(AppSettings appSettings)
+    {
+        if (!string.IsNullOrEmpty(appSettings.Topology.MachineId))
+            return appSettings.Topology.MachineId;
+        var id = Guid.NewGuid().ToString("N");
+        appSettings.Topology.MachineId = id;
+        appSettings.Save();
+        return id;
+    }
+
+    /// <summary>
+    /// Direct-construction ctor used by tests. Production code paths go
+    /// through the <see cref="AppSettings"/>-aware overload above.
+    /// </summary>
     public UdpTopologyService(
         IReceiverManager manager,
         TopologySettings settings,
@@ -218,6 +250,8 @@ public sealed class UdpTopologyService : IUdpTopologyService
 
     /// <summary>Opens the socket, starts the broadcast timer and the receive loop. Idempotent.</summary>
     private bool _startRequested;
+    private IDisposable? _permSubscription;
+    private IDisposable? _nicSubscription;
 
     public void Start()
     {
@@ -238,12 +272,32 @@ public sealed class UdpTopologyService : IUdpTopologyService
         // emitted. Reacts to subsequent transitions the same way.
         if (_networkPermission is not null)
         {
-            _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); }));
+            _permSubscription = _networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); });
         }
         if (_networkAvailability is not null)
         {
-            _disposables.Add(_networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); }));
+            _nicSubscription = _networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); });
         }
+    }
+
+    /// <summary>
+    /// Stops the topology service WITHOUT disposing — settings-driven
+    /// pause. Releases the socket + cancels loops, drops gate
+    /// subscriptions, and resets <see cref="_startRequested"/> so a
+    /// subsequent <see cref="Start"/> rebinds cleanly. Used by the
+    /// Settings → Network toggle when the user turns sync off.
+    /// </summary>
+    public void Stop()
+    {
+        if (_disposed) return;
+        if (!_startRequested) return;
+        _startRequested = false;
+        _permSubscription?.Dispose();
+        _permSubscription = null;
+        _nicSubscription?.Dispose();
+        _nicSubscription = null;
+        StopLoopsAndCloseSocket();
+        EmitUdpHealth(TransportState.Unknown, "topology disabled");
     }
 
     private void ReevaluateGate()

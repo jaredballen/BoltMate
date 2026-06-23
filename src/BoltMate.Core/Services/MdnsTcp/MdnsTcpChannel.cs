@@ -1,3 +1,4 @@
+using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using BoltMate.Core.Topology;
 using System.Collections.Concurrent;
@@ -52,6 +53,8 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     // doesn't stack duplicate subscribers on the long-lived UDP service.
     private CompositeDisposable _runtime = new();
     private bool _startRequested;
+    private IDisposable? _permSubscription;
+    private IDisposable? _nicSubscription;
 
     private TcpListener? _listener;
     private MulticastService? _multicast;
@@ -161,6 +164,27 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private bool _permGranted = true;
     private bool _nicAvailable = true;
 
+    /// <summary>
+    /// DI-friendly ctor — pulls TopologySettings out of AppSettings and
+    /// reuses the UDP service's MachineId so the two transports advertise
+    /// the same identity on the LAN.
+    /// </summary>
+    public MdnsTcpChannel(
+        IUdpTopologyService udp,
+        AppSettings appSettings,
+        IPermission? networkPermission = null,
+        INetworkAvailabilityWatcher? networkAvailability = null,
+        ILogger<MdnsTcpChannel>? logger = null,
+        TimeProvider? timeProvider = null)
+        : this(udp, appSettings.Topology, udp.MachineId,
+               networkPermission, networkAvailability, logger, timeProvider)
+    {
+    }
+
+    /// <summary>
+    /// Direct-construction ctor for tests. Production resolves via the
+    /// <see cref="AppSettings"/>-aware overload above.
+    /// </summary>
     public MdnsTcpChannel(
         IUdpTopologyService udp,
         TopologySettings settings,
@@ -300,12 +324,31 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
 
         if (_networkPermission is not null)
         {
-            _disposables.Add(_networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); }));
+            _permSubscription = _networkPermission.IsGrantedChanged.Subscribe(g => { _permGranted = g; ReevaluateGate(); });
         }
         if (_networkAvailability is not null)
         {
-            _disposables.Add(_networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); }));
+            _nicSubscription = _networkAvailability.IsAvailableChanged.Subscribe(a => { _nicAvailable = a; ReevaluateGate(); });
         }
+    }
+
+    /// <summary>
+    /// Settings-driven pause. Releases the listener, mDNS publisher,
+    /// browser, and any active peer connections without disposing.
+    /// A subsequent <see cref="Start"/> rebinds cleanly.
+    /// </summary>
+    public void Stop()
+    {
+        if (_disposed) return;
+        if (!_startRequested) return;
+        _startRequested = false;
+        _permSubscription?.Dispose();
+        _permSubscription = null;
+        _nicSubscription?.Dispose();
+        _nicSubscription = null;
+        StopAndRelease();
+        EmitMdnsHealth(TransportState.Unknown, "topology disabled");
+        EmitTcpHealth(TransportState.Unknown, "topology disabled");
     }
 
     private void ReevaluateGate()

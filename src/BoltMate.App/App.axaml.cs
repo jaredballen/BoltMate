@@ -305,38 +305,42 @@ public partial class App : Application
 
     private void StartPermissionWatchdog(ILogger log)
     {
-        // The new AppHealthService is the single source for all
-        // alert-triggering conditions — permissions + network + receiver.
-        // It owns the tray-badge wire and the OS notification cadence so
-        // the older one-input permission watchdog is no longer needed.
-        // Topology services may be null when the user has cross-machine
-        // sync disabled — AppHealthService treats null transports as
-        // "not monitored" (not an alertable condition).
-        if (_permissions is null || _manager is null) return;
-        // _permissions is container-owned; do NOT add to _disposables here.
+        // AppHealthService is now DI-resolved. Wire its observable to the
+        // tray + OS notification side-effects from here so the service
+        // itself stays pure.
+        _health = Services.GetRequiredService<IAppHealthService>();
+        _disposables.Add(_health.Health.Subscribe(snapshot =>
+        {
+            var status = snapshot.IsAlerting ? OverallStatus.AnyDenied : OverallStatus.AllGood;
+            _trayStatus?.SetPermissionStatus(status);
+            _trayController?.SetPermissionStatus(status);
+        }));
 
-        _health = new AppHealthService(
-            _permissions,
-            _topology,
-            _mdnsTcp,
-            _manager,
-            postNotification: (title, body) =>
+        // One-shot toast per fresh alert. Track which categories we've
+        // already notified about so we don't re-toast on every tick
+        // while the condition persists; clear acknowledgement when the
+        // category resolves so a re-occurrence re-notifies.
+        var notified = new System.Collections.Generic.HashSet<string>();
+        _disposables.Add(_health.Health.Subscribe(snapshot =>
+        {
+            void MaybeToast(CategoryAlert? c)
             {
-                var ok = LocalNotifications.TryPost(title, body);
-                if (ok) log.LogInformation("Health notification delivered: {Title}", title);
-                else log.LogDebug("Health notification not posted (platform fallback to tray-only): {Title}", title);
-                return ok;
-            },
-            setTrayStatus: status =>
-            {
-                _trayStatus?.SetPermissionStatus(status);
-                _trayController?.SetPermissionStatus(status);
-            },
-            logger: _loggerFactory.CreateLogger<AppHealthService>());
-        _disposables.Add(_health);
+                if (c is null) return;
+                if (!notified.Add(c.Category)) return;
+                var ok = LocalNotifications.TryPost($"BoltMate · {c.Category} issue", c.Detail);
+                if (ok) log.LogInformation("Health notification delivered: {Title}", c.Category);
+                else log.LogDebug("Health notification not posted (tray fallback): {Title}", c.Category);
+            }
+            MaybeToast(snapshot.Permissions);
+            MaybeToast(snapshot.Network);
+            MaybeToast(snapshot.Receiver);
+            if (snapshot.Permissions is null) notified.Remove("Permissions");
+            if (snapshot.Network is null) notified.Remove("Network");
+            if (snapshot.Receiver is null) notified.Remove("Receiver");
+        }));
     }
 
-    private AppHealthService? _health;
+    private IAppHealthService? _health;
 
     /// <summary>
     /// Opens the WelcomeWindow positioned at the first permission that is
@@ -389,37 +393,25 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Starts or stops the UDP topology services to match
-    /// <see cref="AppSettings.Topology"/>. Safe to call repeatedly — disposes
-    /// existing services before recreating. Wired to the Settings -> Network
-    /// toggle so the user doesn't have to restart.
+    /// Starts or stops the topology services to match
+    /// <see cref="AppSettings.Topology"/>. All three (UDP / mDNS+TCP /
+    /// correlator) are DI singletons now — toggle is just Start/Stop,
+    /// not new/Dispose. Safe to call repeatedly.
     /// </summary>
+    private bool _topologyOneTimeWired;
+
     private void ApplyTopologySettings()
     {
         if (_manager is null || _switcher is null) return;
 
-        // Tear down anything currently running.
-        if (_correlator is not null)
-        {
-            _disposables.Remove(_correlator);
-            _correlator.Dispose();
-            _correlator = null;
-        }
-        if (_mdnsTcp is not null)
-        {
-            _disposables.Remove(_mdnsTcp);
-            _mdnsTcp.Dispose();
-            _mdnsTcp = null;
-        }
-        if (_topology is not null)
-        {
-            _disposables.Remove(_topology);
-            _topology.Dispose();
-            _topology = null;
-        }
+        _topology    ??= Services.GetRequiredService<IUdpTopologyService>();
+        _mdnsTcp     ??= Services.GetRequiredService<IMdnsTcpChannel>();
+        _correlator  ??= Services.GetRequiredService<ITopologyCorrelator>();
 
         if (!_settings.Topology.Enabled)
         {
+            _topology.Stop();
+            _mdnsTcp.Stop();
             _trayController?.Bind(null);
             _trayStatus?.Bind(null);
             _trayStatus?.BindHealth(null, null);
@@ -427,62 +419,44 @@ public partial class App : Application
             return;
         }
 
-        var machineId = _settings.Topology.MachineId;
-        if (string.IsNullOrWhiteSpace(machineId))
-        {
-            machineId = Guid.NewGuid().ToString("N");
-            _settings.Topology.MachineId = machineId;
-            _settings.Save();
-        }
-
-        var nicWatcher = Services.GetService<INetworkAvailabilityWatcher>();
-        _topology = new UdpTopologyService(_manager, _settings.Topology, machineId,
-            networkPermission: _permissions?.Network,
-            networkAvailability: nicWatcher,
-            logger: _loggerFactory.CreateLogger<UdpTopologyService>());
         _topology.Start();
-        _disposables.Add(_topology);
+        _mdnsTcp.Start();
         _trayController?.Bind(_topology);
         _trayStatus?.Bind(_topology);
 
-        // A Healthy UDP self-echo means the LAN-broadcast roundtrip ran
-        // successfully — proof the Local Network grant is in place even
-        // when the OS-level probe has gone Unknown. Same cure for the
-        // same TCC-cache flap that hits Input Monitoring.
-        if (_permissions is not null)
+        // One-time wiring that lives across enable/disable cycles —
+        // attaching to long-lived observables that never change. Re-
+        // running this on every toggle would stack duplicate subscribers.
+        if (!_topologyOneTimeWired)
         {
-            _disposables.Add(_topology.UdpHealth
-                .Where(h => h.State is BoltMate.Core.Topology.TransportState.Healthy)
-                .Take(1)
-                .Subscribe(_ => _permissions.Network.AcknowledgeExternalGrant()));
+            _topologyOneTimeWired = true;
+
+            // A Healthy UDP self-echo means the LAN-broadcast roundtrip ran
+            // successfully — proof the Local Network grant is in place even
+            // when the OS-level probe has gone Unknown. Same cure for the
+            // same TCC-cache flap that hits Input Monitoring.
+            if (_permissions is not null)
+            {
+                _disposables.Add(_topology.UdpHealth
+                    .Where(h => h.State is BoltMate.Core.Topology.TransportState.Healthy)
+                    .Take(1)
+                    .Subscribe(_ => _permissions.Network.AcknowledgeExternalGrant()));
+            }
+
+            // Local switch trigger → broadcast intent to peers. Fires once
+            // per Easy-Switch press / Flow snoop / user request, BEFORE
+            // local fan-out, regardless of whether the local machine has
+            // siblings to switch. RemoteTopology source is suppressed at
+            // the Core layer so peer rebroadcasts don't loop.
+            var topology = _topology;
+            _disposables.Add(_switcher.LocalSwitchTriggers.Subscribe(t =>
+            {
+                topology.RecordLocalSwitchEvent(t.OriginatingDeviceSerial, t.TargetHostName);
+            }));
         }
 
-        _mdnsTcp = new MdnsTcpChannel(_topology, _settings.Topology, machineId,
-            networkPermission: _permissions?.Network,
-            networkAvailability: nicWatcher,
-            logger: _loggerFactory.CreateLogger<MdnsTcpChannel>());
-        _mdnsTcp.Start();
-        _disposables.Add(_mdnsTcp);
-
-        _correlator = new TopologyCorrelator(_manager, _switcher,
-            _topology.Announcements,
-            BoltMate.Core.Topology.LocalHostIdentity.Names,
-            _loggerFactory.CreateLogger<TopologyCorrelator>());
-        _disposables.Add(_correlator);
-
-        // Wire local switch trigger → broadcast intent to peers. Fires once
-        // per Easy-Switch press / Flow snoop / user request, BEFORE local
-        // fan-out, regardless of whether the local machine has siblings to
-        // switch. RemoteTopology source is suppressed at the Core layer so
-        // peer rebroadcasts don't loop.
-        var topology = _topology;
-        _disposables.Add(_switcher.LocalSwitchTriggers.Subscribe(t =>
-        {
-            topology.RecordLocalSwitchEvent(t.OriginatingDeviceSerial, t.TargetHostName);
-        }));
-
-        _trayStatus?.BindHealth(_topology?.UdpHealth, _mdnsTcp?.SyncHealth);
-        _settingsWindow?.BindHealth(_topology?.UdpHealth, _mdnsTcp?.SyncHealth);
+        _trayStatus?.BindHealth(_topology.UdpHealth, _mdnsTcp.SyncHealth);
+        _settingsWindow?.BindHealth(_topology.UdpHealth, _mdnsTcp.SyncHealth);
     }
 
     private void OpenSettings(string? initialTab = null)

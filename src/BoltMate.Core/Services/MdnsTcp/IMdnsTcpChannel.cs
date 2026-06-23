@@ -20,4 +20,11 @@ public interface IMdnsTcpChannel : IAsyncDisposable, IDisposable
 
     /// <summary>Idempotently starts mDNS publish + browse + TCP listener.</summary>
     void Start();
+
+    /// <summary>
+    /// Settings-driven pause. Releases mDNS publisher, browser, listener,
+    /// and any open peer TcpClients without disposing — a subsequent
+    /// <see cref="Start"/> rebinds cleanly.
+    /// </summary>
+    void Stop();
 }

@@ -31,8 +31,16 @@ public interface IUdpTopologyService : IAsyncDisposable, IDisposable
     /// <summary>Most recent announcement seen from each peer.</summary>
     IReadOnlyCollection<ReceiverAnnouncement> LatestPeerAnnouncements { get; }
 
-    /// <summary>Begin the broadcast loop + open the socket.</summary>
+    /// <summary>Begin the broadcast loop + open the socket. Idempotent.</summary>
     void Start();
+
+    /// <summary>
+    /// Settings-driven pause. Closes the socket + cancels loops but
+    /// keeps the service instance alive — a subsequent <see cref="Start"/>
+    /// rebinds cleanly. Use this for the topology on/off toggle so the
+    /// DI singleton lifecycle stays simple.
+    /// </summary>
+    void Stop();
 
     /// <summary>Inject an announcement received via an external channel (mDNS+TCP).</summary>
     void InjectInbound(ReceiverAnnouncement announcement, string channel = "ext");

@@ -92,6 +92,40 @@ public static class ServiceRegistration
             sp.GetRequiredService<AppSettings>(),
             sp.GetRequiredService<ILogger<UpdateService>>()));
 
+        // Topology stack — singletons. Each is gated on its permission
+        // and the NIC watcher; the actual bind only happens after Start()
+        // is called. The Settings → Network toggle calls Start/Stop on
+        // these instead of destroying and re-creating, so the DI graph
+        // stays simple.
+        services.AddSingleton<IUdpTopologyService>(sp => new UdpTopologyService(
+            sp.GetRequiredService<IReceiverManager>(),
+            sp.GetRequiredService<AppSettings>(),
+            networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
+            networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
+            logger: sp.GetRequiredService<ILogger<UdpTopologyService>>()));
+
+        services.AddSingleton<IMdnsTcpChannel>(sp => new MdnsTcpChannel(
+            sp.GetRequiredService<IUdpTopologyService>(),
+            sp.GetRequiredService<AppSettings>(),
+            networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
+            networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
+            logger: sp.GetRequiredService<ILogger<MdnsTcpChannel>>()));
+
+        services.AddSingleton<ITopologyCorrelator>(sp => new TopologyCorrelator(
+            sp.GetRequiredService<IReceiverManager>(),
+            sp.GetRequiredService<SwitcherService>(),
+            sp.GetRequiredService<IUdpTopologyService>(),
+            sp.GetRequiredService<ILogger<TopologyCorrelator>>()));
+
+        // App health monitor. Pure observable surface — the App layer
+        // subscribes to Health to wire tray badges + OS notifications.
+        services.AddSingleton<IAppHealthService>(sp => new AppHealthService(
+            sp.GetRequiredService<IPermissionsService>(),
+            sp.GetRequiredService<IReceiverManager>(),
+            sp.GetRequiredService<IUdpTopologyService>(),
+            sp.GetRequiredService<IMdnsTcpChannel>(),
+            sp.GetRequiredService<ILogger<AppHealthService>>()));
+
         return services;
     }
 }

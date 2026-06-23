@@ -54,6 +54,22 @@ public sealed class TopologyCorrelator : ITopologyCorrelator
 
     private readonly TimeProvider _time;
 
+    /// <summary>
+    /// DI-friendly ctor. Reads <see cref="IUdpTopologyService.Announcements"/>
+    /// directly and pulls local host names from the static
+    /// <see cref="LocalHostIdentity"/> probe.
+    /// </summary>
+    public TopologyCorrelator(
+        IReceiverManager manager,
+        ISwitcherService switcher,
+        IUdpTopologyService udp,
+        ILogger<TopologyCorrelator>? logger = null,
+        TimeProvider? timeProvider = null)
+        : this(manager, switcher, udp.Announcements, LocalHostIdentity.Names, logger, timeProvider)
+    {
+    }
+
+    /// <summary>Direct-construction ctor for tests.</summary>
     public TopologyCorrelator(
         IReceiverManager manager,
         ISwitcherService switcher,

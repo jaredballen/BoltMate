@@ -38,8 +38,6 @@ public sealed class AppHealthService : IAppHealthService
     private readonly IUdpTopologyService? _udp;
     private readonly IMdnsTcpChannel? _mdns;
     private readonly IReceiverManager _receivers;
-    private readonly Func<string, string, bool> _postNotification;
-    private readonly Action<OverallStatus> _setTrayStatus;
     private readonly ILogger _log;
     private readonly CompositeDisposable _disposables = new();
 
@@ -57,19 +55,15 @@ public sealed class AppHealthService : IAppHealthService
 
     public AppHealthService(
         IPermissionsService permissions,
-        IUdpTopologyService? udp,
-        IMdnsTcpChannel? mdns,
         IReceiverManager receivers,
-        Func<string, string, bool> postNotification,
-        Action<OverallStatus> setTrayStatus,
+        IUdpTopologyService? udp = null,
+        IMdnsTcpChannel? mdns = null,
         ILogger<AppHealthService>? logger = null)
     {
         _permissions = permissions;
         _udp = udp;
         _mdns = mdns;
         _receivers = receivers;
-        _postNotification = postNotification;
-        _setTrayStatus = setTrayStatus;
         _log = logger ?? NullLogger<AppHealthService>.Instance;
 
         _health = new BehaviorSubject<AppHealthSnapshot>(AppHealthSnapshot.AllOk);
@@ -210,13 +204,9 @@ public sealed class AppHealthService : IAppHealthService
 
         // Re-publish even when the same shape — UI may want to refresh
         // tooltips. The distinct check is cheap inside subscribers if they
-        // care.
+        // care. Notification + tray wiring is now a separate App-layer
+        // subscription so this service stays pure / DI-resolvable.
         _health.OnNext(snapshot);
-
-        // Tray badge: any alert = AnyDenied (reuses the existing enum so
-        // we don't churn TrayIconStatusController's wiring). The actual
-        // tooltip-detail wiring is the UI's job.
-        _setTrayStatus(snapshot.IsAlerting ? OverallStatus.AnyDenied : OverallStatus.AllGood);
     }
 
     private void TickCategory(CategoryTracker t, DateTimeOffset now)
@@ -229,9 +219,6 @@ public sealed class AppHealthService : IAppHealthService
             {
                 t.Alerting = true;
                 _log.LogWarning("Health alert: {Category} — {Detail}", t.Name, t.CurrentDetail);
-                _postNotification(
-                    $"BoltMate · {t.Name} issue",
-                    t.CurrentDetail);
             }
         }
         else
