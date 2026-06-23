@@ -65,10 +65,9 @@
                       Margin="0,0,0,16" />
             <StackPanel Grid.Row="5" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button x:Name="WelcomeGetStartedButton"
-                        Content="Get started"
+                <Button Content="Get started"
                         Classes="accent"
-                        Click="OnWelcomeGetStarted" />
+                        Command="{Binding GetStartedCommand}" />
             </StackPanel>
         </Grid>
 
@@ -101,11 +100,11 @@
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Not now" Click="OnNetworkPrimerNotNow" />
+                <Button Content="Not now" Command="{Binding NetworkPrimerNotNowCommand}" />
                 <Button Content="Grant"
                         Classes="accent"
                         IsEnabled="{Binding NetworkPrimerGrantEnabled}"
-                        Click="OnNetworkPrimerGrant" />
+                        Command="{Binding NetworkPrimerGrantCommand}" />
             </StackPanel>
         </Grid>
 
@@ -138,11 +137,11 @@
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Quit BoltMate" Click="OnQuitApp" />
+                <Button Content="Quit BoltMate" Command="{Binding QuitCommand}" />
                 <Button Content="Grant"
                         Classes="accent"
                         IsEnabled="{Binding NetworkRefusalGrantEnabled}"
-                        Click="OnNetworkRefusalGrant" />
+                        Command="{Binding NetworkRefusalGrantCommand}" />
             </StackPanel>
         </Grid>
 
@@ -175,11 +174,11 @@
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Not now" Click="OnInputMonitoringPrimerNotNow" />
+                <Button Content="Not now" Command="{Binding InputMonitoringPrimerNotNowCommand}" />
                 <Button Content="Grant"
                         Classes="accent"
                         IsEnabled="{Binding InputMonitoringPrimerGrantEnabled}"
-                        Click="OnInputMonitoringPrimerGrant" />
+                        Command="{Binding InputMonitoringPrimerGrantCommand}" />
             </StackPanel>
         </Grid>
 
@@ -212,11 +211,11 @@
                        Margin="10,16,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Quit BoltMate" Click="OnQuitApp" />
+                <Button Content="Quit BoltMate" Command="{Binding QuitCommand}" />
                 <Button Content="Grant"
                         Classes="accent"
                         IsEnabled="{Binding InputMonitoringRefusalGrantEnabled}"
-                        Click="OnInputMonitoringRefusalGrant" />
+                        Command="{Binding InputMonitoringRefusalGrantCommand}" />
             </StackPanel>
         </Grid>
 
@@ -243,10 +242,9 @@
                        Margin="10,12,10,0" />
             <StackPanel Grid.Row="4" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button x:Name="DoneOpenButton"
-                        Content="Open BoltMate"
+                <Button Content="Open BoltMate"
                         Classes="accent"
-                        Click="OnDoneOpen" />
+                        Command="{Binding DoneOpenCommand}" />
             </StackPanel>
         </Grid>
 
@@ -274,7 +272,7 @@
                         HorizontalAlignment="Right" Spacing="8">
                 <Button Content="Open BoltMate"
                         Classes="accent"
-                        Click="OnDoneOpen" />
+                        Command="{Binding DoneOpenCommand}" />
             </StackPanel>
         </Grid>
     </Grid>
