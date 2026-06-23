@@ -1,4 +1,6 @@
-namespace BoltMate.Core.HidPp.Features;
+using BoltMate.Core.HidPp;
+
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 CHANGE_HOST (feature 0x1814).
@@ -10,7 +12,7 @@ namespace BoltMate.Core.HidPp.Features;
 /// </list>
 /// Verified write-only by Solaar (<c>settings_templates.ChangeHost</c> uses <c>no_reply=True</c>).
 /// </remarks>
-public sealed class ChangeHostService(HidPpClient client)
+public sealed class ChangeHostService(HidPpClient client) : IChangeHostService
 {
     private readonly HidPpClient _client = client;
 

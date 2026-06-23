@@ -1,13 +1,15 @@
+using BoltMate.Core.HidPp;
+
 using System.Text;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 DEVICE_NAME (feature 0x0005). Read the device's product name in
 /// chunks. Some firmwares also expose a setName function; that path is wired
 /// up separately when discovered.
 /// </summary>
-public sealed class DeviceNameService(HidPpClient client)
+public sealed class DeviceNameService(HidPpClient client) : IDeviceNameService
 {
     private readonly HidPpClient _client = client;
 

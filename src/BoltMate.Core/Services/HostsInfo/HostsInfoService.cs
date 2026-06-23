@@ -1,13 +1,15 @@
+using BoltMate.Core.HidPp;
+
 using System.Text;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 HOSTS_INFO (feature 0x1815) — discover paired hosts and read
 /// their friendly names. Read-only; no host-switch event is emitted on
 /// remote changes, so this is purely a poll-based snapshot.
 /// </summary>
-public sealed class HostsInfoService(HidPpClient client)
+public sealed class HostsInfoService(HidPpClient client) : IHostsInfoService
 {
     private readonly HidPpClient _client = client;
 

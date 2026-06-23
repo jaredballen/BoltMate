@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.Services;
 
 namespace BoltMate.Core.HidPp.Notifications;
 

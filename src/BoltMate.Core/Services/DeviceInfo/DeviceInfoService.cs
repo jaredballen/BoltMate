@@ -1,12 +1,14 @@
+using BoltMate.Core.HidPp;
+
 using System.Text;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 DEVICE_INFO (feature 0x0003). Provides firmware version,
 /// transport, and serial-number reads.
 /// </summary>
-public sealed class DeviceInfoService(HidPpClient client)
+public sealed class DeviceInfoService(HidPpClient client) : IDeviceInfoService
 {
     private readonly HidPpClient _client = client;
 

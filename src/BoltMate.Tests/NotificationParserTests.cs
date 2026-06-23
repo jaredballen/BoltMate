@@ -1,5 +1,6 @@
 using BoltMate.Core.HidPp;
 using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.Services;
 using BoltMate.Core.HidPp.Notifications;
 using Xunit;
 

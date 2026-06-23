@@ -1,6 +1,8 @@
+using BoltMate.Core.HidPp;
+
 using System.Text;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 DEVICE_FRIENDLY_NAME (feature 0x0007). The user-editable
@@ -13,7 +15,7 @@ namespace BoltMate.Core.HidPp.Features;
 /// throws <see cref="HidPpException"/> if the firmware refuses, surfacing the
 /// HID++ 2.0 error code so the caller can fall back gracefully.
 /// </remarks>
-public sealed class DeviceFriendlyNameService(HidPpClient client)
+public sealed class DeviceFriendlyNameService(HidPpClient client) : IDeviceFriendlyNameService
 {
     private readonly HidPpClient _client = client;
 

@@ -100,7 +100,7 @@ public sealed class PairedDevice
     }
 
     /// <summary>Most recently observed battery state.</summary>
-    public HidPp.Features.BatteryStatus? LastKnownBattery { get; set; }
+    public Services.BatteryStatus? LastKnownBattery { get; set; }
 
     /// <summary>CIDs (0x00D1/D2/D3) that this device exposes and we successfully diverted.</summary>
     public IReadOnlyList<ushort> DivertedHostSwitchCids { get; set; } = [];
@@ -116,7 +116,7 @@ public sealed class PairedDevice
     /// feature <c>0x0003 DEVICE_INFO</c> fn 0x1. Populated by DeviceEnricher
     /// on link-up. Surfaced in the diagnostics tree.
     /// </summary>
-    public HidPp.Features.DeviceFirmwareInfo? Firmware { get; set; }
+    public Services.DeviceFirmwareInfo? Firmware { get; set; }
 
     /// <summary>Device BLE address from <c>BOLT_PAIRING_INFORMATION</c> (MSB first).</summary>
     public byte[]? HostIdentifier { get; set; }

@@ -1,12 +1,15 @@
+using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.HidPp;
+
 using System.Buffers.Binary;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 REPROG_CONTROLS_V4 (feature 0x1B04) — enumerate and reconfigure
 /// reprogrammable controls (Easy-Switch buttons, gesture buttons, etc.).
 /// </summary>
-public sealed class ReprogControlsService(HidPpClient client)
+public sealed class ReprogControlsService(HidPpClient client) : IReprogControlsService
 {
     private readonly HidPpClient _client = client;
 

@@ -6,6 +6,7 @@ using DynamicData;
 using BoltMate.Hid.Abstractions;
 using BoltMate.Core.HidPp;
 using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.Services;
 using BoltMate.Core.HidPp.Notifications;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -55,14 +56,14 @@ public sealed class BoltReceiver : IDisposable
     public string? HostIdentifierKey =>
         HostIdentifier is null ? null : Convert.ToHexString(HostIdentifier).ToLowerInvariant();
 
-    public RootService Root { get; }
-    public ChangeHostService ChangeHost { get; }
-    public HostsInfoService HostsInfo { get; }
-    public ReprogControlsService ReprogControls { get; }
-    public DeviceNameService DeviceName { get; }
-    public DeviceInfoService DeviceInfo { get; }
-    public BatteryService Battery { get; }
-    public DeviceFriendlyNameService DeviceFriendlyName { get; }
+    public IRootService Root { get; }
+    public IChangeHostService ChangeHost { get; }
+    public IHostsInfoService HostsInfo { get; }
+    public IReprogControlsService ReprogControls { get; }
+    public IDeviceNameService DeviceName { get; }
+    public IDeviceInfoService DeviceInfo { get; }
+    public IBatteryService Battery { get; }
+    public IDeviceFriendlyNameService DeviceFriendlyName { get; }
 
     /// <summary>The HID++ client (escape hatch — most callers use the typed services above).</summary>
     public HidPpClient Client => _client;

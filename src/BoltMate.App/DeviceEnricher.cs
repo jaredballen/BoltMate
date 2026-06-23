@@ -8,6 +8,7 @@ using DynamicData;
 using BoltMate.Core.Bolt;
 using BoltMate.Core.HidPp;
 using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.Services;
 using Microsoft.Extensions.Logging;
 
 namespace BoltMate.App;

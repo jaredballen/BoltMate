@@ -1,12 +1,15 @@
+using BoltMate.Core.HidPp.Features;
+using BoltMate.Core.HidPp;
+
 using System.Buffers.Binary;
 
-namespace BoltMate.Core.HidPp.Features;
+namespace BoltMate.Core.Services;
 
 /// <summary>
 /// HID++ 2.0 IRoot (feature 0x0001) — resolves a feature ID into the
 /// firmware-assigned index used on subsequent calls.
 /// </summary>
-public sealed class RootService(HidPpClient client)
+public sealed class RootService(HidPpClient client) : IRootService
 {
     private readonly HidPpClient _client = client;
 
