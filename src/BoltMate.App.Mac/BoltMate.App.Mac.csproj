@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0-macos pulls in the Microsoft.macOS managed binding to
+      Foundation / AppKit / UserNotifications. Lets us write the
+      notification + permission code as ordinary C# calling typed
+      managed APIs (UNUserNotificationCenter.Current.GetNotificationSettings
+      etc.) instead of P/Invoke shims around the Objective-C runtime.
+      Requires the `macos` .NET workload — install via
+      `sudo dotnet workload install macos`.
+    -->
+    <TargetFramework>net10.0-macos</TargetFramework>
+    <SupportedOSPlatformVersion>12.0</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      This is a library project; the binding workload defaults to producing
+      .app bundles. Suppress that so we get a plain managed dll the main
+      App project can reference.
+    -->
+    <OutputType>Library</OutputType>
+    <!--
+      Microsoft.macOS SDK defaults net*-macos projects to either
+      "Application" (.app bundle) or "Binding" (Xamarin binding project).
+      Neither fits — we want a plain managed dll. Disable both bundle
+      packaging + binding behaviour explicitly.
+    -->
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <SkipApiDefinitionCheck>true</SkipApiDefinitionCheck>
+    <NoBindingEmbedding>true</NoBindingEmbedding>
+    <CreatePackage>false</CreatePackage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoltMate.App.Core\BoltMate.App.Core.csproj" />
+  </ItemGroup>
+
+</Project>

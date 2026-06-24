@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Windows-flavoured TFM unlocks the Microsoft.WindowsAppSDK managed
+      surface (AppNotificationBuilder / AppNotificationManager). Target
+      version 10.0.19041 (May 2020 Update) — the floor for
+      AppNotificationManager.Default.Register() in unpackaged apps.
+    -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      EnableWindowsTargeting=true lets this project compile cross-platform
+      (from the Mac dev box). Without it the build fails because the
+      reference assemblies aren't normally pulled outside Windows hosts.
+    -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!--
+      We don't ship any .resw / MRT resources from this assembly, so opt
+      out of the PRI generator. Without this opt-out, cross-compiling
+      from Mac fails because Microsoft.WindowsAppSDK's MrtCore.PriGen
+      targets need a Win-only build task (Microsoft.Build.Packaging.Pri.
+      Tasks.dll) that ships only in the Windows SDK build tooling.
+    -->
+    <EnableMrtResourceManager>false</EnableMrtResourceManager>
+    <EnableDefaultPackagedContent>false</EnableDefaultPackagedContent>
+    <!--
+      Stops Microsoft.WindowsAppSDK from importing MrtCore.PriGen.targets,
+      which contains UsingTask entries pointing at Win-only build assemblies
+      (Microsoft.Build.Packaging.Pri.Tasks.dll). Those are unavailable on
+      the Mac dev box and cause MSB4062. Safe to disable because this
+      assembly ships no .resw / .pri resources of its own.
+    -->
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+    <EnablePriGenTooling>false</EnablePriGenTooling>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoltMate.App.Core\BoltMate.App.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -41,17 +41,17 @@ public sealed class PermissionsService : IPermissionsService
     public IPermission Autostart => _autostart;
     public IPermission Notifications => _notifications;
 
-    public PermissionsService(ILoggerFactory? loggerFactory = null)
+    public PermissionsService(
+        BoltMate.App.Core.Notifications.INotificationService? notifications = null,
+        ILoggerFactory? loggerFactory = null)
     {
         var lf = loggerFactory ?? NullLoggerFactory.Instance;
         _log = lf.CreateLogger<PermissionsService>();
 
         // Pipe app-scoped loggers into the static permission helpers so
-        // every IOHIDCheckAccess / SocketException / firewall-rule decision
+        // every Win firewall / IOHIDCheckAccess / SocketException decision
         // lands in the Serilog file. Default is NullLogger; set once.
         NetworkPermission.Log = lf.CreateLogger(typeof(NetworkPermission).FullName!);
-        if (OperatingSystem.IsWindows())
-            WinToast.Log = lf.CreateLogger(typeof(WinToast).FullName!);
         InputMonitoringPermission.Log = lf.CreateLogger(typeof(InputMonitoringPermission).FullName!);
 
         _network = new NetworkPermissionImpl(lf.CreateLogger<NetworkPermissionImpl>());
@@ -60,15 +60,14 @@ public sealed class PermissionsService : IPermissionsService
             : new AlwaysGrantedPermission("input-monitoring");
         _autostart = new AutostartPermissionImpl(lf.CreateLogger<AutostartPermissionImpl>());
 
-        // Pipe app logger into the Mac UN bridge so authorisation prompts
-        // and getNotificationSettings outcomes land in the Serilog file.
-        if (OperatingSystem.IsMacOS())
-            MacUserNotifications.Log = lf.CreateLogger(typeof(MacUserNotifications).FullName!);
-        _notifications = OperatingSystem.IsMacOS()
-            ? new MacNotificationsPermissionImpl(lf.CreateLogger<MacNotificationsPermissionImpl>())
-            : OperatingSystem.IsWindows()
-                ? new WinNotificationsPermissionImpl(lf.CreateLogger<WinNotificationsPermissionImpl>())
-                : new AlwaysGrantedPermission("notifications");
+        // Notifications permission now reads directly from the
+        // platform's INotificationService implementation — no more static
+        // helper Log fields to wire up, no more side-channel state
+        // between MacUserNotifications / WinNotifications and this class.
+        _notifications = notifications is not null
+            ? new NotificationsPermissionImpl(notifications,
+                lf.CreateLogger<NotificationsPermissionImpl>())
+            : new AlwaysGrantedPermission("notifications");
 
         _timer = new DispatcherTimer { Interval = PollInterval };
         _timer.Tick += OnTick;
@@ -424,108 +423,47 @@ public sealed class PermissionsService : IPermissionsService
     }
 
     /// <summary>
-    /// macOS notifications gated by UNUserNotificationCenter. Probe maps
-    /// the auth-status enum to ProbeStatus; grant dispatch calls
-    /// requestAuthorization (fires the OS prompt on NotDetermined, opens
-    /// System Settings on Denied since the prompt can't be re-issued).
+    /// Single platform-agnostic notifications permission impl backed by
+    /// <see cref="BoltMate.App.Core.Notifications.INotificationService"/>.
+    /// The platform-specific behaviour (UN center modal on Mac, registry
+    /// poke on Win) lives behind the interface in BoltMate.App.Mac and
+    /// BoltMate.App.Win respectively — this class is just the bridge
+    /// from PermissionBase's tick / probe / grant lifecycle into those
+    /// typed managed APIs.
     /// </summary>
-    /// <summary>
-    /// macOS notifications gated by UNUserNotificationCenter via the
-    /// boltmate_un sidecar dylib. Probe is a synchronous status read;
-    /// grant dispatch differentiates by current state so the click /
-    /// Allow action does the right thing:
-    ///   • NotDetermined → requestAuthorization (drives the modal)
-    ///   • Denied        → open System Settings (modal won't fire again)
-    ///   • Authorized    → no-op (already granted)
-    /// </summary>
-    internal sealed class MacNotificationsPermissionImpl : PermissionBase
+    internal sealed class NotificationsPermissionImpl : PermissionBase
     {
-        public MacNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
-        public override bool CanRevoke => false;
+        private readonly BoltMate.App.Core.Notifications.INotificationService _service;
 
-        /// <summary>
-        /// Exposes the raw UN authorization status so the UI can
-        /// distinguish NotDetermined from Denied — needed to pick the
-        /// right click action on the About-tab toggle.
-        /// </summary>
-        public MacUserNotifications.AuthorizationStatus CurrentStatus { get; private set; }
-            = MacUserNotifications.AuthorizationStatus.NotDetermined;
+        public NotificationsPermissionImpl(
+            BoltMate.App.Core.Notifications.INotificationService service,
+            ILogger log) : base("notifications", log)
+        {
+            _service = service;
+        }
+
+        // CanRevoke is conservatively false — the UN center has no
+        // programmatic revoke, and we no longer let our Win toggle write
+        // directly to the per-AUMID registry slot (WindowsAppSDK owns
+        // that surface now via AppNotificationManager).
+        public override bool CanRevoke => false;
 
         protected override ProbeStatus ProbeOs()
         {
-            CurrentStatus = MacUserNotifications.GetAuthorizationStatus();
-            return CurrentStatus switch
+            return _service.GetAuthorizationStatus() switch
             {
-                MacUserNotifications.AuthorizationStatus.Authorized  => ProbeStatus.Granted,
-                MacUserNotifications.AuthorizationStatus.Provisional => ProbeStatus.Granted,
-                MacUserNotifications.AuthorizationStatus.Denied      => ProbeStatus.Denied,
-                _                                                    => ProbeStatus.Denied,
+                BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Authorized   => ProbeStatus.Granted,
+                BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Provisional  => ProbeStatus.Granted,
+                BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Denied       => ProbeStatus.Denied,
+                _                                                                            => ProbeStatus.Denied,
             };
         }
 
         protected override async Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
         {
             if (!target) return;
-            var status = MacUserNotifications.GetAuthorizationStatus();
-            CurrentStatus = status;
-
-            if (status is MacUserNotifications.AuthorizationStatus.Authorized
-                or MacUserNotifications.AuthorizationStatus.Provisional)
-                return;
-
-            if (status is MacUserNotifications.AuthorizationStatus.Denied)
-            {
-                Log.LogInformation("Notifications denied — opening System Settings");
-                NotificationsSettings.OpenOsSettings();
-                return;
-            }
-
-            Log.LogInformation("Notifications not determined — issuing requestAuthorization");
-            var granted = await MacUserNotifications.RequestAuthorizationAsync(ct: ct).ConfigureAwait(false);
-            Log.LogInformation("requestAuthorization returned granted={Granted}", granted);
-            // Re-probe so CurrentStatus reflects the user's choice + the
-            // PermissionBase's published IsGranted lights up on the next
-            // tick of the 1Hz backstop.
-            CurrentStatus = MacUserNotifications.GetAuthorizationStatus();
-        }
-    }
-
-    /// <summary>
-    /// Windows toast gating. Reads + writes the per-AUMID HKCU registry
-    /// key BoltMate shares with the OS Settings panel. There's no
-    /// "request" API the way Mac has UNUserNotificationCenter, but
-    /// because we own the same registry slot as Settings, we can flip
-    /// the value directly — both the welcome-page Allow click and the
-    /// Settings-card toggle write here, and the OS picks up the change
-    /// on its next read.
-    /// </summary>
-    internal sealed class WinNotificationsPermissionImpl : PermissionBase
-    {
-        public WinNotificationsPermissionImpl(ILogger log) : base("notifications", log) { }
-
-        // Win toggle is bidirectional: our Settings card can disable as
-        // well as enable. Mac stays CanRevoke=false because the UN
-        // center exposes no programmatic revoke; on Win we're just
-        // writing the same registry value the OS Settings panel does.
-        public override bool CanRevoke => true;
-
-        protected override ProbeStatus ProbeOs()
-        {
-            if (!OperatingSystem.IsWindows()) return ProbeStatus.Granted;
-            return WinNotifications.GetStatus() switch
-            {
-                WinNotifications.Status.Authorized    => ProbeStatus.Granted,
-                WinNotifications.Status.Denied        => ProbeStatus.Denied,
-                _                                     => ProbeStatus.Denied, // NotDetermined → primer fires
-            };
-        }
-
-        protected override Task DispatchSetGrantedAsync(bool target, CancellationToken ct)
-        {
-            if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
-            var ok = WinNotifications.WriteEnabled(target);
-            Log.LogInformation("Win notifications WriteEnabled({Target}) → {Ok}", target, ok);
-            return Task.CompletedTask;
+            var granted = await _service.RequestAuthorizationAsync(ct).ConfigureAwait(false);
+            Log.LogInformation("Notifications RequestAuthorizationAsync returned granted={Granted}", granted);
         }
     }
 }

@@ -55,7 +55,9 @@ public static class ServiceRegistration
         // primed the user via the HID primer page, so the first resolve
         // must happen inside App.ContinueBootstrap (which only runs after
         // wizard completion). Don't resolve this from Program.Main.
-        services.AddSingleton<IPermissionsService, PermissionsService>();
+        services.AddSingleton<IPermissionsService>(sp => new PermissionsService(
+            sp.GetService<BoltMate.App.Core.Notifications.INotificationService>(),
+            sp.GetRequiredService<ILoggerFactory>()));
 
         services.AddSingleton<INetworkAvailabilityWatcher, NetworkAvailabilityWatcher>();
 
@@ -91,6 +93,23 @@ public static class ServiceRegistration
         services.AddSingleton<UpdateService>(sp => new UpdateService(
             sp.GetRequiredService<AppSettings>(),
             sp.GetRequiredService<ILogger<UpdateService>>()));
+
+        // Cross-platform notification dispatcher. INotificationService is
+        // defined in BoltMate.App.Core; impls live in BoltMate.App.Win
+        // (Microsoft.WindowsAppSDK / AppNotificationManager) and
+        // BoltMate.App.Mac (Microsoft.macOS / UNUserNotificationCenter).
+        // Selected here by runtime OS; the unused platform's project ref
+        // doesn't fold into the wrong-TFM publish because the references
+        // are TFM-conditioned in BoltMate.App.csproj.
+#if WINDOWS
+        services.AddSingleton<BoltMate.App.Core.Notifications.INotificationService>(sp =>
+            new BoltMate.App.Win.Notifications.WinAppSdkNotificationService(
+                sp.GetRequiredService<ILogger<BoltMate.App.Win.Notifications.WinAppSdkNotificationService>>()));
+#elif MACOS
+        services.AddSingleton<BoltMate.App.Core.Notifications.INotificationService>(sp =>
+            new BoltMate.App.Mac.Notifications.MacUserNotificationService(
+                sp.GetRequiredService<ILogger<BoltMate.App.Mac.Notifications.MacUserNotificationService>>()));
+#endif
 
         // Topology stack — singletons. Each is gated on its permission
         // and the NIC watcher; the actual bind only happens after Start()

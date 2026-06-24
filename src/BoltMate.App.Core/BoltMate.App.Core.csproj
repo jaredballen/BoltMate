@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    Platform-agnostic interfaces that bridge the main App project (UI,
+    composition, MVVM) and the platform-specific impl projects
+    (BoltMate.App.Win, BoltMate.App.Mac). Lives outside BoltMate.Core so
+    Core stays focused on domain types + cross-platform services, and
+    the platform projects don't need to take a dependency on Core just
+    to participate in the App-layer interfaces.
+  -->
+
+</Project>

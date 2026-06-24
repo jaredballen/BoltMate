@@ -102,13 +102,14 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("BoltMate.App starting (Avalonia 12)");
 
-        // Wire app-scoped loggers into the static helpers that don't get
-        // an ILogger via DI. PermissionsService also does this once it
-        // resolves, but doing it here too means any toast attempt before
-        // the permission service spins up still gets diagnostics in the
-        // Serilog file.
-        if (OperatingSystem.IsWindows())
-            WinToast.Log = _loggerFactory.CreateLogger(typeof(WinToast).FullName!);
+        // Hand the platform-specific notification service to the static
+        // LocalNotifications facade so the AppHealth callback path + the
+        // Settings test-notification button (neither of which has direct
+        // access to the DI container at call time) can dispatch via the
+        // typed INotificationService. App.Win uses Microsoft.WindowsAppSDK;
+        // App.Mac uses Microsoft.macOS bindings over UNUserNotificationCenter.
+        LocalNotifications.Service =
+            Services.GetService<BoltMate.App.Core.Notifications.INotificationService>();
 
         // macOS menubar app-name fix. SetProcessName in Program.Main ran
         // before Avalonia bootstrapped, but Avalonia builds NSApp.mainMenu
@@ -383,7 +384,7 @@ public partial class App : Application
         if (_welcomeWindow is null || !_welcomeWindow.IsVisible)
         {
             _welcomeWindow = new WelcomeWindow(_settings,
-                _permissions ?? new PermissionsService(_loggerFactory),
+                _permissions ?? new PermissionsService(notifications: null, _loggerFactory),
                 isFirstRun: false,
                 log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a

@@ -1,31 +1,29 @@
 using System;
-using BoltMate.App.Services;
+using BoltMate.App.Core.Notifications;
 
 namespace BoltMate.App;
 
 /// <summary>
-/// Best-effort local notification surface. The OS — not us — gates
-/// delivery: UNUserNotificationCenter on macOS drops posts silently
-/// when the user has denied authorisation; Windows Settings → System →
-/// Notifications → BoltMate does the same on Win. We post unconditionally
-/// and trust the OS to honour the user's choice.
+/// Static facade over <see cref="INotificationService"/> for callers that
+/// don't have direct access to DI (the AppHealthService → tray callback
+/// path in App.axaml.cs, the Settings test-notification command, etc).
+/// The App layer sets <see cref="Service"/> at bootstrap after the
+/// container materialises the platform-specific impl.
 /// </summary>
 public static class LocalNotifications
 {
     /// <summary>
-    /// Show a notification. Returns true if the call was dispatched —
-    /// not a guarantee the banner actually rendered (auth status,
-    /// Focus / Do Not Disturb, etc. can intercept downstream).
+    /// Platform impl set by App bootstrap. Null until ServiceRegistration
+    /// has resolved — calls before then no-op so we don't crash trying to
+    /// post toasts during startup.
     /// </summary>
+    public static INotificationService? Service { get; set; }
+
     public static bool TryPost(string title, string body)
     {
         try
         {
-            if (OperatingSystem.IsMacOS())
-                return MacUserNotifications.Deliver(title, body);
-            if (OperatingSystem.IsWindows())
-                return WinToast.TryPost(title, body);
-            return false;
+            return Service?.Deliver(title, body) ?? false;
         }
         catch
         {
