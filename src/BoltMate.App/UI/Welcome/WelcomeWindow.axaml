@@ -2,332 +2,594 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="using:FluentAvalonia.UI.Controls"
         xmlns:vm="using:BoltMate.App.UI"
+        xmlns:svg="using:Avalonia.Svg.Skia"
         x:Class="BoltMate.App.UI.WelcomeWindow"
         x:DataType="vm:WelcomeViewModel"
-        Width="560" Height="460"
-        MinWidth="520" MinHeight="440"
+        Width="660" Height="508"
+        MinWidth="540" MinHeight="440"
         Title="Welcome to BoltMate"
-        CanResize="False"
+        CanResize="True"
         WindowStartupLocation="CenterScreen">
 
     <!--
-        First-run welcome + on-demand permission-fix wizard.
+        Welcome / setup wizard.
 
-        Page layout convention:
-          [ heading icon ]
-          [ big title ]
-          [ paragraph ]
-          [ optional status line ]
-          [ buttons row pinned to bottom ]
+        Layout per June 2026 design handoff §1:
+          [ 208 px brand rail  | flex content pane ]
+          rail (always dark): logo lockup → "Step N of M" → vertical
+            step tracker → "Nothing here talks to the internet…" footer.
+          content pane (theme-aware): one page visible at a time, bound
+            to the VM's CurrentPage state. 3 px green spine on the
+            Welcome step only.
 
-        State machine lives in code-behind. Pages are sibling Grids stacked
-        in this Grid; only one is IsVisible=True at a time. The wizard never
-        auto-fires an OS prompt — every prompt is tied to an explicit Grant
-        button press.
+        State machine lives in WelcomeViewModel. Page transitions never
+        touch Avalonia handles — they mutate VM properties; the right-
+        column Grid binds IsVisible per page to the matching ShowXxx
+        property.
 
-        On first run the user MUST traverse Welcome → (Network) → (HID, Mac
-        only) → Done. On subsequent launches the tray "Fix permissions" item
-        opens the same flow but skips the Welcome page and starts directly
-        at whichever primer is still ungranted.
-
-        Refusal-recovery: any "Not now" or denied-after-Grant press routes
-        to a Refusal page for that permission with two buttons: Grant (loops
-        back) and Quit BoltMate (full app shutdown). The wizard cannot be
-        dismissed by closing the window — Closing handler treats [x] / Cmd-W
-        the same as Quit.
+        Window size: 660×508 is the design default; resizable with
+        a sane minimum since the user said sizes aren't strict.
     -->
-    <Grid Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
 
-        <!-- =========================== WELCOME ============================ -->
-        <Grid x:Name="PageWelcome"
-              Margin="32"
-              IsVisible="{Binding ShowWelcome}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
-            <Image Grid.Row="0"
-                   Source="avares://BoltMate/Assets/app-icon-1024.png"
-                   Width="96" Height="96"
-                   HorizontalAlignment="Center"
-                   Margin="0,0,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="Welcome to BoltMate"
-                       FontSize="24" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate keeps your Logitech Bolt peripherals together as you switch between computers."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="20,12,20,0" />
-            <CheckBox Grid.Row="4"
-                      Content="Launch BoltMate when I sign in"
-                      IsChecked="{Binding AutostartChecked, Mode=TwoWay}"
-                      HorizontalAlignment="Center"
-                      Margin="0,0,0,16" />
-            <StackPanel Grid.Row="5" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Get started"
-                        Classes="accent"
-                        Command="{Binding GetStartedCommand}" />
-            </StackPanel>
-        </Grid>
+    <Grid ColumnDefinitions="208,*"
+          Background="{DynamicResource AppBackgroundBrush}">
 
-        <!-- =========================== NETWORK PRIMER ===================== -->
-        <Grid x:Name="PageNetworkPrimer"
-              Margin="32"
-              IsVisible="{Binding ShowNetworkPrimer}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Globe"
-                             FontSize="56"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="BoltMate needs Local Network access"
-                       FontSize="22" FontWeight="SemiBold"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate sends small heartbeats on your LAN so peripherals follow you between your computers. Nothing leaves your network — no traffic crosses the internet."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <TextBlock Grid.Row="3"
-                       Text="{Binding NetworkStatusLine}"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       FontSize="12"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,16,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Not now" Command="{Binding NetworkPrimerNotNowCommand}" />
-                <Button Content="Grant"
-                        Classes="accent"
-                        IsEnabled="{Binding NetworkPrimerGrantEnabled}"
-                        Command="{Binding NetworkPrimerGrantCommand}" />
-            </StackPanel>
-        </Grid>
+        <!-- ====================================================== -->
+        <!-- LEFT BRAND RAIL                                        -->
+        <!-- ====================================================== -->
+        <Border Grid.Column="0"
+                Background="{DynamicResource BrandRailBackgroundBrush}">
+            <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20,22,20,22">
 
-        <!-- =========================== NETWORK REFUSAL ==================== -->
-        <Grid x:Name="PageNetworkRefusal"
-              Margin="32"
-              IsVisible="{Binding ShowNetworkRefusal}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Important"
-                             FontSize="56"
-                             Foreground="{DynamicResource SystemFillColorCautionBrush}"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="Local Network is required"
-                       FontSize="22" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate can't sync between your computers without LAN access. Without it, you'd have to manually press Easy-Switch on each device when moving between machines."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <TextBlock Grid.Row="3"
-                       Text="{Binding NetworkStatusLine}"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       FontSize="12"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,16,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Quit BoltMate" Command="{Binding QuitCommand}" />
-                <Button Content="Grant"
-                        Classes="accent"
-                        IsEnabled="{Binding NetworkRefusalGrantEnabled}"
-                        Command="{Binding NetworkRefusalGrantCommand}" />
-            </StackPanel>
-        </Grid>
-
-        <!-- =========================== HID PRIMER (MAC) =================== -->
-        <Grid x:Name="PageInputMonitoringPrimer"
-              Margin="32"
-              IsVisible="{Binding ShowInputMonitoringPrimer}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Keyboard"
-                             FontSize="56"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="BoltMate needs HID device access"
-                       FontSize="22" FontWeight="SemiBold"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="macOS labels this 'Input Monitoring' because it gates all HID device access. BoltMate uses it ONLY to read host-switch events from your Bolt receiver. BoltMate does not log keystrokes or any other input."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <TextBlock Grid.Row="3"
-                       Text="{Binding InputMonitoringStatusLine}"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       FontSize="12"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,16,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Not now" Command="{Binding InputMonitoringPrimerNotNowCommand}" />
-                <Button Content="Grant"
-                        Classes="accent"
-                        IsEnabled="{Binding InputMonitoringPrimerGrantEnabled}"
-                        Command="{Binding InputMonitoringPrimerGrantCommand}" />
-            </StackPanel>
-        </Grid>
-
-        <!-- =========================== HID REFUSAL (MAC) ================== -->
-        <Grid x:Name="PageInputMonitoringRefusal"
-              Margin="32"
-              IsVisible="{Binding ShowInputMonitoringRefusal}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Important"
-                             FontSize="56"
-                             Foreground="{DynamicResource SystemFillColorCautionBrush}"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="HID device access is required"
-                       FontSize="22" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="macOS labels this 'Input Monitoring' because it gates all HID device access. BoltMate uses it ONLY to read host-switch events from your Bolt receiver. BoltMate does not log keystrokes or any other input. Without this permission BoltMate can't talk to your Bolt receiver at all."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <TextBlock Grid.Row="3"
-                       Text="{Binding InputMonitoringStatusLine}"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       FontSize="12"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,16,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Quit BoltMate" Command="{Binding QuitCommand}" />
-                <Button Content="Grant"
-                        Classes="accent"
-                        IsEnabled="{Binding InputMonitoringRefusalGrantEnabled}"
-                        Command="{Binding InputMonitoringRefusalGrantCommand}" />
-            </StackPanel>
-        </Grid>
-
-        <!-- ====================== NOTIFICATIONS PRIMER ==================== -->
-        <!--
-            Read-only status + open-Settings primer. Matches the Settings card
-            shape so the mental model is consistent. Single Continue button
-            because there's nothing to decide here — alerts are owned by the
-            OS and we just show the current state.
-        -->
-        <Grid x:Name="PageNotificationsPrimer"
-              Margin="32"
-              IsVisible="{Binding ShowNotificationsPrimer}"
-              RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Comment"
-                             FontSize="56"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="Notifications"
-                       FontSize="22" FontWeight="SemiBold"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate alerts you when something needs your attention — never for routine activity. Alerts are managed by your operating system; you can change this any time in System Settings."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-
-            <Border Grid.Row="3"
-                    HorizontalAlignment="Center"
-                    Margin="0,18,0,0"
-                    CornerRadius="12" Padding="14,4"
-                    Background="{Binding NotificationsPillBackground}">
-                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Ellipse Width="9" Height="9"
-                             VerticalAlignment="Center"
-                             Fill="{Binding NotificationsPillDot}" />
-                    <TextBlock Text="{Binding NotificationsPillText}"
-                               FontSize="13" FontWeight="SemiBold"
-                               VerticalAlignment="Center"
-                               Foreground="{Binding NotificationsPillForeground}" />
+                <!-- Logo lockup -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Width="30" Height="30" CornerRadius="8"
+                            Background="{DynamicResource BrandBlackTileBrush}">
+                        <Image Source="{SvgImage avares://BoltMate/Assets/BoltMate_logo.svg}"
+                               Width="19" Height="19"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="BoltMate"
+                               Foreground="White"
+                               FontSize="14" FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
                 </StackPanel>
-            </Border>
 
-            <StackPanel Grid.Row="5" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Open in System Settings"
-                        Command="{Binding NotificationsPrimerOpenSettingsCommand}" />
-                <Button Content="Continue"
-                        Classes="accent"
-                        Command="{Binding NotificationsPrimerContinueCommand}" />
-            </StackPanel>
-        </Grid>
+                <!-- Step caption -->
+                <TextBlock Grid.Row="1"
+                           Text="{Binding StepCaption}"
+                           Foreground="{DynamicResource BrandRailUpcomingTextBrush}"
+                           FontSize="11"
+                           Margin="2,22,0,12" />
 
-        <!-- =========================== DONE =============================== -->
-        <Grid x:Name="PageDone"
-              Margin="32"
-              IsVisible="{Binding ShowDone}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <ui:FASymbolIcon Grid.Row="0"
-                             Symbol="Accept"
-                             FontSize="64"
-                             Foreground="LimeGreen"
-                             HorizontalAlignment="Center"
-                             Margin="0,4,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="You're all set."
-                       FontSize="22" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate is now active in your menu bar."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Open BoltMate"
-                        Classes="accent"
-                        Command="{Binding DoneOpenCommand}" />
-            </StackPanel>
-        </Grid>
+                <!-- Step tracker -->
+                <ItemsControl Grid.Row="2" ItemsSource="{Binding Steps}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="2" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:WizardStep">
+                            <!-- Each row is its own Border; the three indicator
+                                 chips overlap via IsVisible per state so we
+                                 don't need a template selector. -->
+                            <Border Padding="10,8" CornerRadius="8">
+                                <Border.Styles>
+                                    <Style Selector="Border">
+                                        <Setter Property="Background" Value="Transparent" />
+                                    </Style>
+                                </Border.Styles>
+                                <!-- Active row gets the green-tint background. -->
+                                <Border.Background>
+                                    <MultiBinding>
+                                        <Binding Path="IsActive" />
+                                        <Binding RelativeSource="{RelativeSource Self}" />
+                                    </MultiBinding>
+                                </Border.Background>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                    <!-- Indicator (Active / Done / Upcoming) -->
+                                    <Panel Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center">
+                                        <!-- Active: hollow green ring + 6 px dot -->
+                                        <Ellipse IsVisible="{Binding IsActive}"
+                                                 StrokeThickness="2"
+                                                 Stroke="{DynamicResource BrandGreenBrush}" />
+                                        <Ellipse IsVisible="{Binding IsActive}"
+                                                 Width="6" Height="6"
+                                                 Fill="{DynamicResource BrandGreenBrush}"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <!-- Done: solid green chip + dark check -->
+                                        <Ellipse IsVisible="{Binding IsDone}"
+                                                 Fill="{DynamicResource BrandGreenBrush}" />
+                                        <Path IsVisible="{Binding IsDone}"
+                                              Data="M 4,8 L 7,11 L 12,5"
+                                              Stroke="{DynamicResource BrandBlackTileBrush}"
+                                              StrokeThickness="2"
+                                              StrokeJoin="Round" StrokeLineCap="Round"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <!-- Upcoming: hollow grey ring -->
+                                        <Ellipse IsVisible="{Binding IsUpcoming}"
+                                                 StrokeThickness="2"
+                                                 Stroke="{DynamicResource BrandRailUpcomingRingBrush}" />
+                                    </Panel>
 
-        <!-- =========================== LINUX FAST-PATH ==================== -->
-        <Grid x:Name="PageLinux"
-              Margin="32"
-              IsVisible="{Binding ShowLinux}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
-            <Image Grid.Row="0"
-                   Source="avares://BoltMate/Assets/app-icon-1024.png"
-                   Width="96" Height="96"
-                   HorizontalAlignment="Center"
-                   Margin="0,0,0,16" />
-            <TextBlock Grid.Row="1"
-                       Text="Nothing to do — opening BoltMate"
-                       FontSize="22" FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Grid.Row="2"
-                       Text="BoltMate doesn't need any permission prompts on Linux."
-                       FontSize="13"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,12,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
-                        HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Open BoltMate"
-                        Classes="accent"
-                        Command="{Binding DoneOpenCommand}" />
-            </StackPanel>
+                                    <!-- Label — colour + weight by state via triple TextBlock with
+                                         IsVisible bindings. Avoids a converter for the simple cases. -->
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Label}"
+                                               FontSize="12.5"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding IsActive}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource BrandRailActiveTextBrush}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Label}"
+                                               FontSize="12.5"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding IsDone}"
+                                               FontWeight="Medium"
+                                               Foreground="{DynamicResource BrandRailDoneTextBrush}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Label}"
+                                               FontSize="12.5"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding IsUpcoming}"
+                                               Foreground="{DynamicResource BrandRailUpcomingTextBrush}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Footer reassurance -->
+                <TextBlock Grid.Row="3"
+                           Text="Nothing here talks to the internet — peers find each other on your local network."
+                           Foreground="{DynamicResource BrandRailFooterTextBrush}"
+                           FontSize="11" TextWrapping="Wrap"
+                           Margin="2,16,2,0" />
+            </Grid>
+        </Border>
+
+        <!-- ====================================================== -->
+        <!-- RIGHT CONTENT PANE                                     -->
+        <!-- ====================================================== -->
+        <Grid Grid.Column="1" Background="{DynamicResource ContentBackgroundBrush}">
+
+            <!-- 3 px green spine — Welcome step only -->
+            <Border Width="3" HorizontalAlignment="Left"
+                    Background="{DynamicResource BrandGreenSpineBrush}"
+                    IsVisible="{Binding ShowSpine}" />
+
+            <!-- Page container; each page is its own Grid bound to its
+                 ShowXxx flag. Padding matches the handoff's 40 px. -->
+            <Grid Margin="40">
+
+                <!-- ===================== 1a. WELCOME ===================== -->
+                <Grid x:Name="PageWelcome"
+                      IsVisible="{Binding ShowWelcome}"
+                      RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+
+                    <!-- 64 px black app tile w/ bolt mark -->
+                    <Border Grid.Row="0"
+                            Width="64" Height="64"
+                            CornerRadius="17"
+                            Background="{DynamicResource BrandBlackTileBrush}"
+                            HorizontalAlignment="Left" Margin="0,4,0,16"
+                            BoxShadow="0 8 30 0 #40000000">
+                        <Image Source="{SvgImage avares://BoltMate/Assets/BoltMate_logo.svg}"
+                               Width="40" Height="40"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Welcome to BoltMate"
+                               FontSize="26" FontWeight="SemiBold"
+                               LetterSpacing="-0.4"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="340" HorizontalAlignment="Left"
+                               Text="Your keyboard and mouse will move between your computers together — tap Easy-Switch on either one, and the other follows. Setup takes about a minute."
+                               FontSize="14.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="6"
+                                Margin="0,18,0,0">
+                        <ui:FASymbolIcon Symbol="Important" FontSize="13"
+                                         Foreground="{DynamicResource TextTertiaryBrush}"
+                                         VerticalAlignment="Center" />
+                        <TextBlock Text="Works with Easy-Switch Logitech devices set up in Logi Options+."
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <CheckBox Grid.Row="5"
+                              Content="Launch BoltMate on startup"
+                              IsChecked="{Binding AutostartChecked, Mode=TwoWay}"
+                              Margin="0,18,0,0" />
+
+                    <StackPanel Grid.Row="6" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8"
+                                Margin="0,18,0,0">
+                        <Button Content="Get started"
+                                Classes="accent"
+                                Command="{Binding GetStartedCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1b. NETWORK PRIMER ===================== -->
+                <Grid x:Name="PageNetworkPrimer"
+                      IsVisible="{Binding ShowNetworkPrimer}"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="56" Height="56" CornerRadius="15"
+                            HorizontalAlignment="Left"
+                            Background="#2999FF55"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Globe" FontSize="28"
+                                         Foreground="{DynamicResource AccentForegroundBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               x:Name="NetworkPrimerHeading"
+                               Text="BoltMate needs Local Network access"
+                               FontSize="23" FontWeight="SemiBold"
+                               LetterSpacing="-0.35"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               x:Name="NetworkPrimerBody"
+                               MaxWidth="366" HorizontalAlignment="Left"
+                               Text="BoltMate sends small heartbeats on your local network so peripherals follow you between computers. Nothing leaves your network."
+                               FontSize="14" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Not now"
+                                Command="{Binding NetworkPrimerNotNowCommand}" />
+                        <Button Content="Grant access"
+                                Classes="accent"
+                                IsEnabled="{Binding NetworkPrimerGrantEnabled}"
+                                Command="{Binding NetworkPrimerGrantCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1c. NETWORK REFUSAL ==================== -->
+                <Grid x:Name="PageNetworkRefusal"
+                      IsVisible="{Binding ShowNetworkRefusal}"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="56" Height="56" CornerRadius="15"
+                            HorizontalAlignment="Left"
+                            Background="{DynamicResource CautionTintBrush}"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Important" FontSize="28"
+                                         Foreground="{DynamicResource CautionBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="BoltMate needs the network to work"
+                               FontSize="23" FontWeight="SemiBold"
+                               LetterSpacing="-0.35"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="366"
+                               Text="Without local network access BoltMate can't see your other computers or move devices between them. You can grant access in System Settings any time."
+                               FontSize="14" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Quit BoltMate"
+                                Command="{Binding QuitCommand}" />
+                        <Button Content="Grant access"
+                                Classes="accent"
+                                IsEnabled="{Binding NetworkRefusalGrantEnabled}"
+                                Command="{Binding NetworkRefusalGrantCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1d. HID PRIMER ========================= -->
+                <Grid x:Name="PageInputMonitoringPrimer"
+                      IsVisible="{Binding ShowInputMonitoringPrimer}"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="56" Height="56" CornerRadius="15"
+                            HorizontalAlignment="Left"
+                            Background="#2999FF55"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Keyboard" FontSize="28"
+                                         Foreground="{DynamicResource AccentForegroundBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="BoltMate needs Input Monitoring"
+                               FontSize="23" FontWeight="SemiBold"
+                               LetterSpacing="-0.35"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="366"
+                               Text="macOS calls this Input Monitoring because it gates all USB device access. BoltMate uses it only to talk to your Bolt receiver — it never logs keystrokes."
+                               FontSize="14" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Not now"
+                                Command="{Binding InputMonitoringPrimerNotNowCommand}" />
+                        <Button Content="Grant access"
+                                Classes="accent"
+                                IsEnabled="{Binding InputMonitoringPrimerGrantEnabled}"
+                                Command="{Binding InputMonitoringPrimerGrantCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1e. HID REFUSAL ======================== -->
+                <Grid x:Name="PageInputMonitoringRefusal"
+                      IsVisible="{Binding ShowInputMonitoringRefusal}"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="56" Height="56" CornerRadius="15"
+                            HorizontalAlignment="Left"
+                            Background="{DynamicResource CautionTintBrush}"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Important" FontSize="28"
+                                         Foreground="{DynamicResource CautionBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="This is the one BoltMate can&apos;t skip"
+                               FontSize="23" FontWeight="SemiBold"
+                               LetterSpacing="-0.35"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="366"
+                               Text="Input Monitoring is how BoltMate talks to your Bolt receiver. Without it, no device fan-out works at all. Grant access in System Settings, then come back."
+                               FontSize="14" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Quit BoltMate"
+                                Command="{Binding QuitCommand}" />
+                        <Button Content="Open System Settings"
+                                Classes="accent"
+                                IsEnabled="{Binding InputMonitoringRefusalGrantEnabled}"
+                                Command="{Binding InputMonitoringRefusalGrantCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1f. NOTIFICATIONS PRIMER =============== -->
+                <Grid x:Name="PageNotificationsPrimer"
+                      IsVisible="{Binding ShowNotificationsPrimer}"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="44" Height="44" CornerRadius="12"
+                            HorizontalAlignment="Left"
+                            Background="#2999FF55"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Comment" FontSize="22"
+                                         Foreground="{DynamicResource AccentForegroundBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Notifications keep you in the loop"
+                               FontSize="21" FontWeight="SemiBold"
+                               LetterSpacing="-0.35"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               Text="BoltMate stays quiet until something actually needs you. When it speaks up, here&apos;s what you can expect:"
+                               FontSize="13.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <!-- What-to-expect list -->
+                    <StackPanel Grid.Row="3" Spacing="10" Margin="0,16,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Border Width="26" Height="26" CornerRadius="7"
+                                    Background="{DynamicResource RowBackgroundBrush}"
+                                    VerticalAlignment="Top">
+                                <ui:FASymbolIcon Symbol="Important" FontSize="14"
+                                                 Foreground="{DynamicResource TextSecondaryBrush}"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Spacing="2" MaxWidth="380">
+                                <TextBlock Text="Device &amp; connection issues"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="When a paired device drops off or needs reconnecting."
+                                           FontSize="12.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Border Width="26" Height="26" CornerRadius="7"
+                                    Background="{DynamicResource RowBackgroundBrush}"
+                                    VerticalAlignment="Top">
+                                <ui:FASymbolIcon Symbol="Accept" FontSize="14"
+                                                 Foreground="{DynamicResource TextSecondaryBrush}"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Spacing="2" MaxWidth="380">
+                                <TextBlock Text="Updates"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="When a new version of BoltMate is ready to install."
+                                           FontSize="12.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Border Width="26" Height="26" CornerRadius="7"
+                                    Background="{DynamicResource RowBackgroundBrush}"
+                                    VerticalAlignment="Top">
+                                <ui:FASymbolIcon Symbol="Document" FontSize="14"
+                                                 Foreground="{DynamicResource TextSecondaryBrush}"
+                                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Spacing="2" MaxWidth="380">
+                                <TextBlock Text="License &amp; trial reminders"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="Occasional reminders about your trial or license."
+                                           FontSize="12.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Status card -->
+                    <Border Grid.Row="4"
+                            BorderBrush="{DynamicResource CardStrokeBrush}"
+                            BorderThickness="1" CornerRadius="10"
+                            Background="{DynamicResource CardBackgroundBrush}"
+                            Padding="14,12" Margin="0,16,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Current status"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="Managed by System Settings — change it there now, or any time under BoltMate › Settings."
+                                           FontSize="11.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextTertiaryBrush}" />
+                            </StackPanel>
+                            <Border Grid.Column="1"
+                                    CornerRadius="12" Padding="10,4"
+                                    VerticalAlignment="Center"
+                                    Background="{Binding NotificationsPillBackground}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                                             Fill="{Binding NotificationsPillDot}" />
+                                    <TextBlock Text="{Binding NotificationsPillText}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"
+                                               Foreground="{Binding NotificationsPillForeground}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="6" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="10" Margin="0,18,0,0">
+                        <Button Content="Open in System Settings ↗"
+                                Command="{Binding NotificationsPrimerOpenSettingsCommand}" />
+                        <Button Content="Continue"
+                                Classes="accent"
+                                Command="{Binding NotificationsPrimerContinueCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1g. DONE ============================== -->
+                <Grid x:Name="PageDone"
+                      IsVisible="{Binding ShowDone}"
+                      RowDefinitions="Auto,Auto,*,Auto,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="60" Height="60" CornerRadius="17"
+                            HorizontalAlignment="Left"
+                            Background="{DynamicResource BrandGreenBrush}"
+                            BoxShadow="0 8 30 0 #4099FF55"
+                            Margin="0,4,0,16">
+                        <Path Data="M 14,30 L 26,42 L 46,18"
+                              Stroke="#15240C" StrokeThickness="4"
+                              StrokeJoin="Round" StrokeLineCap="Round" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="You&apos;re all set"
+                               FontSize="26" FontWeight="SemiBold"
+                               LetterSpacing="-0.4"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <StackPanel Grid.Row="2" Spacing="10" Margin="0,12,0,0" MaxWidth="420">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Ellipse Width="6" Height="6" VerticalAlignment="Top" Margin="0,8,0,0"
+                                     Fill="{DynamicResource BrandGreenBrush}" />
+                            <TextBlock Text="Tap Easy-Switch on any device and the rest of the desk hops with it."
+                                       FontSize="13.5" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Ellipse Width="6" Height="6" VerticalAlignment="Top" Margin="0,8,0,0"
+                                     Fill="{DynamicResource BrandGreenBrush}" />
+                            <TextBlock Text="The bolt in your menu bar / system tray turns amber if something needs your attention."
+                                       FontSize="13.5" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Ellipse Width="6" Height="6" VerticalAlignment="Top" Margin="0,8,0,0"
+                                     Fill="{DynamicResource BrandGreenBrush}" />
+                            <TextBlock Text="Open Status anytime to see what&apos;s connected and where it is."
+                                       FontSize="13.5" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8" Margin="0,18,0,0">
+                        <Button Content="Open BoltMate"
+                                Classes="accent"
+                                Command="{Binding DoneOpenCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===================== 1h. LINUX FAST-PATH ==================== -->
+                <Grid x:Name="PageLinux"
+                      IsVisible="{Binding ShowLinux}"
+                      RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="56" Height="56" CornerRadius="15"
+                            HorizontalAlignment="Left"
+                            Background="#2999FF55"
+                            Margin="0,4,0,16">
+                        <ui:FASymbolIcon Symbol="Globe" FontSize="28"
+                                         Foreground="{DynamicResource AccentForegroundBrush}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Linux: best-effort"
+                               FontSize="23" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="420"
+                               Text="BoltMate runs on Linux as a best-effort target — there's no Logitech Options+ companion, so cross-machine sync still works but per-device features lean on Solaar."
+                               FontSize="14" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8">
+                        <Button Content="Open BoltMate"
+                                Classes="accent"
+                                Command="{Binding DoneOpenCommand}" />
+                    </StackPanel>
+                </Grid>
+
+            </Grid>
         </Grid>
     </Grid>
 </Window>

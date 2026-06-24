@@ -116,6 +116,14 @@
     <PackageReference Include="ReactiveUI" Version="20.1.63" />
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.4" />
+    <!--
+      SVG rendering for the brand logo + wordmark assets (res/ → Assets/).
+      Avalonia.Svg.Skia layers a Svg control + SvgImage source on top of
+      SkiaSharp's SVG parser. Without it Image Source="...svg" silently
+      shows nothing — Avalonia core only ships raster decoders. Modest
+      dep (~200 KB) and is the canonical Avalonia-stack choice.
+    -->
+    <PackageReference Include="Avalonia.Svg.Skia" Version="11.3.0" />
     <PackageReference Include="FluentAvaloniaUI" Version="3.0.0" />
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
@@ -165,6 +173,13 @@
     <AvaloniaResource Include="Assets/tray-icon-dark.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
     <AvaloniaResource Include="Assets/app-icon-1024.png" />
+
+    <!-- Brand vector assets shared by Welcome rail + Settings nav header
+         + any future surface. Source: res/. Avalonia.Svg.Skia renders
+         these at any size via <Svg> or <Image Source="{SvgImage avares://...}"/>. -->
+    <AvaloniaResource Include="Assets/BoltMate_logo.svg" />
+    <AvaloniaResource Include="Assets/BoltMate_wordmark.svg" />
+    <AvaloniaResource Include="Assets/BoltMate_wordmark_wide.svg" />
 
     <!-- Source-of-truth SVG + platform-specific app icons:
          .icns is bundled into the macOS .app via the Directory.Build.targets
