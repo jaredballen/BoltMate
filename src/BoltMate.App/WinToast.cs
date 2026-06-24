@@ -78,12 +78,16 @@ internal static class WinToast
 
     private static string? ResolveScriptPath()
     {
-        // The script ships in Native/Win/ relative to the binary —
-        // installer stages it under Program Files\BoltMate\Native\Win\
-        // alongside BoltMate.exe.
-        var exeDir = Path.GetDirectoryName(Assembly.GetEntryAssembly()?.Location)
-                     ?? AppContext.BaseDirectory;
-        var path = Path.Combine(exeDir, "Native", "Win", "post-toast.ps1");
+        // The script ships in Native/Win/ relative to the binary. AppContext
+        // .BaseDirectory is the right anchor here: it returns the apphost
+        // directory for both framework-dependent AND self-contained
+        // single-file publishes. Assembly.GetEntryAssembly().Location
+        // returns "" for single-file, so anchoring on that resolves to a
+        // relative path that depends on the current working directory —
+        // which for a tray app launched from Start Menu is not the install
+        // dir, so File.Exists fails and TryPost silently bails. Lesson
+        // learned: always BaseDirectory for asset lookups in published apps.
+        var path = Path.Combine(AppContext.BaseDirectory, "Native", "Win", "post-toast.ps1");
         return File.Exists(path) ? path : null;
     }
 }

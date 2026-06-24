@@ -102,6 +102,14 @@ public partial class App : Application
         var log = _loggerFactory.CreateLogger<App>();
         log.LogInformation("BoltMate.App starting (Avalonia 12)");
 
+        // Wire app-scoped loggers into the static helpers that don't get
+        // an ILogger via DI. PermissionsService also does this once it
+        // resolves, but doing it here too means any toast attempt before
+        // the permission service spins up still gets diagnostics in the
+        // Serilog file.
+        if (OperatingSystem.IsWindows())
+            WinToast.Log = _loggerFactory.CreateLogger(typeof(WinToast).FullName!);
+
         // macOS menubar app-name fix. SetProcessName in Program.Main ran
         // before Avalonia bootstrapped, but Avalonia builds NSApp.mainMenu
         // using its own cached title. Rewrite the menu item title here AND
