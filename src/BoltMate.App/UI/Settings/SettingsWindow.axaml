@@ -2,57 +2,127 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:BoltMate.App.UI"
         xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:svg="using:Avalonia.Svg.Skia"
         x:Class="BoltMate.App.UI.SettingsWindow"
         x:DataType="vm:SettingsViewModel"
-        Width="820" Height="560"
+        Width="860" Height="594"
         MinWidth="680" MinHeight="460"
         Title="BoltMate Settings"
         WindowStartupLocation="CenterScreen">
 
     <!--
-        Win11-style settings shell. FluentAvalonia NavigationView on the left,
-        three pages stacked in a content Grid (only one IsVisible at a time —
-        page swap done in code-behind because FANavigationView's selection
-        contract doesn't bind cleanly).
+        Settings shell per June 2026 design handoff §2.
 
-        All state binds to SettingsViewModel. Mac Mica is NOT enabled.
+        Layout:
+          [ 208 px dark nav rail  | flex content pane ]
+
+        Nav rail mirrors the Welcome wizard's left rail: same dark
+        background, same logo lockup at top. Three nav items (Status /
+        General / License) styled as Button.nav-item with two visual
+        states driven by VM.CurrentTab — active/inactive via
+        DynamicResource binds to BrandRail* tokens. Clicking fires
+        SelectTabCommand with the tab key as parameter.
+
+        Page swap is now binding-driven (each page Grid's IsVisible
+        binds to the matching ShowXxxTab flag) — no more code-behind
+        ShowPage indirection.
+
+        Mac Mica is NOT enabled.
     -->
-    <Grid>
-        <ui:FANavigationView x:Name="MainNav"
-                             PaneDisplayMode="Left"
-                             IsBackButtonVisible="False"
-                             IsSettingsVisible="False"
-                             IsPaneToggleButtonVisible="False"
-                             OpenPaneLength="200"
-                             AlwaysShowHeader="False">
-            <ui:FANavigationView.MenuItems>
-                <ui:FANavigationViewItem x:Name="StatusNavItem"
-                                         Content="Status"
-                                         Tag="status">
-                    <ui:FANavigationViewItem.IconSource>
-                        <ui:FASymbolIconSource Symbol="Globe" />
-                    </ui:FANavigationViewItem.IconSource>
-                </ui:FANavigationViewItem>
-                <ui:FANavigationViewItem x:Name="AboutNavItem"
-                                         Content="About"
-                                         Tag="about">
-                    <ui:FANavigationViewItem.IconSource>
-                        <ui:FASymbolIconSource Symbol="Important" />
-                    </ui:FANavigationViewItem.IconSource>
-                </ui:FANavigationViewItem>
-                <ui:FANavigationViewItem x:Name="LicenseNavItem"
-                                         Content="License"
-                                         Tag="license">
-                    <ui:FANavigationViewItem.IconSource>
-                        <ui:FASymbolIconSource Symbol="Document" />
-                    </ui:FANavigationViewItem.IconSource>
-                </ui:FANavigationViewItem>
-            </ui:FANavigationView.MenuItems>
+    <Window.Styles>
+        <!-- Nav-item button: full-bleed across the rail, left-aligned content,
+             two themed background/foreground brushes per state. -->
+        <Style Selector="Button.nav-item">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource BrandRailUpcomingTextBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+        <Style Selector="Button.nav-item:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#14FFFFFF" />
+        </Style>
+        <Style Selector="Button.nav-item.active">
+            <Setter Property="Foreground" Value="{DynamicResource BrandRailActiveTextBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.nav-item.active /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource BrandRailActiveBackgroundBrush}" />
+        </Style>
+    </Window.Styles>
 
+    <Grid ColumnDefinitions="208,*"
+          Background="{DynamicResource AppBackgroundBrush}">
+
+        <!-- ====================================================== -->
+        <!-- LEFT NAV RAIL                                          -->
+        <!-- ====================================================== -->
+        <Border Grid.Column="0"
+                Background="{DynamicResource BrandRailBackgroundBrush}">
+            <Grid RowDefinitions="Auto,Auto,*" Margin="20,22,20,22">
+
+                <!-- Logo lockup -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Width="30" Height="30" CornerRadius="8"
+                            Background="{DynamicResource BrandBlackTileBrush}">
+                        <Image Source="{SvgImage avares://BoltMate/Assets/BoltMate_logo.svg}"
+                               Width="19" Height="19"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="BoltMate"
+                               Foreground="White" FontSize="14" FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Hairline separator -->
+                <Border Grid.Row="1" Height="1" Background="#22FFFFFF" Margin="0,18,0,12" />
+
+                <!-- Nav items -->
+                <StackPanel Grid.Row="2" Spacing="2">
+                    <Button Classes.active="{Binding IsStatusActive}"
+                            Classes="nav-item"
+                            Command="{Binding SelectTabCommand}"
+                            CommandParameter="status">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ui:FASymbolIcon Symbol="Globe" FontSize="14" />
+                            <TextBlock Text="Status" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes.active="{Binding IsGeneralActive}"
+                            Classes="nav-item"
+                            Command="{Binding SelectTabCommand}"
+                            CommandParameter="general">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ui:FASymbolIcon Symbol="Important" FontSize="14" />
+                            <TextBlock Text="General" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes.active="{Binding IsLicenseActive}"
+                            Classes="nav-item"
+                            Command="{Binding SelectTabCommand}"
+                            CommandParameter="license">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <ui:FASymbolIcon Symbol="Document" FontSize="14" />
+                            <TextBlock Text="License" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ====================================================== -->
+        <!-- RIGHT CONTENT PANE                                     -->
+        <!-- ====================================================== -->
+        <Grid Grid.Column="1" Background="{DynamicResource ContentBackgroundBrush}">
             <Grid>
 
                 <!-- ======================= STATUS ======================= -->
-                <Grid x:Name="StatusPage" Margin="20" RowDefinitions="Auto,*">
+                <Grid x:Name="StatusPage" Margin="20"
+                      IsVisible="{Binding ShowStatusTab}"
+                      RowDefinitions="Auto,*">
                     <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
                         <TextBlock Text="Status" FontSize="22" FontWeight="SemiBold" />
                         <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
@@ -192,7 +262,8 @@
                 </Grid>
 
                 <!-- ======================= ABOUT ======================= -->
-                <Grid x:Name="AboutPage" Margin="20" IsVisible="False">
+                <Grid x:Name="GeneralPage" Margin="20"
+                      IsVisible="{Binding ShowGeneralTab}">
                     <ScrollViewer>
                         <StackPanel Spacing="16">
                             <StackPanel Spacing="4">
@@ -308,7 +379,8 @@
                 </Grid>
 
                 <!-- ======================= LICENSE ======================= -->
-                <Grid x:Name="LicensePage" Margin="20" IsVisible="False">
+                <Grid x:Name="LicensePage" Margin="20"
+                      IsVisible="{Binding ShowLicenseTab}">
                     <StackPanel Spacing="16">
                         <TextBlock Text="License" FontSize="22" FontWeight="SemiBold" />
                         <TextBlock Text="Licensing — coming soon" Foreground="#B5BAC2" FontSize="13" />
@@ -330,6 +402,6 @@
                 </Grid>
 
             </Grid>
-        </ui:FANavigationView>
+        </Grid>
     </Grid>
 </Window>

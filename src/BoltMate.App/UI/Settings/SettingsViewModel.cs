@@ -37,6 +37,47 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <summary>Per-window subscriptions disposed on Window.Closing.</summary>
     public CompositeDisposable Activation { get; } = new();
 
+    // ---- Tab selection ------------------------------------------------
+    //
+    // Three tabs, single visible at a time. The window's XAML binds
+    // each tab page's IsVisible to the matching ShowXxxTab flag; nav
+    // buttons fire SelectTabCommand with the tab key as parameter.
+    //
+    // Tab keys are stable strings (also used as App-layer "OpenTo"
+    // arguments from the tray menu) so they survive renames of the
+    // user-facing labels — "General" was previously "About".
+
+    public const string TabStatus  = "status";
+    public const string TabGeneral = "general";
+    public const string TabLicense = "license";
+
+    private string _currentTab = TabStatus;
+    public string CurrentTab
+    {
+        get => _currentTab;
+        set
+        {
+            if (_currentTab == value) return;
+            this.RaiseAndSetIfChanged(ref _currentTab, value);
+            this.RaisePropertyChanged(nameof(ShowStatusTab));
+            this.RaisePropertyChanged(nameof(ShowGeneralTab));
+            this.RaisePropertyChanged(nameof(ShowLicenseTab));
+            this.RaisePropertyChanged(nameof(IsStatusActive));
+            this.RaisePropertyChanged(nameof(IsGeneralActive));
+            this.RaisePropertyChanged(nameof(IsLicenseActive));
+        }
+    }
+
+    public bool ShowStatusTab  => CurrentTab == TabStatus;
+    public bool ShowGeneralTab => CurrentTab == TabGeneral;
+    public bool ShowLicenseTab => CurrentTab == TabLicense;
+
+    // Per-item "is this the active tab" flags drive the nav button
+    // background/foreground via DynamicResource bindings in XAML.
+    public bool IsStatusActive  => ShowStatusTab;
+    public bool IsGeneralActive => ShowGeneralTab;
+    public bool IsLicenseActive => ShowLicenseTab;
+
     // Exposed so the window's BindHealth() can re-construct the VM with
     // fresh transport-health observables when the user toggles topology on
     // or off without restarting the app.
@@ -269,6 +310,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenNotificationSettingsCommand { get; }
+    /// <summary>Nav-button-bound tab switcher. Parameter is a tab key constant.</summary>
+    public ReactiveCommand<string, Unit> SelectTabCommand { get; }
 
     public SettingsViewModel(
         IReceiverManager manager,
@@ -324,6 +367,11 @@ public sealed class SettingsViewModel : ViewModelBase
         OpenNotificationSettingsCommand = ReactiveCommand.Create(() =>
         {
             _notifications?.OpenOsSettings();
+        });
+
+        SelectTabCommand = ReactiveCommand.Create<string>(tab =>
+        {
+            if (!string.IsNullOrEmpty(tab)) CurrentTab = tab;
         });
     }
 
