@@ -220,40 +220,56 @@
         </Grid>
 
         <!-- ====================== NOTIFICATIONS PRIMER ==================== -->
+        <!--
+            Read-only status + open-Settings primer. Matches the Settings card
+            shape so the mental model is consistent. Single Continue button
+            because there's nothing to decide here — alerts are owned by the
+            OS and we just show the current state.
+        -->
         <Grid x:Name="PageNotificationsPrimer"
               Margin="32"
               IsVisible="{Binding ShowNotificationsPrimer}"
-              RowDefinitions="Auto,Auto,Auto,*,Auto">
+              RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
             <ui:FASymbolIcon Grid.Row="0"
                              Symbol="Comment"
                              FontSize="56"
                              HorizontalAlignment="Center"
                              Margin="0,4,0,16" />
             <TextBlock Grid.Row="1"
-                       Text="Allow BoltMate to send notifications"
+                       Text="Notifications"
                        FontSize="22" FontWeight="SemiBold"
                        TextAlignment="Center" TextWrapping="Wrap"
                        HorizontalAlignment="Center" />
             <TextBlock Grid.Row="2"
-                       Text="BoltMate uses OS notifications to surface alerts when something needs your attention — a permission gets revoked, the LAN drops, or no Bolt receiver is connected. Notifications are optional; BoltMate works fine without them. Tap Allow to bring up the OS prompt."
+                       Text="BoltMate alerts you when something needs your attention — never for routine activity. Alerts are managed by your operating system; you can change this any time in System Settings."
                        FontSize="13"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextAlignment="Center" TextWrapping="Wrap"
                        Margin="10,12,10,0" />
-            <TextBlock Grid.Row="3"
-                       Text="{Binding NotificationsStatusLine}"
-                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                       FontSize="12"
-                       TextAlignment="Center" TextWrapping="Wrap"
-                       Margin="10,16,10,0" />
-            <StackPanel Grid.Row="4" Orientation="Horizontal"
+
+            <Border Grid.Row="3"
+                    HorizontalAlignment="Center"
+                    Margin="0,18,0,0"
+                    CornerRadius="12" Padding="14,4"
+                    Background="{Binding NotificationsPillBackground}">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Ellipse Width="9" Height="9"
+                             VerticalAlignment="Center"
+                             Fill="{Binding NotificationsPillDot}" />
+                    <TextBlock Text="{Binding NotificationsPillText}"
+                               FontSize="13" FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{Binding NotificationsPillForeground}" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Row="5" Orientation="Horizontal"
                         HorizontalAlignment="Right" Spacing="8">
-                <Button Content="Not now"
-                        Command="{Binding NotificationsPrimerNotNowCommand}" />
-                <Button Content="Allow"
+                <Button Content="Open in System Settings"
+                        Command="{Binding NotificationsPrimerOpenSettingsCommand}" />
+                <Button Content="Continue"
                         Classes="accent"
-                        IsEnabled="{Binding NotificationsPrimerGrantEnabled}"
-                        Command="{Binding NotificationsPrimerAllowCommand}" />
+                        Command="{Binding NotificationsPrimerContinueCommand}" />
             </StackPanel>
         </Grid>
 

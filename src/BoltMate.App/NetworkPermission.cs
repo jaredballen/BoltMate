@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -114,24 +115,125 @@ public static class NetworkPermission
         System.Threading.Thread.Sleep(100);
 
         Invalidate();
+
+        // Two distinct OS permissions sit behind "network access" on Mac:
+        //   1. TCC Local Network — Privacy & Security pane
+        //   2. Application Firewall — accept incoming connections (separate)
+        // Probe each, then dispatch the right action per sub-permission:
+        //   • Granted → no-op
+        //   • Denied → open the matching System Settings pane
+        //   • Unknown / no-rule → fire a trigger that surfaces the OS prompt
+        //
+        // Order:
+        //   - Start the firewall trigger FIRST (background socket; reactive,
+        //     needs time for the OS daemon to evaluate inbound traffic).
+        //   - Fire the TCC multicast SEND synchronously after. TCC prompts
+        //     immediately; the firewall prompt fires alongside or shortly
+        //     after on the same Grant click.
+        var ln = CheckMacLocalNetwork();
+        var fw = CheckMacFirewall();
+        Log.LogInformation("RequestMac: sub-permission state — LocalNetwork={Ln} Firewall={Fw}", ln, fw);
+
+        // Firewall sub-permission
+        if (fw == Status.Denied)
+        {
+            // Existing Block rule — only System Settings can flip it.
+            Log.LogInformation("RequestMac: Firewall denies — opening Firewall pane");
+            OpenFirewallSettings();
+        }
+        else if (fw != Status.Granted)
+        {
+            // No rule yet — bind an inbound socket in the background to
+            // surface the firewall dialog while the user is still on the
+            // Welcome Network primer.
+            StartFirewallTriggerSocket();
+        }
+
+        // TCC Local Network sub-permission
+        if (ln == Status.Denied)
+        {
+            // Already declined — TCC won't re-prompt; open Settings.
+            Log.LogInformation("RequestMac: TCC Local Network denied — opening Settings");
+            OpenSystemSettings();
+        }
+        else if (ln != Status.Granted)
+        {
+            // Undecided — multicast SEND triggers the TCC modal.
+            try
+            {
+                using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                s.MulticastLoopback = true;
+                s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Parse("239.255.41.42"), 41420));
+                Log.LogInformation("RequestMac: multicast send succeeded — TCC Local Network prompt triggered");
+            }
+            catch (SocketException ex)
+            {
+                Log.LogWarning(
+                    "RequestMac: multicast send failed — SocketError={Code} message={Message}",
+                    ex.SocketErrorCode, ex.Message);
+            }
+        }
+
+        return true;
+    }
+
+    private static void OpenFirewallSettings()
+    {
         try
         {
-            using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            s.MulticastLoopback = true;
-            s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Parse("239.255.41.42"), 41420));
-            return true;
+            // Direct deep-link to Firewall pane (Network → Firewall).
+            Process.Start("open", "x-apple.systempreferences:com.apple.preference.security?Firewall");
         }
-        catch (SocketException ex)
+        catch
         {
-            // Common cases:
-            //   AccessDenied / HostUnreachable: TCC has decided "deny" (no
-            //     prompt re-fires for that decision; user must open Settings).
-            //   NetworkUnreachable: no live network interface — also no prompt.
-            Log.LogWarning(
-                "RequestMac: multicast send failed — SocketError={Code} message={Message}",
-                ex.SocketErrorCode, ex.Message);
-            return false;
+            // best-effort
         }
+    }
+
+    /// <summary>
+    /// Holds a UDP socket bound to the topology port + multicast group in
+    /// a background task so macOS Application Firewall has a sustained
+    /// inbound bind to evaluate. Runs for ~15s — long enough to overlap
+    /// with the user dismissing the TCC dialog and clicking Continue on
+    /// the Welcome Network primer. Best-effort; socket-bind failures are
+    /// logged and swallowed.
+    /// </summary>
+    private static void StartFirewallTriggerSocket()
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                s.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                s.Bind(new IPEndPoint(IPAddress.Any, 41420));
+                s.EnableBroadcast = true;
+                s.MulticastLoopback = true;
+                var mcast = new MulticastOption(IPAddress.Parse("239.255.41.42"));
+                s.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, mcast);
+
+                Log.LogInformation("FirewallTrigger: UDP bound on 41420 + joined 239.255.41.42 — holding 15s for firewall dialog");
+
+                // Pump multicast packets steadily so even a quiet LAN
+                // delivers inbound traffic to our socket. The firewall
+                // daemon needs to see incoming activity, not just a bind.
+                var payload = new byte[] { 0 };
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                while (DateTime.UtcNow < deadline)
+                {
+                    try { s.SendTo(payload, new IPEndPoint(IPAddress.Parse("239.255.41.42"), 41420)); } catch { }
+                    try { s.SendTo(payload, new IPEndPoint(IPAddress.Broadcast, 41420)); } catch { }
+                    System.Threading.Thread.Sleep(500);
+                }
+                Log.LogInformation("FirewallTrigger: socket closed after 15s");
+            }
+            catch (SocketException ex)
+            {
+                Log.LogWarning(
+                    "FirewallTrigger: bind failed — SocketError={Code} message={Message}",
+                    ex.SocketErrorCode, ex.Message);
+            }
+        });
     }
 
     private static bool RequestWindows()
@@ -368,17 +470,41 @@ public static class NetworkPermission
 
     private static Result CheckMac()
     {
-        // Multi-probe for reliability. macOS Sequoia behavior:
-        //   • A UDP send to multicast SUCCEEDS locally even when TCC denies
-        //     Local Network — kernel drops the packet at the discovery layer.
-        //     So a send-only probe false-positives Granted on revoked apps.
-        //   • Joining a multicast group (IP_ADD_MEMBERSHIP) on 224.0.0.251 is
-        //     gated by Local Network TCC and returns EACCES when denied.
-        //   • Sending a broadcast to 255.255.255.255 with SO_BROADCAST=1 is
-        //     also TCC-gated and returns EACCES.
-        // Both signals together give us the cleanest read; we report Denied if
-        // EITHER fails with a deny-shaped error. Any unexpected throw is
-        // logged via Trace and returned as Unknown.
+        // Network access on Mac requires BOTH:
+        //   1. TCC Local Network (Privacy & Security → Local Network)
+        //   2. Application Firewall accept-incoming entry for our binary
+        // Both must be granted before peer discovery + UDP topology work
+        // end-to-end. Combined IsGranted = AND of both.
+        var ln = CheckMacLocalNetwork();
+        var fw = CheckMacFirewall();
+        Log.LogDebug("CheckMac: LocalNetwork={Ln} Firewall={Fw}", ln, fw);
+
+        if (ln == Status.Granted && fw == Status.Granted)
+            return new Result(Status.Granted, "Local Network + Firewall: granted");
+
+        // Surface the most user-actionable denial in the detail string so
+        // the Status UI can speak to the right remedy.
+        if (ln == Status.Denied)
+            return new Result(Status.Denied, "Local Network access: denied — re-enable in System Settings → Privacy");
+        if (fw == Status.Denied)
+            return new Result(Status.Denied, "Application Firewall: blocking — re-enable in System Settings → Network → Firewall");
+        if (fw != Status.Granted)
+            return new Result(Status.Denied, "Application Firewall: no rule yet — click Grant to register");
+        if (ln != Status.Granted)
+            return new Result(Status.Denied, "Local Network access: not yet granted — click Grant to request");
+
+        return new Result(Status.Unknown, "Network access: unknown");
+    }
+
+    /// <summary>
+    /// Probes TCC Local Network only. Two signals: multicast group join +
+    /// broadcast send. Both are TCC-gated on macOS Sequoia+; either failing
+    /// with EACCES means Local Network is denied. Multicast SEND (used by
+    /// callers as a probe) is unreliable here because the kernel drops at
+    /// the discovery layer rather than at syscall — gives false positive.
+    /// </summary>
+    private static Status CheckMacLocalNetwork()
+    {
         bool joinedMulticast = false;
         try
         {
@@ -393,15 +519,13 @@ public static class NetworkPermission
             ex.SocketErrorCode == SocketError.HostUnreachable ||
             ex.SocketErrorCode == SocketError.NetworkUnreachable)
         {
-            Log.LogInformation(
-                "CheckMac: multicast-join denied — SocketError={Code} → Denied",
-                ex.SocketErrorCode);
-            return new Result(Status.Denied, "Local Network access: denied");
+            Log.LogInformation("CheckMacLocalNetwork: multicast-join denied — SocketError={Code}", ex.SocketErrorCode);
+            return Status.Denied;
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "CheckMac: multicast-join unexpected error → Unknown");
-            return new Result(Status.Unknown, "Local Network access: unknown");
+            Log.LogWarning(ex, "CheckMacLocalNetwork: multicast-join unexpected error → Unknown");
+            return Status.Unknown;
         }
 
         try
@@ -409,29 +533,81 @@ public static class NetworkPermission
             using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             s.EnableBroadcast = true;
             s.SendTo(new byte[] { 0 }, new IPEndPoint(IPAddress.Broadcast, 41420));
-            Log.LogDebug("CheckMac: multicast-join + broadcast both succeeded → Granted");
-            return new Result(Status.Granted, "Local Network access: granted");
+            return Status.Granted;
         }
         catch (SocketException ex) when (
             ex.SocketErrorCode == SocketError.AccessDenied ||
             ex.SocketErrorCode == SocketError.HostUnreachable)
         {
-            Log.LogInformation(
-                "CheckMac: broadcast denied — SocketError={Code} → Denied",
-                ex.SocketErrorCode);
-            return new Result(Status.Denied, "Local Network access: denied");
+            Log.LogInformation("CheckMacLocalNetwork: broadcast denied — SocketError={Code}", ex.SocketErrorCode);
+            return Status.Denied;
         }
         catch (Exception ex)
         {
-            // If multicast-join succeeded but broadcast threw an unrelated
-            // error, assume granted — group-join is the stronger signal.
             if (joinedMulticast)
             {
-                Log.LogDebug(ex, "CheckMac: broadcast threw post-join; trusting join → Granted");
-                return new Result(Status.Granted, "Local Network access: granted");
+                Log.LogDebug(ex, "CheckMacLocalNetwork: broadcast threw post-join; trusting join → Granted");
+                return Status.Granted;
             }
-            Log.LogWarning(ex, "CheckMac: broadcast threw with no positive prior signal → Unknown");
-            return new Result(Status.Unknown, "Local Network access: unknown");
+            Log.LogWarning(ex, "CheckMacLocalNetwork: broadcast threw with no positive prior signal → Unknown");
+            return Status.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// Probes the macOS Application Firewall for a per-app entry covering
+    /// our running binary. Shells out to <c>socketfilterfw --listapps</c>
+    /// and parses for our binary path + its Allow/Block rule.
+    ///   • binary path present + "Allow incoming connections" → Granted
+    ///   • binary path present + "Block incoming connections" → Denied
+    ///   • binary path NOT present → Unknown (no rule; first bind will prompt)
+    /// </summary>
+    private static Status CheckMacFirewall()
+    {
+        try
+        {
+            var exe = Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(exe))
+                return Status.Unknown;
+
+            var psi = new ProcessStartInfo("/usr/libexec/ApplicationFirewall/socketfilterfw")
+            {
+                Arguments = "--listapps",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return Status.Unknown;
+            if (!p.WaitForExit(2000))
+            {
+                try { p.Kill(); } catch { }
+                return Status.Unknown;
+            }
+            var output = p.StandardOutput.ReadToEnd();
+
+            // Per-app entries appear as "<index> : <abs path>\n   (rule)\n".
+            // Split on lines and walk; once we hit our binary path, the
+            // next non-empty line carries the rule.
+            var lines = output.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].Contains(exe, StringComparison.Ordinal)) continue;
+                var rule = i + 1 < lines.Length ? lines[i + 1] : "";
+                if (rule.Contains("Allow", StringComparison.OrdinalIgnoreCase))
+                    return Status.Granted;
+                if (rule.Contains("Block", StringComparison.OrdinalIgnoreCase))
+                    return Status.Denied;
+                return Status.Unknown;
+            }
+            // Not in the list → no rule yet. Treat as Unknown so the
+            // welcome flow can fire a Request that triggers the OS prompt.
+            return Status.Unknown;
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug(ex, "CheckMacFirewall: probe threw");
+            return Status.Unknown;
         }
     }
 

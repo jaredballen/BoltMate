@@ -249,37 +249,44 @@
                                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                                     BorderThickness="1" CornerRadius="6" Padding="14">
                                 <StackPanel Spacing="10">
+                                    <!--
+                                        Read-only notification status card. The toggle was removed
+                                        because Win + Mac both refuse programmatic grant/revoke for
+                                        non-packaged apps; an in-app toggle is a polite lie. The pill
+                                        shows the live OS state via NotificationsEnabled; the button
+                                        bounces the user to System Settings, which IS the toggle.
+                                    -->
                                     <Grid ColumnDefinitions="*,Auto">
                                         <TextBlock Grid.Column="0" Text="Notifications" FontSize="14" FontWeight="SemiBold"
                                                    VerticalAlignment="Center" />
-                                        <!--
-                                            Hybrid toggle: the ToggleSwitch's IsChecked is a one-way bind to the
-                                            live OS state via NotificationsEnabled. Clicking it opens System
-                                            Settings (handled by OpenNotificationSettingsCommand via the
-                                            attached behaviour below) rather than flipping the toggle directly —
-                                            macOS and Win both prohibit programmatic grant/revoke from a Win32
-                                            app. Visual state stays honest while the click action takes the
-                                            user where the real switch lives.
-                                        -->
-                                        <ToggleSwitch Grid.Column="1"
-                                                      IsChecked="{Binding NotificationsEnabled, Mode=OneWay}"
-                                                      Command="{Binding NotificationsToggleClickedCommand}"
-                                                      OnContent="" OffContent=""
-                                                      MinWidth="0" />
+                                        <Border Grid.Column="1"
+                                                CornerRadius="10" Padding="10,2"
+                                                VerticalAlignment="Center"
+                                                Background="{Binding NotificationsPillBackground}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <Ellipse Width="8" Height="8"
+                                                         VerticalAlignment="Center"
+                                                         Fill="{Binding NotificationsPillDot}" />
+                                                <TextBlock Text="{Binding NotificationsPillText}"
+                                                           FontSize="12" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{Binding NotificationsPillForeground}" />
+                                            </StackPanel>
+                                        </Border>
                                     </Grid>
-                                    <TextBlock Text="{Binding NotificationsStatusLine}"
-                                               Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
                                     <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
-                                        BoltMate uses OS notifications to surface alerts for permission, network, and receiver
-                                        issues. The toggle is managed by the operating system — tapping it opens
-                                        System Settings where you can flip notifications on or off for BoltMate.
+                                        BoltMate alerts you when something needs your attention — never for routine activity.
+                                        Notifications are controlled by System Settings; BoltMate shows their current state here.
                                     </TextBlock>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Open notification settings"
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding NotificationsStatusLine}"
+                                                   Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap"
+                                                   VerticalAlignment="Center" />
+                                        <Button Grid.Column="1"
+                                                Content="Open in System Settings"
                                                 Command="{Binding OpenNotificationSettingsCommand}" />
-                                        <Button Content="Send test notification"
-                                                Command="{Binding SendTestNotificationCommand}" />
-                                    </StackPanel>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
 

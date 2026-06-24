@@ -322,23 +322,16 @@ public sealed class PermissionsService : IPermissionsService
             var pre = NetworkPermission.Check();
             if (pre.Status is NetworkPermission.Status.Granted) return Task.CompletedTask;
 
-            // Mac vs Win semantics for "Denied" differ:
-            //   • Mac: Denied means the user explicitly toggled off in TCC.
-            //     Request() can't re-prompt; only System Settings can fix.
-            //   • Win: Denied just means "no Allow firewall rule yet" (or a
-            //     Block rule that RequestWindows knows how to remove + retry).
-            //     The Request flow IS the right path — it binds an inbound
-            //     listener to trigger the Defender "Allow access" prompt.
-            // Routing both to OpenSystemSettings would dump Win users into
-            // the full firewall control panel instead of the simple prompt.
-            if (OperatingSystem.IsMacOS() && pre.Status is NetworkPermission.Status.Denied)
-            {
-                Log.LogInformation("Mac: Local Network already denied — opening System Settings");
-                NetworkPermission.OpenSystemSettings();
-                return Task.CompletedTask;
-            }
-
-            Log.LogInformation("Network not Granted (status={Status}) — dispatching Request", pre.Status);
+            // Defer the per-sub-permission decision to NetworkPermission.
+            // Request() — on Mac it now probes TCC Local Network AND
+            // Application Firewall separately and dispatches the right
+            // action per sub-permission (open Settings for explicitly-
+            // denied; trigger inbound socket / multicast for not-yet-
+            // decided). The outer impl no longer interprets "Denied" as
+            // "user toggled off" — that's only ONE of the two paths now,
+            // and the inner code has the granularity to tell them apart.
+            Log.LogInformation("Network not Granted (status={Status}, detail={Detail}) — dispatching Request",
+                pre.Status, pre.Detail);
             return Task.Run(() => NetworkPermission.Request(), ct);
         }
     }
@@ -450,11 +443,16 @@ public sealed class PermissionsService : IPermissionsService
 
         protected override ProbeStatus ProbeOs()
         {
+            // PermissionBase ctor runs the initial probe before the
+            // derived class has assigned its fields — _service is still
+            // null on that first call. Return Unknown so the base subject
+            // initialises to false; the first PollAndPublish tick will
+            // overwrite with the real OS state.
+            if (_service is null) return ProbeStatus.Unknown;
             return _service.GetAuthorizationStatus() switch
             {
                 BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Authorized   => ProbeStatus.Granted,
                 BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Provisional  => ProbeStatus.Granted,
-                BoltMate.App.Core.Notifications.NotificationAuthorizationStatus.Denied       => ProbeStatus.Denied,
                 _                                                                            => ProbeStatus.Denied,
             };
         }

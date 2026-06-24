@@ -8,13 +8,23 @@ namespace BoltMate.App.Mac.Notifications;
 
 /// <summary>
 /// macOS <see cref="INotificationService"/> implementation backed by the
-/// Microsoft.macOS bindings over <c>UNUserNotificationCenter</c>. Mirrors
-/// the line-for-line approach the user pointed at in their other project
-/// (lci-ids/Permissions/.../NotificationsPermission.macios.cs) — managed
-/// completion handlers, idiomatic async/await, no ObjC block ABI
-/// hand-rolling.
+/// Microsoft.macOS bindings over <c>UNUserNotificationCenter</c>.
+///
+/// <para>
+/// Grant flow chooses between two routes by current status:
+/// <list type="bullet">
+/// <item><b>NotDetermined</b> — fire the UN modal via
+///   <c>requestAuthorization</c>. User picks Allow / Don't Allow.</item>
+/// <item><b>Denied</b> — the modal can't re-fire; bounce to
+///   <c>System Settings → Notifications → BoltMate</c> via deeplink so
+///   the user can flip it manually.</item>
+/// <item><b>Authorized</b> — already granted; no-op return true.</item>
+/// </list>
+/// Disable flow always goes to OS Settings (the app has no programmatic
+/// revoke surface, and consistent platform UX is the point).
+/// </para>
 /// </summary>
-public sealed class MacUserNotificationService : INotificationService
+public sealed class MacUserNotificationService : NotificationServiceBase
 {
     private readonly ILogger<MacUserNotificationService> _log;
 
@@ -26,7 +36,7 @@ public sealed class MacUserNotificationService : INotificationService
         _log = logger ?? NullLogger<MacUserNotificationService>.Instance;
     }
 
-    public NotificationAuthorizationStatus GetAuthorizationStatus()
+    public override NotificationAuthorizationStatus GetAuthorizationStatus()
     {
         try
         {
@@ -54,17 +64,38 @@ public sealed class MacUserNotificationService : INotificationService
         }
     }
 
-    public async Task<bool> RequestAuthorizationAsync(CancellationToken ct = default)
+    public override async Task<bool> RequestAuthorizationAsync(CancellationToken ct = default)
     {
         try
         {
-            var (granted, error) = await UNUserNotificationCenter.Current
-                .RequestAuthorizationAsync(DefaultOptions);
-            if (error is not null)
-                _log.LogInformation("requestAuthorization returned error: {Error}", error.LocalizedDescription);
-            else
-                _log.LogInformation("requestAuthorization granted={Granted}", granted);
-            return granted;
+            var current = GetAuthorizationStatus();
+            switch (current)
+            {
+                case NotificationAuthorizationStatus.Authorized:
+                case NotificationAuthorizationStatus.Provisional:
+                    return true;
+
+                case NotificationAuthorizationStatus.Denied:
+                    // UN center won't re-show the modal after a denial.
+                    // The only way back to Authorized is the user flipping
+                    // it in System Settings. Open the pane so they can
+                    // act; report false because the OS still says Denied.
+                    _log.LogInformation("Authorization Denied — opening System Settings");
+                    OpenOsSettings();
+                    return false;
+
+                default:
+                    // NotDetermined → fire the modal. macOS shows it
+                    // once per app per user; subsequent calls in any
+                    // status other than NotDetermined are silent no-ops.
+                    var (granted, error) = await UNUserNotificationCenter.Current
+                        .RequestAuthorizationAsync(DefaultOptions);
+                    if (error is not null)
+                        _log.LogInformation("requestAuthorization returned error: {Error}", error.LocalizedDescription);
+                    else
+                        _log.LogInformation("requestAuthorization granted={Granted}", granted);
+                    return granted;
+            }
         }
         catch (Exception ex)
         {
@@ -73,7 +104,7 @@ public sealed class MacUserNotificationService : INotificationService
         }
     }
 
-    public bool Deliver(string title, string body)
+    protected override bool DeliverInternal(string title, string body)
     {
         try
         {
@@ -101,7 +132,7 @@ public sealed class MacUserNotificationService : INotificationService
         }
     }
 
-    public bool OpenOsSettings()
+    public override bool OpenOsSettings()
     {
         try
         {

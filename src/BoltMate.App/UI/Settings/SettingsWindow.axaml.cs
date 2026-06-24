@@ -65,6 +65,7 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
         IReceiverManager manager,
         AppSettings settings,
         IPermissionsService permissions,
+        BoltMate.App.Core.Notifications.INotificationService? notifications = null,
         IObservable<TransportHealth>? udpHealth = null,
         IObservable<TransportHealth>? syncHealth = null) : this()
     {
@@ -73,6 +74,7 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
             settings,
             permissions,
             new UpdateService(settings, NullLoggerFactory.Instance.CreateLogger<UpdateService>()),
+            notifications,
             udpHealth,
             syncHealth,
             peerAnnouncementsProvider: () => PeerAnnouncementsProvider?.Invoke() ?? Array.Empty<ReceiverAnnouncement>(),
@@ -125,6 +127,7 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
             ViewModel.Settings,
             ViewModel.Permissions,
             ViewModel.Updates,
+            ViewModel.Notifications,
             udpHealth,
             syncHealth,
             peerAnnouncementsProvider: () => PeerAnnouncementsProvider?.Invoke() ?? Array.Empty<ReceiverAnnouncement>(),

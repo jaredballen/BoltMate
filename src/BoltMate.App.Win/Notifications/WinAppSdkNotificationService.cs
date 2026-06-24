@@ -8,24 +8,29 @@ namespace BoltMate.App.Win.Notifications;
 
 /// <summary>
 /// Windows <see cref="INotificationService"/> implementation backed by
-/// the Microsoft.WindowsAppSDK. Replaces the previous PowerShell + WinRT
-/// projection shim that was brittle around process lifetime, async toast
-/// commit, and AUMID registration. The SDK handles all three internally:
-///   <list type="bullet">
-///     <item><see cref="AppNotificationManager.Register()"/> performs the
-///       AUMID + activator registration for unpackaged Win32 apps. After
-///       this call the app shows up in Settings → System → Notifications
-///       → Apps and toasts route under the correct identity.</item>
-///     <item><see cref="AppNotificationManager.Show(AppNotification)"/> is
-///       an in-process synchronous WinRT call — no spawned subprocess to
-///       race, no async commit window to bridge.</item>
-///     <item><see cref="AppNotificationManager.Setting"/> exposes a clean
-///       tri-state status enum that maps to our
-///       <see cref="NotificationAuthorizationStatus"/> without any
-///       registry-probe acrobatics.</item>
-///   </list>
+/// the Microsoft.WindowsAppSDK <c>AppNotificationManager</c>.
+///
+/// <para>
+/// Follows Microsoft's official <c>CppUnpackagedAppNotifications</c> sample
+/// exactly: subscribe to <c>NotificationInvoked</c>, call parameterless
+/// <c>Register()</c>, that's it. Earlier iterations of this file tried to
+/// inject an explicit AUMID via <c>SetCurrentProcessExplicitAppUserModelID</c>
+/// and wrote the per-AUMID <c>Enabled</c> DWORD directly — both pushed the
+/// SDK off the well-trodden path and produced
+/// <c>Setting=DisabledForApplication</c> with no toast delivery. The
+/// notification platform only fully trusts AUMIDs the SDK owns
+/// end-to-end (CLSID + AppUserModelId entry + activator + platform
+/// trust); injecting our own AUMID breaks that chain.
+/// </para>
+///
+/// <para>
+/// The user-facing display name "BoltMate" still surfaces in OS Settings
+/// because <c>Register()</c> writes <c>DisplayName=BoltMate</c> into the
+/// SDK-owned AppUserModelId entry. The opaque AUMID (path-hash) is an
+/// internal detail neither user nor app needs to care about.
+/// </para>
 /// </summary>
-public sealed class WinAppSdkNotificationService : INotificationService, IDisposable
+public sealed class WinAppSdkNotificationService : NotificationServiceBase, IDisposable
 {
     private readonly ILogger<WinAppSdkNotificationService> _log;
     private bool _registered;
@@ -44,26 +49,24 @@ public sealed class WinAppSdkNotificationService : INotificationService, IDispos
         {
             AppNotificationManager.Default.Register();
             _registered = true;
-            _log.LogInformation("AppNotificationManager.Register() succeeded");
+            _log.LogInformation("AppNotificationManager.Register() succeeded — Setting={Setting}",
+                AppNotificationManager.Default.Setting);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "AppNotificationManager.Register() failed — Win toasts may not appear in Settings");
+            _log.LogWarning(ex, "AppNotificationManager.Register() failed");
         }
     }
 
-    public NotificationAuthorizationStatus GetAuthorizationStatus()
+    public override NotificationAuthorizationStatus GetAuthorizationStatus()
     {
         try
         {
-            var setting = AppNotificationManager.Default.Setting;
-            return setting switch
+            return AppNotificationManager.Default.Setting switch
             {
                 AppNotificationSetting.Enabled => NotificationAuthorizationStatus.Authorized,
                 // Every "disabled" subspecies (group policy, per-app, focus
-                // assist, global) all collapse to Denied from BoltMate's POV
-                // — we can't do anything about which one beyond pointing
-                // the user at System Settings.
+                // assist, global) collapses to Denied for our UI purposes.
                 _ => NotificationAuthorizationStatus.Denied,
             };
         }
@@ -74,17 +77,17 @@ public sealed class WinAppSdkNotificationService : INotificationService, IDispos
         }
     }
 
-    public Task<bool> RequestAuthorizationAsync(CancellationToken ct = default)
+    public override Task<bool> RequestAuthorizationAsync(CancellationToken ct = default)
     {
-        // Windows has no modal authorisation prompt — first toast is the
-        // user's introduction. Best we can do for "Request" is open the
-        // Settings pane so the user can confirm / flip it. The actual
-        // auth-state observation happens via the next probe.
+        // No programmatic grant API on Win. SDK Register() (run from the
+        // ctor) already established our entry; if Setting is anything
+        // other than Enabled, the user has revoked in System Settings.
+        // Open the pane so the click has somewhere meaningful to land.
         OpenOsSettings();
         return Task.FromResult(GetAuthorizationStatus() is NotificationAuthorizationStatus.Authorized);
     }
 
-    public bool Deliver(string title, string body)
+    protected override bool DeliverInternal(string title, string body)
     {
         try
         {
@@ -94,7 +97,7 @@ public sealed class WinAppSdkNotificationService : INotificationService, IDispos
                 .AddText(body)
                 .BuildNotification();
             AppNotificationManager.Default.Show(notification);
-            _log.LogDebug("Notification dispatched");
+            _log.LogDebug("Notification dispatched: Id={Id}", notification.Id);
             return true;
         }
         catch (Exception ex)
@@ -104,16 +107,13 @@ public sealed class WinAppSdkNotificationService : INotificationService, IDispos
         }
     }
 
-    public bool OpenOsSettings()
+    public override bool OpenOsSettings()
     {
         try
         {
-            // ms-settings:notifications-app?app=BoltMate is the per-app
-            // pane. Win 11 honours it for AUMID-registered apps; if it
-            // doesn't resolve the OS falls back to the top-level
-            // Notifications pane where BoltMate is alphabetised after we
-            // get Microsoft.WindowsAppSDK to register us.
-            var psi = new System.Diagnostics.ProcessStartInfo("ms-settings:notifications-app?app=BoltMate")
+            // Top-level Notifications pane. BoltMate is alphabetised in
+            // the list under "Notifications from apps and other senders".
+            var psi = new System.Diagnostics.ProcessStartInfo("ms-settings:notifications")
             {
                 UseShellExecute = true,
             };

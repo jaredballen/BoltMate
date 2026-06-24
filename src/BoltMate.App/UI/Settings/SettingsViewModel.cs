@@ -28,6 +28,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly AppSettings _settings;
     private readonly IPermissionsService _permissions;
     private readonly UpdateService _updates;
+    private readonly BoltMate.App.Core.Notifications.INotificationService? _notifications;
     private readonly IObservable<TransportHealth>? _udpHealth;
     private readonly IObservable<TransportHealth>? _syncHealth;
     private readonly Func<IEnumerable<ReceiverAnnouncement>>? _peerAnnouncementsProvider;
@@ -43,6 +44,7 @@ public sealed class SettingsViewModel : ViewModelBase
     internal AppSettings Settings => _settings;
     internal IPermissionsService Permissions => _permissions;
     internal UpdateService Updates => _updates;
+    internal BoltMate.App.Core.Notifications.INotificationService? Notifications => _notifications;
 
     // ---- Status tab ----------------------------------------------------
 
@@ -188,6 +190,37 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _notificationsStatusLine, value);
     }
 
+    // Status-pill state, mirroring the Privacy / Local Network style
+    // used elsewhere in Settings. Three derived properties bind directly
+    // into XAML so the pill changes colour + label as OS state flips.
+    private string _notificationsPillText = "Disabled";
+    public string NotificationsPillText
+    {
+        get => _notificationsPillText;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillText, value);
+    }
+
+    private string _notificationsPillBackground = "#1A3F3F46";
+    public string NotificationsPillBackground
+    {
+        get => _notificationsPillBackground;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillBackground, value);
+    }
+
+    private string _notificationsPillForeground = "#9CA3AF";
+    public string NotificationsPillForeground
+    {
+        get => _notificationsPillForeground;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillForeground, value);
+    }
+
+    private string _notificationsPillDot = "#9CA3AF";
+    public string NotificationsPillDot
+    {
+        get => _notificationsPillDot;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillDot, value);
+    }
+
     private bool _launchAtLoginEnabled;
     public bool LaunchAtLoginEnabled
     {
@@ -236,14 +269,13 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenNotificationSettingsCommand { get; }
-    public ReactiveCommand<Unit, Unit> NotificationsToggleClickedCommand { get; }
-    public ReactiveCommand<Unit, Unit> SendTestNotificationCommand { get; }
 
     public SettingsViewModel(
         IReceiverManager manager,
         AppSettings settings,
         IPermissionsService permissions,
         UpdateService updates,
+        BoltMate.App.Core.Notifications.INotificationService? notifications = null,
         IObservable<TransportHealth>? udpHealth = null,
         IObservable<TransportHealth>? syncHealth = null,
         Func<IEnumerable<ReceiverAnnouncement>>? peerAnnouncementsProvider = null,
@@ -258,6 +290,7 @@ public sealed class SettingsViewModel : ViewModelBase
         _settings = settings;
         _permissions = permissions;
         _updates = updates;
+        _notifications = notifications;
         _udpHealth = udpHealth;
         _syncHealth = syncHealth;
         _peerAnnouncementsProvider = peerAnnouncementsProvider;
@@ -290,43 +323,7 @@ public sealed class SettingsViewModel : ViewModelBase
 
         OpenNotificationSettingsCommand = ReactiveCommand.Create(() =>
         {
-            NotificationsSettings.OpenOsSettings();
-        });
-
-        // Hybrid toggle click. Bidirectional on platforms whose
-        // permission impl supports CanRevoke (currently Win, where we
-        // own the registry value the OS reads); one-way on Mac (UN
-        // center has no programmatic revoke).
-        //   • Granted + CanRevoke → RevokeAsync → permission off
-        //   • Granted + !CanRevoke → GrantAsync → impl decides (Mac
-        //     opens System Settings since the modal can't re-fire)
-        //   • Not granted → GrantAsync → impl drives the right action
-        //     (Mac requestAuthorization modal; Win registry write)
-        NotificationsToggleClickedCommand = ReactiveCommand.CreateFromTask(async () =>
-        {
-            try
-            {
-                var perm = _permissions.Notifications;
-                if (perm.IsGranted && perm.CanRevoke)
-                    await perm.RevokeAsync();
-                else
-                    await perm.GrantAsync();
-            }
-            catch
-            {
-                Dispatcher.UIThread.Post(() => RefreshNotificationsCard());
-            }
-        });
-
-        // End-to-end probe so the user can verify the OS-toast wiring from
-        // the UI without waiting for a real health-alert. Lives alongside
-        // the Open-Settings button so a denied permission can be flipped on
-        // then re-tested without leaving the page.
-        SendTestNotificationCommand = ReactiveCommand.Create(() =>
-        {
-            LocalNotifications.TryPost(
-                "BoltMate · Test notification",
-                $"Posted at {DateTime.Now:HH:mm:ss}. If you see this, OS notifications are wired up.");
+            _notifications?.OpenOsSettings();
         });
     }
 
@@ -357,12 +354,8 @@ public sealed class SettingsViewModel : ViewModelBase
         Activation.Add(_permissions.Autostart.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
 
-        // Notifications card binds to the live IPermission state. The Mac
-        // impl probes UNUserNotificationCenter.authorizationStatus via
-        // the boltmate_un sidecar; Win reads the per-AUMID registry key.
-        // Both flow through PermissionsService's 1Hz backstop poll plus
-        // the reactive wake / network-change triggers, so a flip in OS
-        // Settings reflects within ~1s in the card.
+        // Toggle visual + status line both reflect OS state via the
+        // existing 1Hz permission probe. Single source of truth.
         Activation.Add(_permissions.Notifications.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshNotificationsCard)));
         RefreshNotificationsCard();
@@ -370,11 +363,25 @@ public sealed class SettingsViewModel : ViewModelBase
 
     private void RefreshNotificationsCard()
     {
-        var granted = _permissions.Notifications.IsGranted;
-        NotificationsEnabled = granted;
-        NotificationsStatusLine = granted
-            ? "Status: Enabled in System Settings"
-            : "Status: Disabled — click the toggle to manage in System Settings";
+        var osGranted = _permissions.Notifications.IsGranted;
+        NotificationsEnabled = osGranted;
+
+        if (osGranted)
+        {
+            NotificationsPillText = "Enabled";
+            NotificationsPillBackground = "#1A22C55E";   // green/10
+            NotificationsPillForeground = "#22C55E";
+            NotificationsPillDot = "#22C55E";
+            NotificationsStatusLine = "BoltMate can notify you. To turn alerts off or change banners and sounds, use System Settings.";
+        }
+        else
+        {
+            NotificationsPillText = "Disabled";
+            NotificationsPillBackground = "#1A9CA3AF";   // grey/10
+            NotificationsPillForeground = "#9CA3AF";
+            NotificationsPillDot = "#9CA3AF";
+            NotificationsStatusLine = "BoltMate can't post notifications right now. Enable in System Settings to get alerts when something needs your attention.";
+        }
     }
 
     /// <summary>Dispose per-activation subscriptions (window hide / close).</summary>

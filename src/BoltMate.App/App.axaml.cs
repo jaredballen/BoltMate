@@ -164,6 +164,7 @@ public partial class App : Application
         _welcomeWindow = new WelcomeWindow(_settings,
             _permissions!,
             isFirstRun: true,
+            notifications: LocalNotifications.Service,
             log: _loggerFactory.CreateLogger<WelcomeWindow>());
         _welcomeWindow.WelcomeCompleted += () =>
         {
@@ -386,6 +387,7 @@ public partial class App : Application
             _welcomeWindow = new WelcomeWindow(_settings,
                 _permissions ?? new PermissionsService(notifications: null, _loggerFactory),
                 isFirstRun: false,
+                notifications: LocalNotifications.Service,
                 log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a
             // first run. Just open at the primer and let the user trigger /
@@ -477,7 +479,7 @@ public partial class App : Application
         // and are instant.
         if (_settingsWindow is null)
         {
-            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!, _topology?.UdpHealth, _mdnsTcp?.SyncHealth)
+            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!, LocalNotifications.Service, _topology?.UdpHealth, _mdnsTcp?.SyncHealth)
             {
                 HostNamesChanged = () => _trayController?.RefreshHostLabels(),
                 TopologyChanged = ApplyTopologySettings,

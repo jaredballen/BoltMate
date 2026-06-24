@@ -16,16 +16,18 @@
     -->
     <AssemblyName>BoltMate</AssemblyName>
     <!--
-      Multi-targeted: each platform's TFM unlocks the respective managed
-      binding surface (Microsoft.WindowsAppSDK + UnApi vs Microsoft.macOS
-      + UserNotifications). BoltMate.App.Win and BoltMate.App.Mac project
-      references resolve against the matching TFM at publish time, so the
-      Win publish doesn't drag in the Mac binding workload and vice versa.
-      Both TFMs are strict supersets of net10.0 — every cross-platform
-      dependency (Avalonia, FluentAvaloniaUI, Reactive, etc.) continues to
-      satisfy via the net10.0 reference path.
+      Host-OS-conditional TFM. Each platform's TFM unlocks the respective
+      managed binding surface (Microsoft.WindowsAppSDK on Win,
+      Microsoft.macOS on Mac). Multi-targeting both at once doesn't work
+      cross-platform because `dotnet restore` resolves all listed TFMs
+      regardless of -f at the command line — on the Win VM the macos
+      workload isn't installed and restore fails with NETSDK1147; on Mac
+      the windows10.0.19041 SDK reference assemblies aren't there. Each
+      host builds only its own TFM. The other platform's binary is
+      produced on its own dev box / CI runner.
     -->
-    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0-macos</TargetFrameworks>
+    <TargetFrameworks Condition=" '$(OS)' == 'Windows_NT' ">net10.0-windows10.0.19041.0</TargetFrameworks>
+    <TargetFrameworks Condition=" '$(OS)' != 'Windows_NT' ">net10.0-macos</TargetFrameworks>
     <!--
       Microsoft.macOS Sdk 26.5 (.NET 10 macos workload) requires
       SupportedOSPlatformVersion ≥ 12.0. Our actual deployment floor is
@@ -48,6 +50,21 @@
       Win build of the App project surfaces IL3000-style trim/AOT warnings.
     -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      Windows App SDK bootstrap for unpackaged apps. SelfContained=true
+      ships the WinAppSDK runtime alongside our binary; PackageType=None
+      tells the SDK we're unpackaged so it auto-invokes the Bootstrapper
+      at process start. Confirmed via prior log entries
+      "AppNotificationManager.Register() failed" + ".Setting read failed"
+      — both happen because the WinRT projection can't acquire
+      IAppNotificationManagerStatics without the runtime loaded.
+      Requires Windows-only build tools (mt.exe) so this MUST be
+      published on Windows — see Directory.Build.targets BuildWindows-
+      Installer target which now invokes `dotnet publish` over SSH on
+      the Win VM rather than cross-compiling from Mac.
+    -->
+    <WindowsAppSDKSelfContained Condition=" $(TargetFramework.Contains('-windows')) ">true</WindowsAppSDKSelfContained>
+    <WindowsPackageType Condition=" $(TargetFramework.Contains('-windows')) ">None</WindowsPackageType>
     <!--
       Disable the Microsoft.macOS SDK's automatic .app bundling for the
       App project. Our existing Directory.Build.targets StageMacAppBundle
@@ -158,6 +175,16 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <None Include="Assets/app-icon.svg" />
-    <None Include="Assets/app-icon.ico" />
+    <!--
+      app-icon.ico ships to the publish output so the WinAppSDK
+      AppNotificationManager.Register(displayName, iconUri) overload can
+      reference it via a file:// Uri. The PE-resource-embedded icon
+      (via ApplicationIcon above) is unreachable from a file:// URL, so
+      a side-by-side .ico file is required.
+    -->
+    <Content Include="Assets/app-icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 </Project>

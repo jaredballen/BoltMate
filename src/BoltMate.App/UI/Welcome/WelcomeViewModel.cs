@@ -59,6 +59,7 @@ public sealed class WelcomeViewModel : ViewModelBase
 
     private readonly AppSettings _settings;
     private readonly IPermissionsService _permissions;
+    private readonly BoltMate.App.Core.Notifications.INotificationService? _notifications;
     private readonly ILogger _log;
     private readonly bool _isFirstRun;
     private readonly CancellationTokenSource _grantCts = new();
@@ -165,11 +166,34 @@ public sealed class WelcomeViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _notificationsStatusLine, value);
     }
 
-    private bool _notificationsPrimerGrantEnabled = true;
-    public bool NotificationsPrimerGrantEnabled
+    // Status-pill state mirroring Settings card, so the primer feels like
+    // the same control surface.
+    private string _notificationsPillText = "Disabled";
+    public string NotificationsPillText
     {
-        get => _notificationsPrimerGrantEnabled;
-        set => this.RaiseAndSetIfChanged(ref _notificationsPrimerGrantEnabled, value);
+        get => _notificationsPillText;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillText, value);
+    }
+
+    private string _notificationsPillBackground = "#1A9CA3AF";
+    public string NotificationsPillBackground
+    {
+        get => _notificationsPillBackground;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillBackground, value);
+    }
+
+    private string _notificationsPillForeground = "#9CA3AF";
+    public string NotificationsPillForeground
+    {
+        get => _notificationsPillForeground;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillForeground, value);
+    }
+
+    private string _notificationsPillDot = "#9CA3AF";
+    public string NotificationsPillDot
+    {
+        get => _notificationsPillDot;
+        set => this.RaiseAndSetIfChanged(ref _notificationsPillDot, value);
     }
 
     private bool _autostartChecked = true;
@@ -188,8 +212,8 @@ public sealed class WelcomeViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> InputMonitoringPrimerGrantCommand { get; }
     public ReactiveCommand<Unit, Unit> InputMonitoringPrimerNotNowCommand { get; }
     public ReactiveCommand<Unit, Unit> InputMonitoringRefusalGrantCommand { get; }
-    public ReactiveCommand<Unit, Unit> NotificationsPrimerAllowCommand { get; }
-    public ReactiveCommand<Unit, Unit> NotificationsPrimerNotNowCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsPrimerOpenSettingsCommand { get; }
+    public ReactiveCommand<Unit, Unit> NotificationsPrimerContinueCommand { get; }
     public ReactiveCommand<Unit, Unit> QuitCommand { get; }
     public ReactiveCommand<Unit, Unit> DoneOpenCommand { get; }
 
@@ -197,6 +221,7 @@ public sealed class WelcomeViewModel : ViewModelBase
         AppSettings settings,
         IPermissionsService permissions,
         bool isFirstRun,
+        BoltMate.App.Core.Notifications.INotificationService? notifications = null,
         ILogger? log = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -204,6 +229,7 @@ public sealed class WelcomeViewModel : ViewModelBase
 
         _settings = settings;
         _permissions = permissions;
+        _notifications = notifications;
         _isFirstRun = isFirstRun;
         _log = log ?? NullLogger.Instance;
 
@@ -231,25 +257,18 @@ public sealed class WelcomeViewModel : ViewModelBase
             GrantOrRefuseAsync(_permissions.InputMonitoring, refusalPage: null,
                 setEnabled: v => InputMonitoringRefusalGrantEnabled = v));
 
-        // Notifications primer: Allow → fires UNUserNotificationCenter.
-        // requestAuthorization which drives the OS modal. Whatever the
-        // user picks, advance to Done — notifications are non-blocking.
-        // If we're past NotDetermined (the user previously denied),
-        // GrantOrRefuseAsync's DispatchSetGrantedAsync transparently
-        // opens System Settings instead because the OS won't re-fire
-        // the modal once denied.
-        NotificationsPrimerAllowCommand = ReactiveCommand.CreateFromTask(async () =>
+        // Notifications primer is informational. The OS owns the toggle;
+        // we just surface its current state and let the user click through
+        // to System Settings if they want to change it. Continue advances
+        // regardless of state.
+        NotificationsPrimerOpenSettingsCommand = ReactiveCommand.Create(() =>
         {
-            await GrantOrRefuseAsync(_permissions.Notifications, refusalPage: null,
-                setEnabled: v => NotificationsPrimerGrantEnabled = v);
-            // Whether the user said yes or no, this step is "done" — we
-            // got a definitive answer, no need to keep showing the primer.
-            SaveCheckpoint(PermissionNotifications);
-            AdvanceToNextRequiredPermissionOrDone();
+            _log.LogInformation("User tapped Open in System Settings on notifications primer");
+            _notifications?.OpenOsSettings();
         });
-        NotificationsPrimerNotNowCommand = ReactiveCommand.Create(() =>
+        NotificationsPrimerContinueCommand = ReactiveCommand.Create(() =>
         {
-            _log.LogInformation("User tapped Not now on notifications primer");
+            _log.LogInformation("User tapped Continue on notifications primer");
             SaveCheckpoint(PermissionNotifications);
             AdvanceToNextRequiredPermissionOrDone();
         });
@@ -387,16 +406,15 @@ public sealed class WelcomeViewModel : ViewModelBase
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
             _permissions.Refresh();
-            // Show the primer only when the permission isn't already granted.
-            // The previous logic also forced the primer on first-run-not-yet-
-            // checkpointed for "educational visibility", but that misbehaved
-            // on the post-grant relaunch macOS forces after IOHIDRequestAccess:
-            // permission was true but the checkpoint save was interrupted, so
-            // we'd re-show the primer the user had just satisfied.
+            // Show the primer only when the permission isn't actually
+            // granted. Users with grants already in place (re-install,
+            // prior dev runs, etc.) skip the screen — they don't need
+            // to walk through a primer that drives a no-op grant. If
+            // grants are missing, the primer's Grant button fires both
+            // prompts (TCC Local Network + Application Firewall) inline.
             if (!_permissions.Network.IsGranted)
             {
-                _log.LogInformation("Permission gate: network not granted — showing primer (firstRun={First}, ckpt={Ckpt})",
-                    _isFirstRun, _settings.NetworkStepCompleted);
+                _log.LogInformation("Permission gate: network not granted — showing primer");
                 _primersShownThisSession.Add(PermissionNetwork);
                 ShowPage(PageNetworkPrimer);
                 return;
@@ -417,36 +435,46 @@ public sealed class WelcomeViewModel : ViewModelBase
             SaveCheckpoint(PermissionInputMonitoring);
         }
 
-        // Notifications primer — non-blocking + optional. Skip entirely
-        // when already granted; on first run, show the primer and STAY
-        // until the user acts via Allow or Not now (both buttons save the
-        // checkpoint explicitly so the next Advance walks past).
+        // Notifications primer — non-blocking + optional. Distinct gating
+        // per platform because the OS-grant signal means different things:
+        //   • Mac: UN center has a real NotDetermined state, so we only
+        //     show the primer when not yet authorised. Granted-at-launch
+        //     means the user already opted in on a prior install.
+        //   • Win: AppNotificationManager.Setting defaults to Enabled the
+        //     moment Register() runs — there is no "NotDetermined" we can
+        //     observe. Gating on IsGranted would skip the primer on every
+        //     fresh install, leaving the user unaware that the in-app
+        //     toggle (AppEnabled pref) even exists. Gate instead on the
+        //     wizard checkpoint: first run + step not yet completed.
         //
-        // Previously this branch fell through to Done when the primer had
-        // been "shown this session" but the checkpoint hadn't been saved
-        // yet — meaning a spurious second Advance call (TcpListener
-        // release event, etc.) could silently dump the user onto Done
-        // even though they hadn't seen any prompt. Now: if we're already
-        // on the primer page and not granted, return without advancing.
+        // The CurrentPage check handles the "user is on the page, hasn't
+        // acted yet, a spurious second Advance fired" case so we don't
+        // skip them past. AND-gated on the checkpoint flag so that when
+        // the user's own Allow / Not Now handler triggers Advance, we
+        // proceed normally — those handlers save the checkpoint first,
+        // so a true value means the user has acted.
+        if (CurrentPage == PageNotificationsPrimer && !_settings.NotificationsStepCompleted)
+        {
+            // User is on the primer and hasn't acted. Wait for them.
+            return;
+        }
+
+        // Notifications primer is informational on both platforms — status
+        // pill + open-Settings + Continue. Show it once per first-run
+        // regardless of current OS auth state so the user always sees the
+        // page and learns where to manage it. Gating on IsGranted would
+        // skip it on Mac when a prior install left UN center authorised.
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
         {
-            if (_permissions.Notifications.IsGranted)
+            if (_isFirstRun && !_settings.NotificationsStepCompleted
+                && !_primersShownThisSession.Contains(PermissionNotifications))
             {
-                SaveCheckpoint(PermissionNotifications);
-            }
-            else if (CurrentPage == PageNotificationsPrimer)
-            {
-                // User is on the primer and hasn't acted. Wait for them.
-                return;
-            }
-            else if (_isFirstRun && !_settings.NotificationsStepCompleted
-                     && !_primersShownThisSession.Contains(PermissionNotifications))
-            {
-                _log.LogInformation("Permission gate: notifications not granted — showing primer");
+                _log.LogInformation("Permission gate: notifications primer not yet shown — showing");
                 _primersShownThisSession.Add(PermissionNotifications);
                 ShowPage(PageNotificationsPrimer);
                 return;
             }
+            SaveCheckpoint(PermissionNotifications);
         }
 
         _log.LogInformation("Permission gate: all required permissions granted — Done");
@@ -461,9 +489,23 @@ public sealed class WelcomeViewModel : ViewModelBase
         InputMonitoringStatusLine = _permissions.InputMonitoring.IsGranted
             ? "HID device access: granted"
             : "HID device access: denied";
-        NotificationsStatusLine = _permissions.Notifications.IsGranted
-            ? "Notifications: enabled"
-            : "Notifications: not yet enabled";
+        var notifGranted = _permissions.Notifications.IsGranted;
+        if (notifGranted)
+        {
+            NotificationsPillText = "Enabled";
+            NotificationsPillBackground = "#1A22C55E";
+            NotificationsPillForeground = "#22C55E";
+            NotificationsPillDot = "#22C55E";
+            NotificationsStatusLine = "Notifications: enabled";
+        }
+        else
+        {
+            NotificationsPillText = "Disabled";
+            NotificationsPillBackground = "#1A9CA3AF";
+            NotificationsPillForeground = "#9CA3AF";
+            NotificationsPillDot = "#9CA3AF";
+            NotificationsStatusLine = "Notifications: not yet enabled";
+        }
     }
 
     private void SaveCheckpoint(string step)

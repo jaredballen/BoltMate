@@ -35,12 +35,17 @@ public partial class WelcomeWindow : Window
     public event Action? WelcomeCompleted;
 
     /// <summary>Designer-only ctor. Real usage goes through the parameterised ctor.</summary>
-    public WelcomeWindow() : this(new AppSettings(), new PermissionsService(), isFirstRun: true, NullLogger.Instance) { }
+    public WelcomeWindow() : this(new AppSettings(), new PermissionsService(), isFirstRun: true, log: NullLogger.Instance) { }
 
-    public WelcomeWindow(AppSettings settings, IPermissionsService permissions, bool isFirstRun = true, ILogger? log = null)
+    public WelcomeWindow(
+        AppSettings settings,
+        IPermissionsService permissions,
+        bool isFirstRun = true,
+        BoltMate.App.Core.Notifications.INotificationService? notifications = null,
+        ILogger? log = null)
     {
         _isFirstRun = isFirstRun;
-        _vm = new WelcomeViewModel(settings, permissions, isFirstRun, log);
+        _vm = new WelcomeViewModel(settings, permissions, isFirstRun, notifications, log);
         DataContext = _vm;
         InitializeComponent();
 
