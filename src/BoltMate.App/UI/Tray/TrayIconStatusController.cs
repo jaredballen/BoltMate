@@ -17,21 +17,22 @@ using Microsoft.Extensions.Logging;
 namespace BoltMate.App.UI;
 
 /// <summary>
-/// Owns the tray icon image and updates it based on cross-machine peer
-/// connection health AND OS-permission state. States, in render priority
-/// (highest first):
-///   • Alert   — at least one OS permission denied. Yellow "!" badge.
-///   • Bad     — topology on with peers known, but none seen within window. Red X badge.
-///   • Good    — at least one peer seen within <see cref="StaleAfter"/>. Green check badge.
-///   • Neutral — topology off OR no peers ever discovered. Plain template icon.
+/// Owns the tray icon image. Per June 2026 design handoff §3 the bolt
+/// has only two states: <b>Default</b> (template silhouette — adapts
+/// light/dark via OS chrome) and <b>Amber</b> (#FFBF00 attention badge)
+/// — no green, no red. "Default = healthy" is the resting state.
+///
+/// Composite "needs attention" rule fires Amber when EITHER:
+///   • a required OS permission is in the denied / alert state, OR
+///   • any transport health is Blocked ≥ 30 seconds (the threshold
+///     avoids a startup flash where a transport is briefly Blocked
+///     before settling).
 /// </summary>
 /// <remarks>
-/// macOS detail: template-image behavior (<c>NSImage.isTemplate</c>) only
-/// works when the icon is a monochrome silhouette. The composite states
-/// (good/bad) bake a colored badge over the silhouette, so we drop the
-/// template flag for those — AppKit will not auto-invert. We use a white
-/// silhouette which reads on the typical dark menubar. Acceptable trade-off
-/// to surface connection state at a glance.
+/// macOS detail: template-image behavior (<c>NSImage.isTemplate</c>)
+/// only works when the icon is a monochrome silhouette. Amber state
+/// composites a colored badge over the silhouette and drops the
+/// template flag so AppKit doesn't try to template-invert it.
 /// </remarks>
 public sealed class TrayIconStatusController : IDisposable
 {
@@ -58,8 +59,6 @@ public sealed class TrayIconStatusController : IDisposable
 
     // Cached compositions. Built lazily; rebuilt only on theme change.
     private WindowIcon? _neutralIcon;
-    private WindowIcon? _goodIcon;
-    private WindowIcon? _badIcon;
     private WindowIcon? _alertIcon;
 
     public TrayIconStatusController(TrayIcon trayIcon, IPermissionsService permissions, ILogger logger)
@@ -86,6 +85,16 @@ public sealed class TrayIconStatusController : IDisposable
         Refresh();
     }
 
+    private void OnColorValuesChanged(object? sender, PlatformColorValues e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            _neutralIcon = _alertIcon = null;
+            _last = State.None;
+            Refresh();
+        });
+    }
+
     /// <summary>Attach the topology service so we can read peer state. Call after topology starts.</summary>
     public void Bind(IUdpTopologyService? topology)
     {
@@ -103,16 +112,6 @@ public sealed class TrayIconStatusController : IDisposable
         if (_permissionStatus == status) return;
         _permissionStatus = status;
         Refresh();
-    }
-
-    private void OnColorValuesChanged(object? sender, PlatformColorValues e)
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            _neutralIcon = _goodIcon = _badIcon = _alertIcon = null;
-            _last = State.None;
-            Refresh();
-        });
     }
 
     public void BindHealth(IObservable<TransportHealth>? udpHealth, IObservable<TransportHealth>? syncHealth)
@@ -185,19 +184,18 @@ public sealed class TrayIconStatusController : IDisposable
 
         var state = ResolveState();
 
+        // Composite-cause tooltip per handoff: "BoltMate — action needed;
+        // UDP, TCP transports blocked".
         string tooltip;
-        if (AreRequiredPermissionsDenied())
+        if (state == State.Alert)
         {
-            tooltip = "BoltMate — permissions needed";
-        }
-        else if (_udpBlockedAlert || _syncBlockedAlert)
-        {
-            if (_udpBlockedAlert && _syncBlockedAlert)
-                tooltip = "BoltMate · network blocked (UDP multicast + Bonjour sync)";
-            else if (_udpBlockedAlert)
-                tooltip = "BoltMate · network blocked (UDP multicast)";
-            else
-                tooltip = "BoltMate · network blocked (Bonjour sync)";
+            var causes = new System.Collections.Generic.List<string>(3);
+            if (AreRequiredPermissionsDenied()) causes.Add("permissions");
+            if (_udpBlockedAlert) causes.Add("UDP");
+            if (_syncBlockedAlert) causes.Add("Bonjour/TCP");
+            tooltip = causes.Count > 0
+                ? $"BoltMate — action needed ({string.Join(", ", causes)} blocked)"
+                : "BoltMate — action needed";
         }
         else
         {
@@ -233,19 +231,13 @@ public sealed class TrayIconStatusController : IDisposable
 
     private State ResolveState()
     {
-        // Alert beats every other state — a denied permission or a blocked transport is the most
-        // important thing for the user to know about.
+        // Two-state model only: anything in the composite alert rule
+        // returns Alert; everything else is the resting Neutral state.
+        // Peer-presence has no UI signal at the bolt level anymore —
+        // peers live in the Status tab's Other-computers card.
         if (AreRequiredPermissionsDenied() || _udpBlockedAlert || _syncBlockedAlert)
             return State.Alert;
-
-        if (_topology is null) return State.Neutral;
-        var peers = _topology.PeerSnapshot;
-        if (peers.Count == 0) return State.Neutral;
-        var cutoff = DateTime.UtcNow - StaleAfter;
-        foreach (var p in peers)
-            if (p.LastSeenUtc >= cutoff)
-                return State.Good;
-        return State.Bad;
+        return State.Neutral;
     }
 
     private bool AreRequiredPermissionsDenied()
@@ -255,10 +247,8 @@ public sealed class TrayIconStatusController : IDisposable
 
     private WindowIcon GetOrBuild(State state) => state switch
     {
-        State.Alert   => _alertIcon   ??= Build(BadgeKind.Alert),
-        State.Good    => _goodIcon    ??= Build(BadgeKind.Good),
-        State.Bad     => _badIcon     ??= Build(BadgeKind.Bad),
-        _             => _neutralIcon ??= BuildNeutral(),
+        State.Alert => _alertIcon   ??= BuildAlert(),
+        _           => _neutralIcon ??= BuildNeutral(),
     };
 
     private WindowIcon BuildNeutral()
@@ -270,8 +260,14 @@ public sealed class TrayIconStatusController : IDisposable
         return new WindowIcon(stream);
     }
 
-    private WindowIcon Build(BadgeKind kind)
+    private WindowIcon BuildAlert()
     {
+        // Composite the silhouette with an amber "!" badge in the lower-
+        // right corner. Amber is #FFBF00 per the design tokens.
+        //
+        // Long-term: replace the badge with a full-bolt amber tint
+        // (mask the silhouette + fill with amber). For now the badge
+        // keeps the silhouette intact and overlays the cause signal.
         var uri = ResolveBaseIconUri();
         using var baseStream = AssetLoader.Open(uri);
         using var baseBitmap = new Bitmap(baseStream);
@@ -283,44 +279,23 @@ public sealed class TrayIconStatusController : IDisposable
         {
             ctx.DrawImage(baseBitmap, new Rect(0, 0, w, h));
 
-            // Badge sits in the lower-right corner ~40% of the icon dimension.
+            // Badge sits in the lower-right corner ~45% of the icon dimension.
             var badgeSize = Math.Max(10, w * 0.45);
             var rect = new Rect(w - badgeSize, h - badgeSize, badgeSize, badgeSize);
-            var fill = kind switch
-            {
-                BadgeKind.Good  => Brushes.LimeGreen,
-                BadgeKind.Bad   => Brushes.OrangeRed,
-                BadgeKind.Alert => Brushes.Gold,
-                _               => Brushes.Gray,
-            };
-            ctx.DrawEllipse(fill, new Pen(Brushes.White, badgeSize * 0.08), rect.Center, rect.Width / 2, rect.Height / 2);
+            var amber = new SolidColorBrush(Color.FromRgb(0xFF, 0xBF, 0x00));
+            ctx.DrawEllipse(amber, new Pen(Brushes.White, badgeSize * 0.08),
+                rect.Center, rect.Width / 2, rect.Height / 2);
 
-            var glyphPen = new Pen(Brushes.White, badgeSize * 0.14, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-            if (kind is BadgeKind.Good)
-            {
-                // Check: two strokes — short down-right then longer up-right.
-                var p1 = new Point(rect.X + badgeSize * 0.25, rect.Y + badgeSize * 0.55);
-                var p2 = new Point(rect.X + badgeSize * 0.45, rect.Y + badgeSize * 0.72);
-                var p3 = new Point(rect.X + badgeSize * 0.78, rect.Y + badgeSize * 0.32);
-                ctx.DrawLine(glyphPen, p1, p2);
-                ctx.DrawLine(glyphPen, p2, p3);
-            }
-            else if (kind is BadgeKind.Bad)
-            {
-                // X: two diagonals.
-                var pad = badgeSize * 0.28;
-                ctx.DrawLine(glyphPen, new Point(rect.X + pad, rect.Y + pad), new Point(rect.Right - pad, rect.Bottom - pad));
-                ctx.DrawLine(glyphPen, new Point(rect.Right - pad, rect.Y + pad), new Point(rect.X + pad, rect.Bottom - pad));
-            }
-            else // Alert: exclamation point — vertical stroke + dot.
-            {
-                var cx = rect.X + badgeSize * 0.5;
-                var topY = rect.Y + badgeSize * 0.25;
-                var stemBottomY = rect.Y + badgeSize * 0.6;
-                ctx.DrawLine(glyphPen, new Point(cx, topY), new Point(cx, stemBottomY));
-                var dotRadius = badgeSize * 0.09;
-                ctx.DrawEllipse(Brushes.White, null, new Point(cx, rect.Y + badgeSize * 0.78), dotRadius, dotRadius);
-            }
+            // Exclamation point: vertical stroke + dot, both white on amber.
+            var glyphPen = new Pen(Brushes.White, badgeSize * 0.14,
+                lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+            var cx = rect.X + badgeSize * 0.5;
+            var topY = rect.Y + badgeSize * 0.25;
+            var stemBottomY = rect.Y + badgeSize * 0.6;
+            ctx.DrawLine(glyphPen, new Point(cx, topY), new Point(cx, stemBottomY));
+            var dotRadius = badgeSize * 0.09;
+            ctx.DrawEllipse(Brushes.White, null,
+                new Point(cx, rect.Y + badgeSize * 0.78), dotRadius, dotRadius);
         }
 
         using var ms = new MemoryStream();
@@ -346,6 +321,5 @@ public sealed class TrayIconStatusController : IDisposable
 
     public void Dispose() => _disposables.Dispose();
 
-    private enum State { None, Neutral, Good, Bad, Alert }
-    private enum BadgeKind { Good, Bad, Alert }
+    private enum State { None, Neutral, Alert }
 }
