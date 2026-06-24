@@ -120,130 +120,202 @@
             <Grid>
 
                 <!-- ======================= STATUS ======================= -->
-                <Grid x:Name="StatusPage" Margin="20"
+                <Grid x:Name="StatusPage" Margin="26,24,26,24"
                       IsVisible="{Binding ShowStatusTab}"
                       RowDefinitions="Auto,*">
-                    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
-                        <TextBlock Text="Status" FontSize="22" FontWeight="SemiBold" />
-                        <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
-                            Online devices on this machine, the local network access state, and any peers reachable on the LAN.
-                        </TextBlock>
+                    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,16">
+                        <TextBlock Text="Status"
+                                   FontSize="{StaticResource FontSizeH2}" FontWeight="SemiBold"
+                                   LetterSpacing="-0.3"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="Your devices on this machine and the other computers BoltMate can see."
+                                   FontSize="12.5" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
                     </StackPanel>
 
                     <ScrollViewer Grid.Row="1">
-                        <StackPanel Spacing="16">
+                        <StackPanel Spacing="13">
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="8">
-                                    <TextBlock Text="This machine" FontSize="14" FontWeight="SemiBold" />
+                            <!-- ===== Card: This machine ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="This machine"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimaryBrush}" />
                                     <ItemsControl ItemsSource="{Binding LocalDevices}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Spacing="6" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="vm:SettingsViewModel+LocalDeviceRow">
-                                                <Border Padding="8" Margin="0,0,0,4"
-                                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
-                                                        CornerRadius="4">
+                                                <Border Padding="12,10"
+                                                        Background="{DynamicResource RowBackgroundBrush}"
+                                                        CornerRadius="{StaticResource RowCornerRadius}">
                                                     <StackPanel Spacing="2">
-                                                        <TextBlock Text="{Binding Header}" FontWeight="SemiBold" FontSize="13" />
+                                                        <TextBlock Text="{Binding Header}"
+                                                                   FontWeight="SemiBold" FontSize="13.5"
+                                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
                                                         <TextBlock Text="{Binding SubLine}"
-                                                                   Foreground="#9AA0A6" FontSize="11"
-                                                                   FontFamily="JetBrains Mono,Menlo,Consolas,monospace" />
+                                                                   FontSize="11"
+                                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
                                                     </StackPanel>
                                                 </Border>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <TextBlock Text="No devices currently linked up."
-                                               Foreground="#9AA0A6" FontSize="12"
+                                    <TextBlock Text="No devices linked up. Tap Easy-Switch on a keyboard or mouse to bring it over."
+                                               FontSize="12"
+                                               Foreground="{DynamicResource TextTertiaryBrush}"
                                                IsVisible="{Binding LocalEmpty}" />
                                 </StackPanel>
                             </Border>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="8">
-                                    <TextBlock Text="Network access" FontSize="14" FontWeight="SemiBold" />
+                            <!-- ===== Card: Network access (firewall / TCC roll-up) ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Network access"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimaryBrush}" />
                                     <TextBlock Text="{Binding NetworkPermissionDetail}"
-                                               Foreground="#B5BAC2" FontSize="12" />
+                                               FontSize="11.5"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                     <Button Content="{Binding OpenNetworkSettingsLabel}"
                                             Command="{Binding OpenNetworkSettingsCommand}"
-                                            IsVisible="{Binding ShowOpenNetworkSettings}" />
+                                            IsVisible="{Binding ShowOpenNetworkSettings}"
+                                            HorizontalAlignment="Left" />
                                 </StackPanel>
                             </Border>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
+                            <!-- ===== Card: Network (transports) ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
                                 <StackPanel Spacing="12">
-                                    <TextBlock Text="Network" FontSize="14" FontWeight="SemiBold" />
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="Network"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock Text="The transports BoltMate uses to reach your other computers."
+                                                   FontSize="11.5"
+                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    </StackPanel>
 
                                     <!-- UDP row -->
-                                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                                        <TextBlock Grid.Column="0" Grid.Row="0" Text="●"
-                                                   Foreground="{Binding UdpIndicatorColor}"
-                                                   FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="UDP multicast"
-                                                   FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="2" Grid.Row="0" Text="{Binding UdpEndpoint}"
-                                                   Foreground="#9AA0A6" FontSize="11"
-                                                   VerticalAlignment="Center" TextAlignment="Right" />
-                                        <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
-                                                   Text="{Binding UdpDetail}"
-                                                   Foreground="#B5BAC2" FontSize="12"
-                                                   TextWrapping="Wrap" Margin="0,4,0,0" />
-                                    </Grid>
-
-                                    <Border Height="1"
-                                            Background="{DynamicResource CardStrokeColorDefaultBrush}"
-                                            Margin="0,4" />
+                                    <Border Padding="12,10"
+                                            Background="{DynamicResource RowBackgroundBrush}"
+                                            CornerRadius="{StaticResource RowCornerRadius}">
+                                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto"
+                                              ColumnSpacing="9">
+                                            <Ellipse Grid.Column="0" Grid.Row="0"
+                                                     Width="9" Height="9"
+                                                     Fill="{Binding UdpIndicatorColor}"
+                                                     VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Grid.Row="0"
+                                                       Text="UDP multicast"
+                                                       FontWeight="SemiBold" FontSize="12.5"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Grid.Row="0"
+                                                       Text="{Binding UdpEndpoint}"
+                                                       FontSize="11"
+                                                       FontFamily="{StaticResource MonoFontFamily}"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                                       VerticalAlignment="Center" TextAlignment="Right" />
+                                            <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
+                                                       Text="{Binding UdpDetail}"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        </Grid>
+                                    </Border>
 
                                     <!-- Sync row -->
-                                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                                        <TextBlock Grid.Column="0" Grid.Row="0" Text="●"
-                                                   Foreground="{Binding SyncIndicatorColor}"
-                                                   FontSize="14" Margin="0,0,10,0" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Grid.Row="0" Text="Bonjour / mDNS + TCP sync"
-                                                   FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="2" Grid.Row="0" Text="{Binding SyncEndpoint}"
-                                                   Foreground="#9AA0A6" FontSize="11"
-                                                   VerticalAlignment="Center" TextAlignment="Right" />
-                                        <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
-                                                   Text="{Binding SyncDetail}"
-                                                   Foreground="#B5BAC2" FontSize="12"
-                                                   TextWrapping="Wrap" Margin="0,4,0,0" />
-                                    </Grid>
+                                    <Border Padding="12,10"
+                                            Background="{DynamicResource RowBackgroundBrush}"
+                                            CornerRadius="{StaticResource RowCornerRadius}">
+                                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto"
+                                              ColumnSpacing="9">
+                                            <Ellipse Grid.Column="0" Grid.Row="0"
+                                                     Width="9" Height="9"
+                                                     Fill="{Binding SyncIndicatorColor}"
+                                                     VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Grid.Row="0"
+                                                       Text="Bonjour / mDNS + TCP sync"
+                                                       FontWeight="SemiBold" FontSize="12.5"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="2" Grid.Row="0"
+                                                       Text="{Binding SyncEndpoint}"
+                                                       FontSize="11"
+                                                       FontFamily="{StaticResource MonoFontFamily}"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                                       VerticalAlignment="Center" TextAlignment="Right" />
+                                            <TextBlock Grid.Column="1" Grid.ColumnSpan="2" Grid.Row="1"
+                                                       Text="{Binding SyncDetail}"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       TextWrapping="Wrap" Margin="0,4,0,0" />
+                                        </Grid>
+                                    </Border>
                                 </StackPanel>
                             </Border>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="8">
-                                    <TextBlock Text="Peers" FontSize="14" FontWeight="SemiBold" />
+                            <!-- ===== Card: Other computers ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Other computers"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimaryBrush}" />
                                     <TextBlock Text="{Binding PeersStateLine}"
-                                               Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
+                                               FontSize="11.5" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextTertiaryBrush}" />
                                     <ItemsControl ItemsSource="{Binding Peers}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Spacing="6" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate DataType="vm:SettingsViewModel+PeerRow">
-                                                <Border Padding="8" Margin="0,0,0,4"
-                                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
-                                                        CornerRadius="4">
-                                                    <StackPanel Spacing="3">
+                                                <Border Padding="12,11"
+                                                        BorderBrush="{DynamicResource CardStrokeBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="{StaticResource RowCornerRadius}">
+                                                    <StackPanel Spacing="4">
                                                         <Grid ColumnDefinitions="*,Auto">
-                                                            <TextBlock Grid.Column="0" Text="{Binding Header}" FontWeight="SemiBold" FontSize="13" />
-                                                            <TextBlock Grid.Column="1" Text="{Binding LastSeen}" Foreground="#9AA0A6" FontSize="11" VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="0" Text="{Binding Header}"
+                                                                       FontWeight="SemiBold" FontSize="13"
+                                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding LastSeen}"
+                                                                       FontSize="11"
+                                                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                                                       VerticalAlignment="Center" />
                                                         </Grid>
                                                         <TextBlock Text="{Binding MetaLine}"
-                                                                   Foreground="#9AA0A6" FontSize="11"
-                                                                   FontFamily="JetBrains Mono,Menlo,Consolas,monospace" />
+                                                                   FontSize="11"
+                                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
                                                         <ItemsControl ItemsSource="{Binding Devices}" Margin="6,2,0,0">
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate DataType="vm:SettingsViewModel+PeerDeviceRow">
                                                                     <TextBlock Text="{Binding Line}"
-                                                                               Foreground="#B5BAC2" FontSize="11"
-                                                                               FontFamily="JetBrains Mono,Menlo,Consolas,monospace" Margin="0,1" />
+                                                                               FontSize="11"
+                                                                               FontFamily="{StaticResource MonoFontFamily}"
+                                                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                                                               Margin="0,1" />
                                                                 </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
                                                         </ItemsControl>

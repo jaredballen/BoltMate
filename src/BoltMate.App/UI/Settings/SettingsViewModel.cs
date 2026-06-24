@@ -138,7 +138,7 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _udpDetail, value);
     }
 
-    private string _udpIndicatorColor = "#9CA3AF";
+    private string _udpIndicatorColor = "#C2C2C8";
     public string UdpIndicatorColor
     {
         get => _udpIndicatorColor;
@@ -166,7 +166,7 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _syncDetail, value);
     }
 
-    private string _syncIndicatorColor = "#9CA3AF";
+    private string _syncIndicatorColor = "#C2C2C8";
     public string SyncIndicatorColor
     {
         get => _syncIndicatorColor;
@@ -248,14 +248,14 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _notificationsPillBackground, value);
     }
 
-    private string _notificationsPillForeground = "#9CA3AF";
+    private string _notificationsPillForeground = "#C2C2C8";
     public string NotificationsPillForeground
     {
         get => _notificationsPillForeground;
         set => this.RaiseAndSetIfChanged(ref _notificationsPillForeground, value);
     }
 
-    private string _notificationsPillDot = "#9CA3AF";
+    private string _notificationsPillDot = "#C2C2C8";
     public string NotificationsPillDot
     {
         get => _notificationsPillDot;
@@ -426,8 +426,8 @@ public sealed class SettingsViewModel : ViewModelBase
         {
             NotificationsPillText = "Disabled";
             NotificationsPillBackground = "#1A9CA3AF";   // grey/10
-            NotificationsPillForeground = "#9CA3AF";
-            NotificationsPillDot = "#9CA3AF";
+            NotificationsPillForeground = "#C2C2C8";
+            NotificationsPillDot = "#C2C2C8";
             NotificationsStatusLine = "BoltMate can't post notifications right now. Enable in System Settings to get alerts when something needs your attention.";
         }
     }
@@ -595,11 +595,17 @@ public sealed class SettingsViewModel : ViewModelBase
         SyncDetail = $"{label} — {h.DetailMessage}";
     }
 
+    // Status semantic colors mirror DesignTokens.axaml:
+    //   Healthy #34C759 · Unknown #C2C2C8 · Blocked dot #FF453A
+    // Kept as raw hex strings here so the VM can be exercised without an
+    // Avalonia application context (e.g. unit tests). The Status tab XAML
+    // could equally bind to brushes by key — string equality with
+    // DynamicResource keys would still resolve.
     private static (string Label, string Color) LabelAndColor(TransportState state) => state switch
     {
-        TransportState.Healthy => ("Healthy", "#10B981"),
-        TransportState.Blocked => ("Blocked", "#EF4444"),
-        _ => ("Unknown", "#9CA3AF"),
+        TransportState.Healthy => ("Healthy", "#34C759"),
+        TransportState.Blocked => ("Blocked", "#FF453A"),
+        _ => ("Unknown", "#C2C2C8"),
     };
 
     // ---- About tab helpers --------------------------------------------
