@@ -333,82 +333,68 @@
                     </ScrollViewer>
                 </Grid>
 
-                <!-- ======================= ABOUT ======================= -->
-                <Grid x:Name="GeneralPage" Margin="20"
-                      IsVisible="{Binding ShowGeneralTab}">
-                    <ScrollViewer>
-                        <StackPanel Spacing="16">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="BoltMate" FontSize="22" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding VersionLine}" Foreground="#9AA0A6" FontSize="12" />
-                            </StackPanel>
+                <!-- ======================= GENERAL ======================= -->
+                <Grid x:Name="GeneralPage" Margin="26,24,26,24"
+                      IsVisible="{Binding ShowGeneralTab}"
+                      RowDefinitions="Auto,*">
+                    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,16">
+                        <TextBlock Text="General"
+                                   FontSize="{StaticResource FontSizeH2}" FontWeight="SemiBold"
+                                   LetterSpacing="-0.3"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="How BoltMate starts up, what it shares, and where to find updates and logs."
+                                   FontSize="12.5" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                    </StackPanel>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Text="Updates" FontSize="14" FontWeight="SemiBold" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="Last checked:" Foreground="#9AA0A6" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding LastCheckedLine}" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Check for updates"
-                                                Command="{Binding CheckForUpdatesCommand}" />
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding UpdateStatusLine}"
-                                               Foreground="#B5BAC2" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
-                            </Border>
+                    <ScrollViewer Grid.Row="1">
+                        <StackPanel Spacing="13">
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Text="Startup" FontSize="14" FontWeight="SemiBold" />
-                                    <CheckBox Content="Launch BoltMate at login"
+                            <!-- ===== Card 1: Launch on startup ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock Text="Launch on startup"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Open BoltMate automatically when this Mac starts up."
+                                                   FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding LaunchAtLoginDetail}"
+                                                   FontSize="11.5" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    </StackPanel>
+                                    <CheckBox Grid.Column="1"
                                               IsChecked="{Binding LaunchAtLoginChecked, Mode=TwoWay}"
-                                              IsEnabled="{Binding LaunchAtLoginEnabled}" />
-                                    <TextBlock Text="{Binding LaunchAtLoginDetail}"
-                                               Margin="22,0,0,0" Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
+                                              IsEnabled="{Binding LaunchAtLoginEnabled}"
+                                              VerticalAlignment="Center" />
+                                </Grid>
                             </Border>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Text="Privacy" FontSize="14" FontWeight="SemiBold" />
-                                    <CheckBox Content="Send anonymous diagnostics"
-                                              IsChecked="{Binding TelemetryEnabled, Mode=TwoWay}" />
-                                    <TextBlock Margin="22,0,0,0" Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
-                                        Off by default. When on, error reports and de-identified usage counts go to Azure App Insights.
-                                        No device serials, key strokes, or file paths are ever sent.
-                                    </TextBlock>
-                                </StackPanel>
-                            </Border>
-
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="10">
-                                    <!--
-                                        Read-only notification status card. The toggle was removed
-                                        because Win + Mac both refuse programmatic grant/revoke for
-                                        non-packaged apps; an in-app toggle is a polite lie. The pill
-                                        shows the live OS state via NotificationsEnabled; the button
-                                        bounces the user to System Settings, which IS the toggle.
-                                    -->
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <TextBlock Grid.Column="0" Text="Notifications" FontSize="14" FontWeight="SemiBold"
-                                                   VerticalAlignment="Center" />
+                            <!-- ===== Card 2: Notifications (status, not toggle) ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <StackPanel Spacing="12">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                        <StackPanel Grid.Column="0" Spacing="4">
+                                            <TextBlock Text="Notifications"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                            <TextBlock Text="BoltMate alerts you when something needs your attention — never for routine activity. Notifications are controlled by System Settings; BoltMate shows their current state here."
+                                                       FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </StackPanel>
                                         <Border Grid.Column="1"
-                                                CornerRadius="10" Padding="10,2"
+                                                CornerRadius="12" Padding="10,4"
                                                 VerticalAlignment="Center"
                                                 Background="{Binding NotificationsPillBackground}">
                                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                                <Ellipse Width="8" Height="8"
-                                                         VerticalAlignment="Center"
+                                                <Ellipse Width="8" Height="8" VerticalAlignment="Center"
                                                          Fill="{Binding NotificationsPillDot}" />
                                                 <TextBlock Text="{Binding NotificationsPillText}"
                                                            FontSize="12" FontWeight="SemiBold"
@@ -417,55 +403,139 @@
                                             </StackPanel>
                                         </Border>
                                     </Grid>
-                                    <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
-                                        BoltMate alerts you when something needs your attention — never for routine activity.
-                                        Notifications are controlled by System Settings; BoltMate shows their current state here.
-                                    </TextBlock>
-                                    <Grid ColumnDefinitions="*,Auto">
+                                    <Border Height="1" Background="{DynamicResource HairlineBrush}" />
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                         <TextBlock Grid.Column="0"
                                                    Text="{Binding NotificationsStatusLine}"
-                                                   Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap"
+                                                   FontSize="11.5" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                                    VerticalAlignment="Center" />
                                         <Button Grid.Column="1"
-                                                Content="Open in System Settings"
+                                                Content="Open in System Settings ↗"
                                                 Command="{Binding OpenNotificationSettingsCommand}" />
                                     </Grid>
                                 </StackPanel>
                             </Border>
 
-                            <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="6" Padding="14">
-                                <StackPanel Spacing="10">
-                                    <TextBlock Text="Diagnostics" FontSize="14" FontWeight="SemiBold" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Open logs folder"
-                                                Command="{Binding OpenLogsFolderCommand}" />
+                            <!-- ===== Card 3: Send anonymous diagnostics ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock Text="Send anonymous diagnostics"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}">
+                                            Off by default. When on, de-identified error reports + usage counts go to Azure App
+                                            Insights. No device serials, keystrokes, or file paths are ever sent.
+                                        </TextBlock>
                                     </StackPanel>
-                                    <TextBlock Text="{Binding LogsPathLine}"
-                                               Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap" />
-                                </StackPanel>
+                                    <CheckBox Grid.Column="1"
+                                              IsChecked="{Binding TelemetryEnabled, Mode=TwoWay}"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+
+                            <!-- ===== Card 4: Updates ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock Text="Updates"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock Text="{Binding VersionLine}"
+                                                   FontSize="12"
+                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{Binding UpdateStatusLine}"
+                                                   FontSize="11.5" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Content="Check for updates"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding CheckForUpdatesCommand}" />
+                                </Grid>
+                            </Border>
+
+                            <!-- ===== Card 5: Diagnostics ===== -->
+                            <Border BorderBrush="{DynamicResource CardStrokeBrush}"
+                                    Background="{DynamicResource CardBackgroundBrush}"
+                                    BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                    Padding="16,15">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                                        <TextBlock Text="Diagnostics"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <TextBlock Text="{Binding LogsPathLine}"
+                                                   FontSize="11.5" TextWrapping="Wrap"
+                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Content="Open logs folder"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding OpenLogsFolderCommand}" />
+                                </Grid>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>
 
                 <!-- ======================= LICENSE ======================= -->
-                <Grid x:Name="LicensePage" Margin="20"
+                <!--
+                    Centered placeholder per handoff §2c. The whole card is at
+                    opacity .5 + IsHitTestVisible="False" so the disabled
+                    "Activate" / key field can't be focused or clicked.
+                -->
+                <Grid x:Name="LicensePage" Margin="26,24,26,24"
                       IsVisible="{Binding ShowLicenseTab}">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="License" FontSize="22" FontWeight="SemiBold" />
-                        <TextBlock Text="Licensing — coming soon" Foreground="#B5BAC2" FontSize="13" />
-                        <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="6" Padding="14">
+                    <StackPanel Spacing="20"
+                                MaxWidth="420"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Border Width="60" Height="60" CornerRadius="{StaticResource TileSmallCornerRadius}"
+                                HorizontalAlignment="Center"
+                                Background="{DynamicResource RowBackgroundBrush}">
+                            <ui:FASymbolIcon Symbol="Document" FontSize="28"
+                                             Foreground="{DynamicResource TextTertiaryBrush}"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel Spacing="8" HorizontalAlignment="Center">
+                            <TextBlock Text="Licensing is coming later"
+                                       FontSize="{StaticResource FontSizeH3}" FontWeight="SemiBold"
+                                       TextAlignment="Center"
+                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                            <TextBlock TextAlignment="Center" TextWrapping="Wrap"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource TextSecondaryBrush}">
+                                This build runs every feature with no activation key. Once licensing lands you'll be able to
+                                manage it from this tab.
+                            </TextBlock>
+                        </StackPanel>
+                        <Border Opacity="0.5" IsHitTestVisible="False"
+                                BorderBrush="{DynamicResource CardStrokeBrush}"
+                                Background="{DynamicResource CardBackgroundBrush}"
+                                BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
+                                Padding="16,15"
+                                HorizontalAlignment="Stretch">
                             <StackPanel Spacing="10">
-                                <TextBlock Text="Activation key" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Activation key"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
                                 <TextBox IsEnabled="False" Text="" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button Content="Activate" IsEnabled="False" />
                                 </StackPanel>
-                                <TextBlock Foreground="#9AA0A6" FontSize="12" TextWrapping="Wrap">
+                                <TextBlock FontSize="11.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextTertiaryBrush}">
                                     Licensing is not yet available. The current build runs all features without an activation key.
                                 </TextBlock>
                             </StackPanel>
