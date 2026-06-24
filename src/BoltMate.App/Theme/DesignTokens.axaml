@@ -1,0 +1,208 @@
+<!--
+    DesignTokens.axaml
+    Source of truth for BoltMate's colour, brush, corner-radius, and
+    type-scale tokens from the design handoff (June 2026). Every UI
+    surface binds against these via DynamicResource so theme flips
+    cascade automatically.
+
+    Naming conventions:
+      • Theme-aware brushes live under ResourceDictionary.ThemeDictionaries
+        keyed "Light" and "Dark". Same key in both, different value.
+      • Theme-invariant brushes (brand greens, status semantic colors,
+        traffic-light glyphs) sit at the top level so they're shared
+        across both themes.
+      • CornerRadius + double scale tokens are also top-level.
+      • Naming intentionally distinct from FluentAvalonia's stock keys
+        (CardBackgroundFillColorDefaultBrush etc.) so we can keep FA's
+        defaults wherever we haven't yet replaced a surface.
+
+    Merge order: this file is included via MergedDictionaries inside
+    Application.Resources AFTER FluentAvaloniaTheme + FluentTheme so our
+    tokens win for any overlapping keys (none today, but future-proof).
+-->
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ResourceDictionary.ThemeDictionaries>
+
+        <!-- ====================================================== -->
+        <!-- LIGHT                                                  -->
+        <!-- ====================================================== -->
+        <ResourceDictionary x:Key="Light">
+
+            <!-- Surfaces -->
+            <SolidColorBrush x:Key="AppBackgroundBrush"           Color="#F4F5F7" />
+            <SolidColorBrush x:Key="ContentBackgroundBrush"       Color="#FBFBFD" />
+            <SolidColorBrush x:Key="CardBackgroundBrush"          Color="#FFFFFF" />
+            <SolidColorBrush x:Key="CardStrokeBrush"              Color="#17000000" />
+            <SolidColorBrush x:Key="RowBackgroundBrush"           Color="#F5F5F7" />
+            <SolidColorBrush x:Key="HairlineBrush"                Color="#E6E6E8" />
+
+            <!-- Text -->
+            <SolidColorBrush x:Key="TextPrimaryBrush"             Color="#1D1D1F" />
+            <SolidColorBrush x:Key="TextSecondaryBrush"           Color="#6E6E73" />
+            <SolidColorBrush x:Key="TextTertiaryBrush"            Color="#9A9AA0" />
+
+            <!-- Buttons -->
+            <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#1C1C1E" />
+            <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#99FF55" />
+            <SolidColorBrush x:Key="SecondaryButtonBackgroundBrush" Color="#0D000000" />
+            <SolidColorBrush x:Key="SecondaryButtonForegroundBrush" Color="#3A3A3C" />
+
+            <!-- Accent text (pill-green-text), caution, menu -->
+            <SolidColorBrush x:Key="AccentForegroundBrush"        Color="#42701A" />
+            <SolidColorBrush x:Key="CautionBrush"                 Color="#C98417" />
+            <SolidColorBrush x:Key="CautionTintBrush"             Color="#2EDCAA28" />
+            <SolidColorBrush x:Key="MenuBackgroundBrush"          Color="#D1FAFAFC" />
+            <SolidColorBrush x:Key="MenuBadgeRingBrush"           Color="#E3E7EB" />
+
+            <!-- Brand-on-light: nav rail still uses the dark surface; the
+                 "BrandRail*" tokens are deliberately the same dark values
+                 in both themes so the rail stays consistent like the
+                 design shows. -->
+            <SolidColorBrush x:Key="BrandRailBackgroundBrush"     Color="#1B1C1A" />
+            <SolidColorBrush x:Key="BrandRailActiveBackgroundBrush" Color="#2499FF55" />
+            <SolidColorBrush x:Key="BrandRailActiveTextBrush"     Color="#EAFAD9" />
+            <SolidColorBrush x:Key="BrandRailDoneTextBrush"       Color="#9AA691" />
+            <SolidColorBrush x:Key="BrandRailUpcomingTextBrush"   Color="#73746A" />
+            <SolidColorBrush x:Key="BrandRailUpcomingRingBrush"   Color="#44463A" />
+            <SolidColorBrush x:Key="BrandRailFooterTextBrush"     Color="#5F6056" />
+
+            <!-- Notification status badges (light) -->
+            <SolidColorBrush x:Key="NotifEnabledDotBrush"         Color="#7FBF3F" />
+            <SolidColorBrush x:Key="NotifEnabledTintBrush"        Color="#297FBF3F" />
+            <SolidColorBrush x:Key="NotifEnabledTextBrush"        Color="#42701A" />
+            <SolidColorBrush x:Key="NotifTurnedOffDotBrush"       Color="#F0A94E" />
+            <SolidColorBrush x:Key="NotifTurnedOffTintBrush"      Color="#29F0A94E" />
+            <SolidColorBrush x:Key="NotifTurnedOffTextBrush"      Color="#D98A2B" />
+            <SolidColorBrush x:Key="NotifNotSetupDotBrush"        Color="#9A9AA0" />
+            <SolidColorBrush x:Key="NotifNotSetupTintBrush"       Color="#F5F5F7" />
+            <SolidColorBrush x:Key="NotifNotSetupTextBrush"       Color="#6E6E73" />
+
+        </ResourceDictionary>
+
+        <!-- ====================================================== -->
+        <!-- DARK                                                   -->
+        <!-- ====================================================== -->
+        <ResourceDictionary x:Key="Dark">
+
+            <!-- Surfaces -->
+            <SolidColorBrush x:Key="AppBackgroundBrush"           Color="#1E1E20" />
+            <SolidColorBrush x:Key="ContentBackgroundBrush"       Color="#232325" />
+            <SolidColorBrush x:Key="CardBackgroundBrush"          Color="#2C2C2E" />
+            <SolidColorBrush x:Key="CardStrokeBrush"              Color="#1AFFFFFF" />
+            <SolidColorBrush x:Key="RowBackgroundBrush"           Color="#0DFFFFFF" />
+            <SolidColorBrush x:Key="HairlineBrush"                Color="#3A3A3C" />
+
+            <!-- Text -->
+            <SolidColorBrush x:Key="TextPrimaryBrush"             Color="#F5F5F7" />
+            <SolidColorBrush x:Key="TextSecondaryBrush"           Color="#A1A1A6" />
+            <SolidColorBrush x:Key="TextTertiaryBrush"            Color="#79797E" />
+
+            <!-- Buttons -->
+            <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#99FF55" />
+            <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#15240C" />
+            <SolidColorBrush x:Key="SecondaryButtonBackgroundBrush" Color="#14FFFFFF" />
+            <SolidColorBrush x:Key="SecondaryButtonForegroundBrush" Color="#D6D6DA" />
+
+            <!-- Accent text, caution, menu -->
+            <SolidColorBrush x:Key="AccentForegroundBrush"        Color="#BDF58C" />
+            <SolidColorBrush x:Key="CautionBrush"                 Color="#F0A94E" />
+            <SolidColorBrush x:Key="CautionTintBrush"             Color="#33F0A94E" />
+            <SolidColorBrush x:Key="MenuBackgroundBrush"          Color="#D12C2C2E" />
+            <SolidColorBrush x:Key="MenuBadgeRingBrush"           Color="#2B2C2E" />
+
+            <!-- Brand-rail tokens (intentionally same as Light — design
+                 shows the rail always-dark regardless of theme). -->
+            <SolidColorBrush x:Key="BrandRailBackgroundBrush"     Color="#1B1C1A" />
+            <SolidColorBrush x:Key="BrandRailActiveBackgroundBrush" Color="#2499FF55" />
+            <SolidColorBrush x:Key="BrandRailActiveTextBrush"     Color="#EAFAD9" />
+            <SolidColorBrush x:Key="BrandRailDoneTextBrush"       Color="#9AA691" />
+            <SolidColorBrush x:Key="BrandRailUpcomingTextBrush"   Color="#73746A" />
+            <SolidColorBrush x:Key="BrandRailUpcomingRingBrush"   Color="#44463A" />
+            <SolidColorBrush x:Key="BrandRailFooterTextBrush"     Color="#5F6056" />
+
+            <!-- Notification status badges (dark) -->
+            <SolidColorBrush x:Key="NotifEnabledDotBrush"         Color="#7FBF3F" />
+            <SolidColorBrush x:Key="NotifEnabledTintBrush"        Color="#297FBF3F" />
+            <SolidColorBrush x:Key="NotifEnabledTextBrush"        Color="#BDF58C" />
+            <SolidColorBrush x:Key="NotifTurnedOffDotBrush"       Color="#F0A94E" />
+            <SolidColorBrush x:Key="NotifTurnedOffTintBrush"      Color="#29F0A94E" />
+            <SolidColorBrush x:Key="NotifTurnedOffTextBrush"      Color="#F0A94E" />
+            <SolidColorBrush x:Key="NotifNotSetupDotBrush"        Color="#79797E" />
+            <SolidColorBrush x:Key="NotifNotSetupTintBrush"       Color="#0DFFFFFF" />
+            <SolidColorBrush x:Key="NotifNotSetupTextBrush"       Color="#A1A1A6" />
+
+        </ResourceDictionary>
+
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- ========================================================== -->
+    <!-- THEME-INVARIANT TOKENS                                     -->
+    <!-- ========================================================== -->
+
+    <!-- Brand palette — same across light/dark by intent. -->
+    <SolidColorBrush x:Key="BrandGreenBrush"            Color="#99FF55" />
+    <SolidColorBrush x:Key="BrandDarkBrush"             Color="#1B1C1A" />
+    <SolidColorBrush x:Key="BrandBlackTileBrush"        Color="#000000" />
+    <SolidColorBrush x:Key="BrandGreenSpineBrush"       Color="#99FF55" />
+
+    <!-- Status semantic — dot + word colors lifted from handoff §Status. -->
+    <SolidColorBrush x:Key="HealthyDotBrush"            Color="#34C759" />
+    <SolidColorBrush x:Key="UnknownDotBrush"            Color="#C2C2C8" />
+    <SolidColorBrush x:Key="BlockedDotBrush"            Color="#FF453A" />
+    <SolidColorBrush x:Key="BlockedTextBrush"           Color="#FF5A4D" />
+
+    <!-- Tray icon amber (only used by TrayIconStatusController bitmap
+         compositing — kept here for parity with the design palette). -->
+    <SolidColorBrush x:Key="TrayAmberBrush"             Color="#FFBF00" />
+
+    <!-- Battery charging treatment -->
+    <SolidColorBrush x:Key="BatteryChargingFillBrush"   Color="#7FBF3F" />
+    <SolidColorBrush x:Key="BatteryChargingTextBrush"   Color="#6AA82F" />
+
+    <!-- macOS traffic-light glyph fills (only referenced in our window
+         chrome decoration if/when we render fake traffic lights — never
+         used on Windows). -->
+    <SolidColorBrush x:Key="MacTrafficRedBrush"         Color="#FF5F57" />
+    <SolidColorBrush x:Key="MacTrafficYellowBrush"      Color="#FEBC2E" />
+    <SolidColorBrush x:Key="MacTrafficGreenBrush"       Color="#28C840" />
+
+    <!-- ========================================================== -->
+    <!-- SHAPE                                                      -->
+    <!-- ========================================================== -->
+    <CornerRadius x:Key="WindowCornerRadius">12</CornerRadius>
+    <CornerRadius x:Key="CardCornerRadius">10</CornerRadius>
+    <CornerRadius x:Key="RowCornerRadius">9</CornerRadius>
+    <CornerRadius x:Key="ButtonCornerRadius">8</CornerRadius>
+    <CornerRadius x:Key="CheckboxCornerRadius">5</CornerRadius>
+    <CornerRadius x:Key="TileSmallCornerRadius">11</CornerRadius>
+    <CornerRadius x:Key="TileLargeCornerRadius">17</CornerRadius>
+    <CornerRadius x:Key="PillCornerRadius">20</CornerRadius>
+
+    <!-- Standard spacing scale used by most cards / rows. -->
+    <Thickness   x:Key="CardPadding">16,15</Thickness>
+    <Thickness   x:Key="RowPadding">12,10</Thickness>
+    <Thickness   x:Key="NavItemPadding">10,8</Thickness>
+
+    <!-- ========================================================== -->
+    <!-- TYPE SCALE                                                 -->
+    <!-- ========================================================== -->
+    <!-- Sizes mirror the handoff's "Scale used" line. Each maps to a
+         single intent so consumers don't pluck arbitrary numbers. -->
+    <x:Double x:Key="FontSizeHero">26</x:Double>
+    <x:Double x:Key="FontSizeH1">23</x:Double>
+    <x:Double x:Key="FontSizeH2">22</x:Double>
+    <x:Double x:Key="FontSizeH3">21</x:Double>
+    <x:Double x:Key="FontSizeBodyLg">14.5</x:Double>
+    <x:Double x:Key="FontSizeBody">14</x:Double>
+    <x:Double x:Key="FontSizeLabelLg">13.5</x:Double>
+    <x:Double x:Key="FontSizeLabel">13</x:Double>
+    <x:Double x:Key="FontSizeLabelSm">12.5</x:Double>
+    <x:Double x:Key="FontSizeCaption">12</x:Double>
+    <x:Double x:Key="FontSizeCaptionSm">11.5</x:Double>
+    <x:Double x:Key="FontSizeMicro">11</x:Double>
+
+    <x:String x:Key="MonoFontFamily">SF Mono, ui-monospace, Menlo, Consolas, monospace</x:String>
+
+</ResourceDictionary>

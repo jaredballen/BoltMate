@@ -18,6 +18,20 @@
     </Application.Styles>
 
     <!--
+        BoltMate design tokens (June 2026 handoff). Merged AFTER FluentAvalonia /
+        FluentTheme load so our keys win on any overlap. Theme-aware brushes
+        live inside ResourceDictionary.ThemeDictionaries; shape/type/brand-
+        invariant tokens sit at the top level. See Theme/DesignTokens.axaml.
+    -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceInclude Source="avares://BoltMate/Theme/DesignTokens.axaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <!--
         Menu items are populated programmatically by TrayMenuController so they
         can react to the IObservableCache<BoltReceiver, string> + the
         per-receiver IObservableCache<PairedDevice, byte>. The XAML defines
