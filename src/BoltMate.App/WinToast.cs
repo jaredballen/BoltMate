@@ -52,10 +52,14 @@ internal static class WinToast
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            if (!p.WaitForExit(5000))
+            // 6s upper bound: cold powershell.exe is typically ~1s, the
+            // WinRT toast commit + the 500ms keep-alive sleep in
+            // post-toast.ps1 add another ~700ms, leaving comfortable
+            // headroom for slow systems.
+            if (!p.WaitForExit(6000))
             {
                 try { p.Kill(); } catch { }
-                Log.LogWarning("WinToast: powershell.exe timed out after 5s");
+                Log.LogWarning("WinToast: powershell.exe timed out after 6s");
                 return false;
             }
             var stderr = p.StandardError.ReadToEnd();
