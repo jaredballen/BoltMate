@@ -93,6 +93,20 @@
       and stays consistent with what gets shipped.
     -->
     <ApplicationId>com.jaredballen.BoltMate</ApplicationId>
+    <!--
+      Code signing. The SDK signs the bundle at publish time using these
+      values; release-mac.sh then re-signs after patching Info.plist
+      because that patch invalidates the SDK's seal. For local dev we
+      sign with the "Apple Development" cert tied to team 3PVNQT4G5A —
+      hardened runtime + entitlements ON so the cdhash matches what a
+      future Developer-ID-signed prod build will look like, and TCC
+      grants persist across rebuilds. Override CodesignKey via env when
+      shipping (Developer ID Application: ...).
+    -->
+    <CodesignKey Condition=" '$(CodesignKey)' == '' AND $(TargetFramework.Contains('-macos')) ">Mac Developer: Jared Allen (44A626R4VU)</CodesignKey>
+    <CodesignEntitlements Condition=" $(TargetFramework.Contains('-macos')) ">$(MSBuildThisFileDirectory)BoltMate.App.entitlements</CodesignEntitlements>
+    <EnableCodeSigning Condition=" $(TargetFramework.Contains('-macos')) ">true</EnableCodeSigning>
+    <UseHardenedRuntime Condition=" $(TargetFramework.Contains('-macos')) ">true</UseHardenedRuntime>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/app-icon.ico</ApplicationIcon>

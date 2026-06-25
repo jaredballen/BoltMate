@@ -570,6 +570,16 @@ public static class NetworkPermission
             if (string.IsNullOrEmpty(exe))
                 return Status.Unknown;
 
+            // socketfilterfw --listapps lists firewall rules using the .app
+            // bundle path (e.g. "/Applications/BoltMate.app"), NOT the inner
+            // executable path "/Applications/BoltMate.app/Contents/MacOS/BoltMate"
+            // that Process.MainModule returns. Build BOTH candidates so the
+            // contains-check finds whichever form macOS chose to register.
+            var matchCandidates = new List<string> { exe };
+            var contentsIdx = exe.IndexOf("/Contents/MacOS/", StringComparison.Ordinal);
+            if (contentsIdx > 0)
+                matchCandidates.Add(exe.Substring(0, contentsIdx));
+
             var psi = new ProcessStartInfo("/usr/libexec/ApplicationFirewall/socketfilterfw")
             {
                 Arguments = "--listapps",
@@ -587,12 +597,21 @@ public static class NetworkPermission
             var output = p.StandardOutput.ReadToEnd();
 
             // Per-app entries appear as "<index> : <abs path>\n   (rule)\n".
-            // Split on lines and walk; once we hit our binary path, the
-            // next non-empty line carries the rule.
+            // Walk lines; once we hit either candidate path, the next
+            // non-empty line carries the rule.
             var lines = output.Split('\n');
             for (int i = 0; i < lines.Length; i++)
             {
-                if (!lines[i].Contains(exe, StringComparison.Ordinal)) continue;
+                var hit = false;
+                foreach (var cand in matchCandidates)
+                {
+                    if (lines[i].Contains(cand, StringComparison.Ordinal))
+                    {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit) continue;
                 var rule = i + 1 < lines.Length ? lines[i + 1] : "";
                 if (rule.Contains("Allow", StringComparison.OrdinalIgnoreCase))
                     return Status.Granted;

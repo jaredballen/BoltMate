@@ -25,7 +25,7 @@ internal static class AppLoggerSetup
         minimum = effective;
         var logsDir = ResolveLogsDirectory();
         Directory.CreateDirectory(logsDir);
-        var logFile = Path.Combine(logsDir, "boltmate-app-.log");
+        var logFile = Path.Combine(logsDir, "boltmate-.log");
 
         var serilog = new LoggerConfiguration()
             .MinimumLevel.Is(ToSerilog(minimum!.Value))

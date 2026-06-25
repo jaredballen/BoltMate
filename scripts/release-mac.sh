@@ -82,6 +82,15 @@ plutil -replace CFBundleIconFile -string app-icon.icns "$PLIST"
 plutil -replace CFBundleDisplayName -string BoltMate "$PLIST"
 plutil -replace NSHumanReadableCopyright -string "Copyright (c) Jared Ballen" "$PLIST" 2>/dev/null || true
 
+# Normalize Info.plist to XML so byte-level content is deterministic across
+# rebuilds. The Microsoft.macOS SDK generates a BINARY plist whose key-order
+# is hash-randomized per run — same logical content, different bytes — which
+# bumps the bundle's CodeResources seal + outer cdhash on every build. That
+# in turn forces TCC (especially Input Monitoring, which keys on cdhash) to
+# re-prompt every install. XML serialization sorts dicts predictably so
+# identical content → identical bytes.
+plutil -convert xml1 "$PLIST"
+
 echo "==> Moving icon to Contents/Resources/app-icon.icns"
 # The SDK stages content under Resources/Assets/ via Content items in the
 # csproj, but CFBundleIconFile=app-icon resolves against Resources/
@@ -92,12 +101,32 @@ if [[ -f "$ICNS_SRC" && ! -f "$ICNS_DEST" ]]; then
     cp "$ICNS_SRC" "$ICNS_DEST"
 fi
 
-echo "==> Re-signing bundle (ad-hoc) — Info.plist edit invalidates SDK signature"
-# Strip the SDK's _CodeSignature so codesign re-signs cleanly. Without
-# this codesign refuses to re-sign over the SDK's existing seal that no
-# longer matches the modified plist.
-rm -rf "$APP_BUNDLE/Contents/_CodeSignature"
-codesign --force --deep --sign - --identifier com.jaredballen.BoltMate "$APP_BUNDLE"
+# Dev-cert signing for local installs. Override via SIGN_IDENTITY env
+# var when shipping (Developer ID Application: ...). Empty string falls
+# back to ad-hoc (-) which preserves the legacy path for CI.
+SIGN_IDENTITY=${SIGN_IDENTITY:-"Mac Developer: Jared Allen (44A626R4VU)"}
+ENTITLEMENTS=$REPO_ROOT/src/BoltMate.App/BoltMate.App.entitlements
+
+if [[ "$SIGN_IDENTITY" = "-" ]]; then
+    echo "==> Re-signing bundle (ad-hoc) — Info.plist edit invalidates SDK signature"
+    rm -rf "$APP_BUNDLE/Contents/_CodeSignature"
+    codesign --force --deep --sign - --identifier com.jaredballen.BoltMate "$APP_BUNDLE"
+else
+    echo "==> Re-signing bundle with hardened runtime + entitlements"
+    echo "    Identity: $SIGN_IDENTITY"
+    # Strip the SDK's _CodeSignature so codesign re-signs cleanly.
+    rm -rf "$APP_BUNDLE/Contents/_CodeSignature"
+    # Sign nested dylibs first (no entitlements on them), then the bundle
+    # WITH entitlements. --deep on the outer call would re-sign the
+    # dylibs and strip the entitlements, so we do it in two passes.
+    find "$APP_BUNDLE/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 |
+        xargs -0 -I{} codesign --force --options runtime --sign "$SIGN_IDENTITY" "{}"
+    codesign --force --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        --sign "$SIGN_IDENTITY" \
+        --identifier com.jaredballen.BoltMate \
+        "$APP_BUNDLE"
+fi
 
 if [[ "$NO_INSTALL" = 0 ]]; then
     echo "==> Installing to /Applications/BoltMate.app"
