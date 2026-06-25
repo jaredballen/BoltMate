@@ -95,7 +95,7 @@ public sealed class TrayMenuController : IDisposable
         var licenseItem = new NativeMenuItem("License");
         licenseItem.Click += (_, _) => OnLicenseClicked?.Invoke();
 
-        var quitItem = new NativeMenuItem("Quit");
+        var quitItem = new NativeMenuItem("Quit BoltMate");
         quitItem.Click += (_, _) =>
         {
             if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

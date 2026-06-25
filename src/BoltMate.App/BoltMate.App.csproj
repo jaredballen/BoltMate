@@ -117,13 +117,13 @@
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.4" />
     <!--
-      SVG rendering for the brand logo + wordmark assets (res/ → Assets/).
-      Avalonia.Svg.Skia layers a Svg control + SvgImage source on top of
-      SkiaSharp's SVG parser. Without it Image Source="...svg" silently
-      shows nothing — Avalonia core only ships raster decoders. Modest
-      dep (~200 KB) and is the canonical Avalonia-stack choice.
+      SVG rendering is intentionally NOT wired up. Avalonia.Svg.Skia caps
+      at 11.3.0 and that release is ABI-incompatible with Avalonia 12
+      (Avalonia.Data.IBinding moved) — the runtime TypeLoads the wrong
+      surface and crashes during XAML parse. Until a 12.x build of
+      Avalonia.Svg.Skia ships, brand assets are referenced as raster
+      PNGs (Assets/app-icon-*.png) instead of avares:// SVG URIs.
     -->
-    <PackageReference Include="Avalonia.Svg.Skia" Version="11.3.0" />
     <PackageReference Include="FluentAvaloniaUI" Version="3.0.0" />
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
@@ -174,9 +174,13 @@
     <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
     <AvaloniaResource Include="Assets/app-icon-1024.png" />
 
-    <!-- Brand vector assets shared by Welcome rail + Settings nav header
-         + any future surface. Source: res/. Avalonia.Svg.Skia renders
-         these at any size via <Svg> or <Image Source="{SvgImage avares://...}"/>. -->
+    <!-- Brand mark: rendered to PNG at install time via qlmanage from
+         res/BoltMate_logo.svg. Keeping a PNG copy lets the brand-rail
+         tiles render without taking on Avalonia.Svg.Skia (no Avalonia 12
+         build yet). Re-run `qlmanage -t -s 1024 -o tmp …svg` whenever
+         the source SVG changes and copy the PNG over. -->
+    <AvaloniaResource Include="Assets/BoltMate_logo.png" />
+    <!-- SVG source kept on disk for reference / future rasterisation. -->
     <AvaloniaResource Include="Assets/BoltMate_logo.svg" />
     <AvaloniaResource Include="Assets/BoltMate_wordmark.svg" />
     <AvaloniaResource Include="Assets/BoltMate_wordmark_wide.svg" />

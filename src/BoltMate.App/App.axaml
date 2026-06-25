@@ -15,6 +15,12 @@
     <Application.Styles>
         <sty:FluentAvaloniaTheme PreferSystemTheme="True" PreferUserAccentColor="True" />
         <FluentTheme />
+        <!--
+            Brand styles AFTER FluentTheme so our Button/CheckBox overrides
+            win over FA's default chrome. Token brushes from DesignTokens
+            keep both themes accurate.
+        -->
+        <StyleInclude Source="avares://BoltMate/Theme/ControlStyles.axaml" />
     </Application.Styles>
 
     <!--
