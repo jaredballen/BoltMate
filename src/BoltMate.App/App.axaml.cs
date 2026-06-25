@@ -267,7 +267,7 @@ public partial class App : Application
                 _loggerFactory.CreateLogger<TrayMenuController>())
             {
                 OnStatusClicked = () => OpenSettings(SettingsWindow.TabStatus),
-                OnAboutClicked = () => OpenSettings(SettingsWindow.TabAbout),
+                OnAboutClicked = () => OpenSettings(SettingsWindow.TabGeneral),
                 OnLicenseClicked = () => OpenSettings(SettingsWindow.TabLicense),
                 OnFixPermissionsClicked = OpenWelcomeToFirstUngranted,
             };

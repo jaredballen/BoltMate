@@ -93,6 +93,20 @@
       and stays consistent with what gets shipped.
     -->
     <ApplicationId>com.jaredballen.BoltMate</ApplicationId>
+    <!--
+      Code signing. The SDK signs the bundle at publish time using these
+      values; release-mac.sh then re-signs after patching Info.plist
+      because that patch invalidates the SDK's seal. For local dev we
+      sign with the "Apple Development" cert tied to team 3PVNQT4G5A —
+      hardened runtime + entitlements ON so the cdhash matches what a
+      future Developer-ID-signed prod build will look like, and TCC
+      grants persist across rebuilds. Override CodesignKey via env when
+      shipping (Developer ID Application: ...).
+    -->
+    <CodesignKey Condition=" '$(CodesignKey)' == '' AND $(TargetFramework.Contains('-macos')) ">Mac Developer: Jared Allen (44A626R4VU)</CodesignKey>
+    <CodesignEntitlements Condition=" $(TargetFramework.Contains('-macos')) ">$(MSBuildThisFileDirectory)BoltMate.App.entitlements</CodesignEntitlements>
+    <EnableCodeSigning Condition=" $(TargetFramework.Contains('-macos')) ">true</EnableCodeSigning>
+    <UseHardenedRuntime Condition=" $(TargetFramework.Contains('-macos')) ">true</UseHardenedRuntime>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/app-icon.ico</ApplicationIcon>
@@ -116,6 +130,14 @@
     <PackageReference Include="ReactiveUI" Version="20.1.63" />
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.4" />
+    <!--
+      SVG rendering is intentionally NOT wired up. Avalonia.Svg.Skia caps
+      at 11.3.0 and that release is ABI-incompatible with Avalonia 12
+      (Avalonia.Data.IBinding moved) — the runtime TypeLoads the wrong
+      surface and crashes during XAML parse. Until a 12.x build of
+      Avalonia.Svg.Skia ships, brand assets are referenced as raster
+      PNGs (Assets/app-icon-*.png) instead of avares:// SVG URIs.
+    -->
     <PackageReference Include="FluentAvaloniaUI" Version="3.0.0" />
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
@@ -165,6 +187,17 @@
     <AvaloniaResource Include="Assets/tray-icon-dark.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
     <AvaloniaResource Include="Assets/app-icon-1024.png" />
+
+    <!-- Brand mark: rendered to PNG at install time via qlmanage from
+         res/BoltMate_logo.svg. Keeping a PNG copy lets the brand-rail
+         tiles render without taking on Avalonia.Svg.Skia (no Avalonia 12
+         build yet). Re-run `qlmanage -t -s 1024 -o tmp …svg` whenever
+         the source SVG changes and copy the PNG over. -->
+    <AvaloniaResource Include="Assets/BoltMate_logo.png" />
+    <!-- SVG source kept on disk for reference / future rasterisation. -->
+    <AvaloniaResource Include="Assets/BoltMate_logo.svg" />
+    <AvaloniaResource Include="Assets/BoltMate_wordmark.svg" />
+    <AvaloniaResource Include="Assets/BoltMate_wordmark_wide.svg" />
 
     <!-- Source-of-truth SVG + platform-specific app icons:
          .icns is bundled into the macOS .app via the Directory.Build.targets

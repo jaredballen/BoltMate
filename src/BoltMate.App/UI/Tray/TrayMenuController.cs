@@ -86,13 +86,16 @@ public sealed class TrayMenuController : IDisposable
         var statusItem = new NativeMenuItem("Status");
         statusItem.Click += (_, _) => OnStatusClicked?.Invoke();
 
-        var aboutItem = new NativeMenuItem("About");
+        // User-facing label is "General"; underlying callback property
+        // keeps the OnAboutClicked name for back-compat with App.axaml.cs
+        // wiring (rename comes in a later pass).
+        var aboutItem = new NativeMenuItem("General");
         aboutItem.Click += (_, _) => OnAboutClicked?.Invoke();
 
         var licenseItem = new NativeMenuItem("License");
         licenseItem.Click += (_, _) => OnLicenseClicked?.Invoke();
 
-        var quitItem = new NativeMenuItem("Quit");
+        var quitItem = new NativeMenuItem("Quit BoltMate");
         quitItem.Click += (_, _) =>
         {
             if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

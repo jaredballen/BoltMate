@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.ReactiveUI;
-using FluentAvalonia.UI.Controls;
 using BoltMate.App.Services;
 using BoltMate.App.UI;
 using BoltMate.Core;
@@ -17,15 +16,20 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BoltMate.App.UI;
 
 /// <summary>
-/// Settings shell: Status / About / License (side tabs via FluentAvalonia
-/// NavigationView). All state + behaviour lives in
-/// <see cref="SettingsViewModel"/>; the code-behind here only does
-/// Avalonia-specific UI plumbing — XAML init, page swap, lifecycle.
+/// Settings shell: Status / General / License (left-rail nav). All
+/// state + behaviour lives in <see cref="SettingsViewModel"/>; the
+/// code-behind here only does Avalonia-specific UI plumbing — XAML
+/// init, window lifecycle, and the App-layer-facing OpenTo entry
+/// point that swings the VM's CurrentTab.
 /// </summary>
 public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
 {
-    public const string TabStatus = "status";
-    public const string TabAbout = "about";
+    // Re-exposed so App.axaml.cs and TrayMenuController can refer to
+    // the canonical tab keys without taking a dependency on the VM
+    // type directly. Values intentionally match SettingsViewModel's
+    // TabXxx constants character-for-character.
+    public const string TabStatus  = "status";
+    public const string TabGeneral = "general";
     public const string TabLicense = "license";
 
     public SettingsWindow()
@@ -50,15 +54,6 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
         // open/close. Per-activation subscriptions are torn down on close.
         Opened += (_, _) => ViewModel?.WireActivation();
         Closed += (_, _) => ViewModel?.TeardownActivation();
-
-        // NavigationView selection drives page swap.
-        var nav = this.FindControl<FANavigationView>("MainNav");
-        if (nav is not null)
-        {
-            nav.SelectionChanged += OnNavSelectionChanged;
-            var statusItem = this.FindControl<FANavigationViewItem>("StatusNavItem");
-            if (statusItem is not null) nav.SelectedItem = statusItem;
-        }
     }
 
     public SettingsWindow(
@@ -135,35 +130,15 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
         if (IsVisible) ViewModel.WireActivation();
     }
 
-    /// <summary>Selects which page is active. Called by the tray menu.</summary>
+    /// <summary>
+    /// Selects which tab is active. Routed through the VM so the bound
+    /// nav buttons + page visibility flip together. Called by the tray
+    /// menu and the App layer's initial-tab handoff.
+    /// </summary>
     public void OpenTo(string tab)
     {
-        var nav = this.FindControl<FANavigationView>("MainNav");
-        if (nav is null) return;
-        FANavigationViewItem? target = tab switch
-        {
-            TabAbout => this.FindControl<FANavigationViewItem>("AboutNavItem"),
-            TabLicense => this.FindControl<FANavigationViewItem>("LicenseNavItem"),
-            _ => this.FindControl<FANavigationViewItem>("StatusNavItem"),
-        };
-        if (target is not null) nav.SelectedItem = target;
-        ShowPage(tab);
-    }
-
-    private void OnNavSelectionChanged(object? sender, FANavigationViewSelectionChangedEventArgs e)
-    {
-        if (e.SelectedItem is not FANavigationViewItem nvi) return;
-        ShowPage(nvi.Tag as string);
-    }
-
-    private void ShowPage(string? tag)
-    {
-        var statusPage = this.FindControl<Control>("StatusPage");
-        var aboutPage = this.FindControl<Control>("AboutPage");
-        var licensePage = this.FindControl<Control>("LicensePage");
-        if (statusPage is not null) statusPage.IsVisible = tag == TabStatus;
-        if (aboutPage is not null) aboutPage.IsVisible = tag == TabAbout;
-        if (licensePage is not null) licensePage.IsVisible = tag == TabLicense;
+        if (ViewModel is null) return;
+        ViewModel.CurrentTab = tab;
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);

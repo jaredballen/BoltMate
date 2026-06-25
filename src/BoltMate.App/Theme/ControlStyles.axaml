@@ -1,0 +1,104 @@
+<!--
+    ControlStyles.axaml
+    Global Style overrides for Avalonia controls — applied via App.axaml's
+    Application.Styles AFTER FluentAvaloniaTheme + FluentTheme so they
+    win on overlap. Sourcing brushes from DesignTokens means the same
+    selectors look right in both light + dark themes.
+
+    Covers:
+      • Button.primary  — branded primary (green-on-dark / dark-on-green).
+      • Button (default) — branded secondary (subtle bg + text).
+      • CheckBox — 19 px rounded square, brand-green fill when checked.
+
+    Brand "primary" no longer uses Classes="accent" anywhere — FA's
+    accent track follows the OS accent colour (typically blue on macOS),
+    which would clash with the green design system.
+-->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============== Primary button ============== -->
+    <Style Selector="Button.primary">
+        <Setter Property="Background"      Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
+        <Setter Property="Foreground"      Value="{DynamicResource PrimaryButtonForegroundBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius"    Value="8" />
+        <Setter Property="Padding"         Value="14,8" />
+        <Setter Property="FontSize"        Value="13" />
+        <Setter Property="FontWeight"      Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.primary:pointerover">
+        <!-- Brightness pop on hover. Avalonia doesn't expose CSS-like
+             filter:brightness so we re-bind to the same brush + lift
+             Opacity slightly. -->
+        <Setter Property="Background" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryButtonForegroundBrush}" />
+        <Setter Property="Opacity"    Value="0.92" />
+    </Style>
+    <Style Selector="Button.primary:pressed">
+        <Setter Property="Background" Value="{DynamicResource PrimaryButtonBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryButtonForegroundBrush}" />
+        <Setter Property="Opacity"    Value="0.84" />
+    </Style>
+    <Style Selector="Button.primary:disabled">
+        <Setter Property="Opacity" Value="0.5" />
+    </Style>
+
+    <!-- ============== Secondary (default) button ============== -->
+    <!-- Plain <Button> with no class picks up these styles. FA's Button
+         template TemplatedBindings Background + Foreground to the
+         control properties, so setting them here propagates through. -->
+    <Style Selector="Button">
+        <Setter Property="Background"      Value="{DynamicResource SecondaryButtonBackgroundBrush}" />
+        <Setter Property="Foreground"      Value="{DynamicResource SecondaryButtonForegroundBrush}" />
+        <Setter Property="BorderBrush"     Value="{DynamicResource SecondaryButtonStrokeBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius"    Value="8" />
+        <Setter Property="Padding"         Value="14,8" />
+        <Setter Property="FontSize"        Value="13" />
+        <Setter Property="FontWeight"      Value="Medium" />
+    </Style>
+    <!-- Hover: dim only. Background + Foreground stay inherited so
+         specialised Button classes (nav-item, primary) drive their own
+         hover color uncontested. Generic secondary buttons get the
+         normal-state SecondaryButtonBackgroundBrush + 0.85 opacity. -->
+    <Style Selector="Button:pointerover">
+        <Setter Property="Opacity"    Value="0.85" />
+    </Style>
+
+    <!-- ============== CheckBox ==============
+         Brand-green-when-checked, 19 px rounded square, dark check glyph.
+         Targeting the part names FluentAvalonia + Avalonia core agree on:
+         the "NormalRectangle" Border is the box surround. CheckGlyph is
+         the Path/check inside. -->
+    <Style Selector="CheckBox">
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+    <!-- Unchecked stroke: targets the box border directly so theme-aware
+         brushes win over FA's stock template-bound brushes. -->
+    <Style Selector="CheckBox /template/ Border#NormalRectangle">
+        <Setter Property="Background"  Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CheckBoxUncheckedBorderBrush}" />
+    </Style>
+    <Style Selector="CheckBox:pointerover /template/ Border#NormalRectangle">
+        <Setter Property="Background"  Value="{DynamicResource CheckBoxUncheckedHoverFillBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CheckBoxUncheckedBorderBrush}" />
+    </Style>
+    <Style Selector="CheckBox:checked /template/ Border#NormalRectangle">
+        <Setter Property="Background"  Value="{DynamicResource BrandGreenBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BrandGreenBrush}" />
+    </Style>
+    <Style Selector="CheckBox:checked:pointerover /template/ Border#NormalRectangle">
+        <Setter Property="Background"  Value="{DynamicResource BrandGreenBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BrandGreenBrush}" />
+    </Style>
+    <Style Selector="CheckBox:checked:pressed /template/ Border#NormalRectangle">
+        <Setter Property="Background"  Value="{DynamicResource BrandGreenBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BrandGreenBrush}" />
+    </Style>
+    <Style Selector="CheckBox:checked /template/ Path#CheckGlyph">
+        <Setter Property="Fill" Value="{DynamicResource BrandBlackTileBrush}" />
+    </Style>
+
+</Styles>

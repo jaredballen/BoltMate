@@ -141,9 +141,9 @@ public static class AutostartManager
                 <key>ThrottleInterval</key>
                 <integer>10</integer>
                 <key>StandardOutPath</key>
-                <string>{EscapeXml(logsDir)}/{EscapeXml(label)}.stdout.log</string>
+                <string>{EscapeXml(logsDir)}/boltmate-startup.log</string>
                 <key>StandardErrorPath</key>
-                <string>{EscapeXml(logsDir)}/{EscapeXml(label)}.stderr.log</string>
+                <string>{EscapeXml(logsDir)}/boltmate-startup.log</string>
               </dict>
             </plist>
             """;

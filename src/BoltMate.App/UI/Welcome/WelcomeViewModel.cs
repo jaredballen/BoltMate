@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
@@ -103,6 +104,8 @@ public sealed class WelcomeViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(ShowNotificationsPrimer));
             this.RaisePropertyChanged(nameof(ShowDone));
             this.RaisePropertyChanged(nameof(ShowLinux));
+            this.RaisePropertyChanged(nameof(ShowSpine));
+            UpdateStepStates();
         }
     }
 
@@ -114,6 +117,37 @@ public sealed class WelcomeViewModel : ViewModelBase
     public bool ShowNotificationsPrimer => CurrentPage == PageNotificationsPrimer;
     public bool ShowDone => CurrentPage == PageDone;
     public bool ShowLinux => CurrentPage == PageLinux;
+
+    // ---- Left-rail step tracker --------------------------------------
+    //
+    // Per-platform step layout matches the handoff:
+    //   • macOS: Welcome → Local Network → Input Monitoring → Notifications → Done  (5)
+    //   • Windows: Welcome → Windows Firewall → Notifications → Done                 (4)
+    //   • Linux: a single "Linux fast-path" item (rail still renders for parity)
+    //
+    // Steps are constructed once at VM creation; only the per-step State
+    // mutates as CurrentPage advances. The window's XAML binds the
+    // ItemsControl + StepCaption to these properties.
+
+    public ObservableCollection<WizardStep> Steps { get; } = new();
+
+    public const string StepKeyWelcome             = "welcome";
+    public const string StepKeyLocalNetwork        = "local-network";
+    public const string StepKeyInputMonitoring     = "input-monitoring";
+    public const string StepKeyFirewall            = "firewall";
+    public const string StepKeyNotifications       = "notifications";
+    public const string StepKeyDone                = "done";
+
+    private string _stepCaption = "";
+    /// <summary>"Step N of M" caption shown above the rail's step list.</summary>
+    public string StepCaption
+    {
+        get => _stepCaption;
+        private set => this.RaiseAndSetIfChanged(ref _stepCaption, value);
+    }
+
+    /// <summary>Spine on the Welcome step's left edge — design spec calls for the 3 px green stroke only there.</summary>
+    public bool ShowSpine => CurrentPage == PageWelcome;
 
     // ---- Bindable display state ---------------------------------------
 
@@ -232,6 +266,9 @@ public sealed class WelcomeViewModel : ViewModelBase
         _notifications = notifications;
         _isFirstRun = isFirstRun;
         _log = log ?? NullLogger.Instance;
+
+        BuildSteps();
+        UpdateStepStates();
 
         GetStartedCommand = ReactiveCommand.CreateFromTask(OnGetStartedAsync);
         NetworkPrimerGrantCommand = ReactiveCommand.CreateFromTask(() =>
@@ -608,6 +645,80 @@ public sealed class WelcomeViewModel : ViewModelBase
         WelcomeCompleted?.Invoke();
         CloseRequested?.Invoke();
     }
+
+    // ---- Step tracker ------------------------------------------------
+
+    private void BuildSteps()
+    {
+        Steps.Clear();
+        if (OperatingSystem.IsMacOS())
+        {
+            Steps.Add(new WizardStep(StepKeyWelcome,         "Welcome"));
+            Steps.Add(new WizardStep(StepKeyLocalNetwork,    "Local Network"));
+            Steps.Add(new WizardStep(StepKeyInputMonitoring, "Input Monitoring"));
+            Steps.Add(new WizardStep(StepKeyNotifications,   "Notifications"));
+            Steps.Add(new WizardStep(StepKeyDone,            "Done"));
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            Steps.Add(new WizardStep(StepKeyWelcome,       "Welcome"));
+            Steps.Add(new WizardStep(StepKeyFirewall,      "Windows Firewall"));
+            Steps.Add(new WizardStep(StepKeyNotifications, "Notifications"));
+            Steps.Add(new WizardStep(StepKeyDone,          "Done"));
+        }
+        else
+        {
+            // Linux: the wizard short-circuits to the fast-path page; we
+            // still render a single rail entry so the layout doesn't
+            // collapse.
+            Steps.Add(new WizardStep(StepKeyDone, "Linux"));
+        }
+    }
+
+    /// <summary>
+    /// Recomputes each step's <see cref="WizardStepState"/> and the
+    /// "Step N of M" caption from the current page. Called every time
+    /// <see cref="CurrentPage"/> changes (including the initial set in
+    /// the ctor).
+    /// </summary>
+    private void UpdateStepStates()
+    {
+        if (Steps.Count == 0) return;
+        var currentKey = MapPageToStepKey(CurrentPage);
+        var activeIdx = -1;
+        for (var i = 0; i < Steps.Count; i++)
+            if (Steps[i].Key == currentKey) { activeIdx = i; break; }
+
+        for (var i = 0; i < Steps.Count; i++)
+        {
+            var state = activeIdx < 0
+                ? WizardStepState.Upcoming
+                : i < activeIdx ? WizardStepState.Done
+                : i == activeIdx ? WizardStepState.Active
+                : WizardStepState.Upcoming;
+            Steps[i].State = state;
+        }
+
+        // Caption shows the 1-based index of the active step, or stays
+        // blank when nothing's active (e.g. Linux fallback page).
+        StepCaption = activeIdx >= 0
+            ? $"Step {activeIdx + 1} of {Steps.Count}"
+            : "";
+    }
+
+    private static string MapPageToStepKey(string page) => page switch
+    {
+        PageWelcome                    => StepKeyWelcome,
+        // Both primer and refusal share their permission's step.
+        PageNetworkPrimer or PageNetworkRefusal
+            => OperatingSystem.IsWindows() ? StepKeyFirewall : StepKeyLocalNetwork,
+        PageInputMonitoringPrimer or PageInputMonitoringRefusal
+            => StepKeyInputMonitoring,
+        PageNotificationsPrimer        => StepKeyNotifications,
+        PageDone                       => StepKeyDone,
+        PageLinux                      => StepKeyDone,
+        _                              => "",
+    };
 
     private async Task ApplyAutostartFromToggleAsync()
     {
