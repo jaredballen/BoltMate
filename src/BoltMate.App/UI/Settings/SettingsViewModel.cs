@@ -545,32 +545,11 @@ public sealed class SettingsViewModel : ViewModelBase
                 if (!d.LinkUp) continue;
                 any = true;
 
-                var battery = d.LastKnownBattery is { } b
-                    ? (b.Percent.HasValue
-                        ? $"{b.Percent}%{(b.Charging == true ? " (charging)" : "")}"
-                        : "?")
-                    : null;
-
-                var currentHostText = "";
-                if (d.LastKnownCurrentHost is byte cur)
-                {
-                    var hostName = d.HostBindings.TryGetValue(cur, out var bind)
-                                   && !string.IsNullOrEmpty(bind.ReceiverName)
-                        ? bind.ReceiverName!
-                        : "(unnamed)";
-                    currentHostText = $"H{cur + 1} → {hostName}";
-                }
-
-                var subParts = new[]
-                {
-                    string.IsNullOrEmpty(currentHostText) ? null : $"current {currentHostText}",
-                    battery is null ? null : $"battery {battery}",
-                }.Where(s => !string.IsNullOrEmpty(s)).ToArray();
-
                 LocalDevices.Add(new LocalDeviceRow
                 {
-                    Header = $"{d.DisplayName} · wpid 0x{d.Wpid:X4}",
-                    SubLine = string.Join("   ", subParts!),
+                    Name = d.DisplayName,
+                    BatteryPercent = d.LastKnownBattery?.Percent,
+                    IsCharging = d.LastKnownBattery?.Charging == true,
                 });
             }
         }
@@ -643,13 +622,13 @@ public sealed class SettingsViewModel : ViewModelBase
                     var name = string.IsNullOrEmpty(od.Name) ? "(no name)" : od.Name;
                     deviceLines.Add(new PeerDeviceRow
                     {
-                        Line = $"  ● slot {od.Slot} · wpid 0x{od.WpidHex} · {name}",
+                        Name = name,
+                        BatteryPercent = od.Battery?.Percent,
+                        IsCharging = od.Battery?.ExternalPower == true,
                     });
                 }
             }
         }
-        if (deviceLines.Count == 0)
-            deviceLines.Add(new PeerDeviceRow { Line = "  (no devices online on this peer)" });
 
         return new PeerRow
         {
@@ -796,11 +775,7 @@ public sealed class SettingsViewModel : ViewModelBase
 
     // ---- Data shapes ---------------------------------------------------
 
-    public sealed class LocalDeviceRow
-    {
-        public string Header { get; set; } = "";
-        public string SubLine { get; set; } = "";
-    }
+    public sealed class LocalDeviceRow : DeviceRow { }
 
     public sealed class PeerRow
     {
@@ -810,8 +785,37 @@ public sealed class SettingsViewModel : ViewModelBase
         public List<PeerDeviceRow> Devices { get; set; } = new();
     }
 
-    public sealed class PeerDeviceRow
+    public sealed class PeerDeviceRow : DeviceRow { }
+
+    /// <summary>Shared row shape for both local + peer device entries. Matches
+    /// the design-handoff §Status row: device name on the left + battery
+    /// indicator on the right (pill icon, percent text, optional charging
+    /// bolt). When BatteryPercent is null the right side is hidden entirely.
+    /// </summary>
+    public abstract class DeviceRow
     {
-        public string Line { get; set; } = "";
+        public string Name { get; set; } = "";
+
+        /// <summary>0..100, or null when we don't know.</summary>
+        public int? BatteryPercent { get; set; }
+
+        public bool IsCharging { get; set; }
+
+        public bool HasBattery => BatteryPercent.HasValue;
+
+        public string PercentText => BatteryPercent is { } p ? $"{p}%" : "";
+
+        /// <summary>Width in pixels of the inner fill bar — 0..18px (scaled
+        /// from the percent). Bound directly by the row template.</summary>
+        public double BatteryFillWidth => BatteryPercent is { } p
+            ? Math.Max(2, 18.0 * (p / 100.0))
+            : 0;
+
+        /// <summary>Resource key for the row's accent brush. Charging →
+        /// green; not-charging → muted secondary. Low-battery treatment
+        /// can layer on later.</summary>
+        public string AccentBrushKey => IsCharging
+            ? "BatteryChargingFillBrush"
+            : "TextSecondaryBrush";
     }
 }

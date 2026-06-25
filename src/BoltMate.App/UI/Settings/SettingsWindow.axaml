@@ -218,15 +218,61 @@
                                                 <Border Padding="12,10"
                                                         Background="{DynamicResource RowBackgroundBrush}"
                                                         CornerRadius="{StaticResource RowCornerRadius}">
-                                                    <StackPanel Spacing="2">
-                                                        <TextBlock Text="{Binding Header}"
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="{Binding Name}"
                                                                    FontWeight="SemiBold" FontSize="13.5"
+                                                                   VerticalAlignment="Center"
                                                                    Foreground="{DynamicResource TextPrimaryBrush}" />
-                                                        <TextBlock Text="{Binding SubLine}"
-                                                                   FontSize="11"
-                                                                   FontFamily="{StaticResource MonoFontFamily}"
-                                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                    </StackPanel>
+                                                        <StackPanel Grid.Column="1"
+                                                                    Orientation="Horizontal" Spacing="6"
+                                                                    VerticalAlignment="Center"
+                                                                    IsVisible="{Binding HasBattery}">
+                                                            <!-- Idle pill (grey) -->
+                                                            <Border Width="26" Height="13"
+                                                                    CornerRadius="3"
+                                                                    BorderBrush="{DynamicResource TextSecondaryBrush}"
+                                                                    BorderThickness="1.5"
+                                                                    Padding="2,0"
+                                                                    IsVisible="{Binding !IsCharging}">
+                                                                <Border Width="{Binding BatteryFillWidth}"
+                                                                        Height="7"
+                                                                        HorizontalAlignment="Left"
+                                                                        VerticalAlignment="Center"
+                                                                        CornerRadius="1.5"
+                                                                        Background="{DynamicResource TextSecondaryBrush}" />
+                                                            </Border>
+                                                            <!-- Charging pill (green) -->
+                                                            <Border Width="26" Height="13"
+                                                                    CornerRadius="3"
+                                                                    BorderBrush="{DynamicResource BatteryChargingFillBrush}"
+                                                                    BorderThickness="1.5"
+                                                                    Padding="2,0"
+                                                                    IsVisible="{Binding IsCharging}">
+                                                                <Border Width="{Binding BatteryFillWidth}"
+                                                                        Height="7"
+                                                                        HorizontalAlignment="Left"
+                                                                        VerticalAlignment="Center"
+                                                                        CornerRadius="1.5"
+                                                                        Background="{DynamicResource BatteryChargingFillBrush}" />
+                                                            </Border>
+                                                            <TextBlock Text="{Binding PercentText}"
+                                                                       FontSize="12.5"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                                       IsVisible="{Binding !IsCharging}" />
+                                                            <TextBlock Text="{Binding PercentText}"
+                                                                       FontSize="12.5"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource BatteryChargingTextBrush}"
+                                                                       IsVisible="{Binding IsCharging}" />
+                                                            <TextBlock Text="&#x26A1;"
+                                                                       FontSize="13"
+                                                                       VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource BatteryChargingFillBrush}"
+                                                                       IsVisible="{Binding IsCharging}" />
+                                                        </StackPanel>
+                                                    </Grid>
                                                 </Border>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -452,17 +498,80 @@
                                                                    FontSize="11"
                                                                    FontFamily="{StaticResource MonoFontFamily}"
                                                                    Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                        <ItemsControl ItemsSource="{Binding Devices}" Margin="6,2,0,0">
+                                                        <ItemsControl ItemsSource="{Binding Devices}" Margin="0,6,0,0">
+                                                            <ItemsControl.ItemsPanel>
+                                                                <ItemsPanelTemplate>
+                                                                    <StackPanel Spacing="6" />
+                                                                </ItemsPanelTemplate>
+                                                            </ItemsControl.ItemsPanel>
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate DataType="vm:SettingsViewModel+PeerDeviceRow">
-                                                                    <TextBlock Text="{Binding Line}"
-                                                                               FontSize="11"
-                                                                               FontFamily="{StaticResource MonoFontFamily}"
-                                                                               Foreground="{DynamicResource TextSecondaryBrush}"
-                                                                               Margin="0,1" />
+                                                                    <Border Padding="12,10"
+                                                                            Background="{DynamicResource RowBackgroundBrush}"
+                                                                            CornerRadius="{StaticResource RowCornerRadius}">
+                                                                        <Grid ColumnDefinitions="*,Auto">
+                                                                            <TextBlock Grid.Column="0"
+                                                                                       Text="{Binding Name}"
+                                                                                       FontWeight="SemiBold" FontSize="13.5"
+                                                                                       VerticalAlignment="Center"
+                                                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                            <StackPanel Grid.Column="1"
+                                                                                        Orientation="Horizontal" Spacing="6"
+                                                                                        VerticalAlignment="Center"
+                                                                                        IsVisible="{Binding HasBattery}">
+                                                                                <Border Width="26" Height="13"
+                                                                                        CornerRadius="3"
+                                                                                        BorderBrush="{DynamicResource TextSecondaryBrush}"
+                                                                                        BorderThickness="1.5"
+                                                                                        Padding="2,0"
+                                                                                        IsVisible="{Binding !IsCharging}">
+                                                                                    <Border Width="{Binding BatteryFillWidth}"
+                                                                                            Height="7"
+                                                                                            HorizontalAlignment="Left"
+                                                                                            VerticalAlignment="Center"
+                                                                                            CornerRadius="1.5"
+                                                                                            Background="{DynamicResource TextSecondaryBrush}" />
+                                                                                </Border>
+                                                                                <Border Width="26" Height="13"
+                                                                                        CornerRadius="3"
+                                                                                        BorderBrush="{DynamicResource BatteryChargingFillBrush}"
+                                                                                        BorderThickness="1.5"
+                                                                                        Padding="2,0"
+                                                                                        IsVisible="{Binding IsCharging}">
+                                                                                    <Border Width="{Binding BatteryFillWidth}"
+                                                                                            Height="7"
+                                                                                            HorizontalAlignment="Left"
+                                                                                            VerticalAlignment="Center"
+                                                                                            CornerRadius="1.5"
+                                                                                            Background="{DynamicResource BatteryChargingFillBrush}" />
+                                                                                </Border>
+                                                                                <TextBlock Text="{Binding PercentText}"
+                                                                                           FontSize="12.5"
+                                                                                           VerticalAlignment="Center"
+                                                                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                                                                           IsVisible="{Binding !IsCharging}" />
+                                                                                <TextBlock Text="{Binding PercentText}"
+                                                                                           FontSize="12.5"
+                                                                                           VerticalAlignment="Center"
+                                                                                           Foreground="{DynamicResource BatteryChargingTextBrush}"
+                                                                                           IsVisible="{Binding IsCharging}" />
+                                                                                <TextBlock Text="&#x26A1;"
+                                                                                           FontSize="13"
+                                                                                           VerticalAlignment="Center"
+                                                                                           Foreground="{DynamicResource BatteryChargingFillBrush}"
+                                                                                           IsVisible="{Binding IsCharging}" />
+                                                                            </StackPanel>
+                                                                        </Grid>
+                                                                    </Border>
                                                                 </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
                                                         </ItemsControl>
+                                                        <!-- Empty-state row when this peer has no devices linked. -->
+                                                        <TextBlock Text="No devices linked up on this computer right now."
+                                                                   FontSize="12"
+                                                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                                                   Margin="0,6,0,0"
+                                                                   IsVisible="{Binding !Devices.Count}" />
                                                     </StackPanel>
                                                 </Border>
                                             </DataTemplate>
