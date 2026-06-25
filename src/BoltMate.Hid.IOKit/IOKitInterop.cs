@@ -32,6 +32,9 @@ public static class IOKitInterop
     public static extern void CFRelease(IntPtr cf);
 
     [DllImport(CoreFoundation)]
+    public static extern IntPtr CFRetain(IntPtr cf);
+
+    [DllImport(CoreFoundation)]
     public static extern IntPtr CFStringCreateWithCString(IntPtr alloc, [MarshalAs(UnmanagedType.LPStr)] string cStr, uint encoding);
 
     [DllImport(CoreFoundation)]

@@ -187,6 +187,9 @@ internal sealed class IOKitReceiverConnection : IReceiverConnection
         if (_device != IntPtr.Zero)
         {
             try { IOKitInterop.IOHIDDeviceClose(_device, IOKitInterop.OptionsNone); } catch { /* swallow */ }
+            // Match the CFRetain that IOKitReceiverTransport.Open did so
+            // the ref outlived the fresh manager that produced it.
+            try { IOKitInterop.CFRelease(_device); } catch { /* swallow */ }
         }
 
         if (_inboundBuffer != IntPtr.Zero)

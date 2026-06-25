@@ -312,7 +312,7 @@
                                                 CornerRadius="9"
                                                 HorizontalAlignment="Center"
                                                 Background="{DynamicResource RowBackgroundBrush}">
-                                            <ui:FASymbolIcon Symbol="DisableUpdates" FontSize="18"
+                                            <ui:FASymbolIcon Symbol="Important" FontSize="18"
                                                              Foreground="{DynamicResource TextTertiaryBrush}"
                                                              HorizontalAlignment="Center"
                                                              VerticalAlignment="Center" />
