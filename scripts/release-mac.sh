@@ -153,14 +153,28 @@ if [[ "$NO_INSTALL" = 0 ]]; then
         --remove /Applications/BoltMate.app/Contents/MacOS/BoltMate 2>/dev/null || true
 
     echo "==> Flushing Notification Center icon cache"
-    # NotificationCenter caches the bundle icon at first banner display
-    # and won't re-read until restarted. iconservicesagent + iconservicesd
-    # hold the user-level Icon Services cache that resolves CFBundleIconFile.
-    # Bouncing all three so the next notification picks up the new .icns.
+    # Mac caches the bundle icon in THREE places, all need to go for
+    # Notification Center banners to pick up a new .icns:
+    #   1. ~/Library/Caches/com.apple.iconservices* — user-level
+    #   2. /private/var/folders/*/*/C/com.apple.iconservices.store —
+    #      per-user temp-dir cache (the most-often missed one;
+    #      iconservicesd writes here under getconf DARWIN_USER_CACHE_DIR)
+    #   3. The running iconservicesd / iconservicesagent process memory
+    # NotificationCenter + ControlCenter + Dock hold rendered icons too.
+    # Bouncing them forces re-resolution on the next banner.
     rm -rf ~/Library/Caches/com.apple.iconservices ~/Library/Caches/com.apple.iconservices.store 2>/dev/null || true
+    USER_CACHE_DIR="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null || true)"
+    if [[ -n "$USER_CACHE_DIR" ]]; then
+        rm -rf "$USER_CACHE_DIR/com.apple.iconservices.store" 2>/dev/null || true
+        rm -rf "$USER_CACHE_DIR/com.apple.IconServices" 2>/dev/null || true
+    fi
+    # Belt + braces: scan every user's /private/var/folders for the
+    # store (covers the case where DARWIN_USER_CACHE_DIR isn't set).
+    find /private/var/folders -name "com.apple.iconservices.store" -maxdepth 5 -exec rm -rf {} + 2>/dev/null || true
     killall iconservicesagent 2>/dev/null || true
     killall iconservicesd 2>/dev/null || true
     killall NotificationCenter 2>/dev/null || true
+    killall ControlCenter 2>/dev/null || true
 
     echo "==> Nudging icon services + Dock/Finder so the new bundle's icon repaints"
     # macOS caches Finder/Dock icons aggressively by bundle path inode +
