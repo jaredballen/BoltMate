@@ -126,4 +126,16 @@ foreach ($guid in $activatorGuids) {
     Get-ChildItem $sdkAssets -Filter "$guid*" -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue
 }
 
+Write-Host '==> Flushing shell icon cache + restarting explorer'
+# Win taskbar / Start menu cache icons by exe path. A reinstall with a
+# new embedded .ico bumps the file mod time but the shell keeps showing
+# the cached icon until the cache dbs are deleted. Bounce Explorer so
+# the next launch reads fresh icons from the rebuilt .exe.
+Get-Process explorer -EA SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 1
+Remove-Item -Force "$env:LOCALAPPDATA\IconCache.db" -EA SilentlyContinue
+Remove-Item -Force "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*.db" -EA SilentlyContinue
+Remove-Item -Force "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -EA SilentlyContinue
+Start-Process explorer
+
 Write-Host '==> Cleanup complete'

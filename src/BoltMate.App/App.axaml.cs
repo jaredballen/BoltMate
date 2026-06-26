@@ -2,6 +2,7 @@ using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -126,6 +127,24 @@ public partial class App : Application
         // tab. Owns a 2s polling timer; pushes deltas via Rx observables.
         _permissions = Services.GetRequiredService<IPermissionsService>();
 
+        // Paint the tray icon to match the current OS theme right away.
+        // TrayIconStatusController only instantiates inside ContinueBootstrap
+        // — during first-run welcome that hasn't happened yet, so without
+        // this the XAML-default `tray-icon-light.png` (black bolt) stays
+        // shown even on a dark Win taskbar or dark Mac menubar.
+        try
+        {
+            var initialTrays = TrayIcon.GetIcons(this);
+            if (initialTrays is not null && initialTrays.Count > 0)
+            {
+                initialTrays[0].Icon = TrayIconStatusController.LoadNeutralIcon();
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Initial tray icon paint failed (non-fatal)");
+        }
+
         // ====================================================================
         // First-run gate
         // ====================================================================
@@ -235,6 +254,25 @@ public partial class App : Application
                 .Subscribe(_ => _permissions.InputMonitoring.AcknowledgeExternalGrant()));
         }
 
+        // macOS USB hot-plug — start the IOServiceAddMatchingNotification
+        // watcher and route its signal to ReceiverManager.Refresh() so
+        // attaches / detaches surface sub-second instead of waiting for
+        // the 2s timer tick. Refresh runs on the .NET thread pool, NOT on
+        // the notifier's CFRunLoop thread (the notifier callback itself
+        // does zero IOKit work — see UsbBoltNotifier xmldoc + memory).
+        if (OperatingSystem.IsMacOS())
+        {
+            var usbNotifier = Services.GetRequiredService<BoltMate.Hid.IOKit.UsbBoltNotifier>();
+            usbNotifier.Start();
+            _disposables.Add(usbNotifier.Changes
+                .Subscribe(_ => Task.Run(() =>
+                {
+                    try { _manager.Refresh(); }
+                    catch (Exception ex) { log.LogWarning(ex, "Refresh on USB notification failed"); }
+                })));
+            _disposables.Add(usbNotifier);
+        }
+
         // One manager-scoped SwitcherService handles fan-out across every
         // attached receiver. Matches siblings by host friendly name (the
         // OS hostname recorded in each device's host slot at pairing time).
@@ -323,6 +361,7 @@ public partial class App : Application
         {
             var status = snapshot.IsAlerting ? OverallStatus.AnyDenied : OverallStatus.AllGood;
             _trayStatus?.SetPermissionStatus(status);
+            _trayStatus?.SetHealth(snapshot);
             _trayController?.SetPermissionStatus(status);
         }));
 

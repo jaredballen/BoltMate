@@ -32,6 +32,9 @@ public static class IOKitInterop
     public static extern void CFRelease(IntPtr cf);
 
     [DllImport(CoreFoundation)]
+    public static extern IntPtr CFRetain(IntPtr cf);
+
+    [DllImport(CoreFoundation)]
     public static extern IntPtr CFStringCreateWithCString(IntPtr alloc, [MarshalAs(UnmanagedType.LPStr)] string cStr, uint encoding);
 
     [DllImport(CoreFoundation)]
@@ -76,6 +79,56 @@ public static class IOKitInterop
     [DllImport(IOKit)]
     public static extern IntPtr IOHIDManagerCopyDevices(IntPtr manager);
 
+    // ---------- IOKit / IOService (USB-level notifications) ----------
+    //
+    // Used by UsbBoltNotifier as a hot-plug signal source. The lifecycle:
+    //   1. IONotificationPortCreate → IntPtr port
+    //   2. IONotificationPortGetRunLoopSource → CFRunLoopSourceRef
+    //   3. CFRunLoopAddSource on a thread's runloop
+    //   4. IOServiceAddMatchingNotification(port, "IOServiceFirstMatch", …)
+    //      with a CFDictionary built from IOServiceMatching("IOUSBDevice")
+    //      and idVendor / idProduct
+    //   5. Drain the returned iterator once (arms future notifications)
+    //   6. Callback fires on the runloop thread; drain iterator again
+    //
+    // Callback receives io_service_t (uint), NOT IOHIDDeviceRef — different
+    // IOKit object class, different internal locking. No os_unfair_lock
+    // corruption surface as long as we don't read properties from the
+    // io_service_t in the callback.
+
+    public delegate void IOServiceMatchingCallback(IntPtr refCon, uint iterator);
+
+    [DllImport(IOKit)]
+    public static extern IntPtr IOServiceMatching([MarshalAs(UnmanagedType.LPStr)] string name);
+
+    [DllImport(IOKit)]
+    public static extern IntPtr IONotificationPortCreate(IntPtr masterPort);
+
+    [DllImport(IOKit)]
+    public static extern void IONotificationPortDestroy(IntPtr notify);
+
+    [DllImport(IOKit)]
+    public static extern IntPtr IONotificationPortGetRunLoopSource(IntPtr notify);
+
+    [DllImport(IOKit)]
+    public static extern int IOServiceAddMatchingNotification(
+        IntPtr notifyPort,
+        [MarshalAs(UnmanagedType.LPStr)] string notificationType,
+        IntPtr matching,
+        IOServiceMatchingCallback callback,
+        IntPtr refCon,
+        out uint notification);
+
+    [DllImport(IOKit)]
+    public static extern uint IOIteratorNext(uint iterator);
+
+    [DllImport(IOKit)]
+    public static extern int IOObjectRelease(uint obj);
+
+    public const string IOServiceFirstMatch = "IOServiceFirstMatch";
+    public const string IOServiceTerminate = "IOServiceTerminate";
+    public const string IOUSBDeviceClassName = "IOUSBDevice";
+
     // ---------- IOKit / IOHIDDevice ----------
 
     [DllImport(IOKit)]
@@ -118,6 +171,12 @@ public static class IOKitInterop
 
     [DllImport(CoreFoundation)]
     public static extern void CFRunLoopStop(IntPtr rl);
+
+    [DllImport(CoreFoundation)]
+    public static extern void CFRunLoopAddSource(IntPtr rl, IntPtr source, IntPtr mode);
+
+    [DllImport(CoreFoundation)]
+    public static extern void CFRunLoopRemoveSource(IntPtr rl, IntPtr source, IntPtr mode);
 
     /// <summary>kCFRunLoopDefaultMode — symbol from CoreFoundation. Loaded via dlsym.</summary>
     public static IntPtr CFRunLoopDefaultMode { get; } = LoadCFSymbol("kCFRunLoopDefaultMode");

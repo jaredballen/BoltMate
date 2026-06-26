@@ -91,14 +91,66 @@ public sealed class DeviceEnricher : IDeviceEnricher
             try { await receiver.GetReceiverDetailsAsync(); }
             catch (Exception ex) { _logger.LogDebug(ex, "GetReceiverDetailsAsync failed (non-fatal)"); }
 
-            // Per-slot metadata for every possible Bolt slot — picks up offline
-            // devices' names from receiver flash too.
+            // Per-slot pass. For each possible Bolt slot:
+            //   1. Read pairing info from receiver flash (works even if the
+            //      device itself is asleep — metadata only, no RF traffic).
+            //   2. If a paired device is in this slot but not currently
+            //      link-up (DJ_PAIRING hasn't fired since attach), try to
+            //      wake it with a single HID++ 2.0 short request. Light-
+            //      sleep devices answer; deep-sleep devices time out and
+            //      stay marked as paired-but-offline.
             for (byte s = HidPpConstants.DeviceIndexFirstSlot; s <= HidPpConstants.DeviceIndexLastSlot; s++)
+            {
                 await receiver.ReadSlotMetadataAsync(s);
+                await TryWakeSlotAsync(receiver, s);
+            }
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Receiver enrichment pass surfaced an exception (non-fatal)");
+        }
+    }
+
+    /// <summary>
+    /// If the slot has paired metadata (WPID != 0) but isn't currently
+    /// link-up, send a short HID++ 2.0 IRoot request as a wake ping. The
+    /// receiver queues the packet on the RF channel; light-sleep devices
+    /// pick it up on their next wake window and respond. A successful
+    /// response means the device is reachable: we flip <c>LinkUp</c> and
+    /// fire the full slot enrichment (features + heavy reads). A failure
+    /// (timeout / HidPpException) means deep-sleep — the slot stays
+    /// paired-but-offline until physical user input wakes the device,
+    /// which triggers a normal DJ_PAIRING link-up notification.
+    /// </summary>
+    private async System.Threading.Tasks.Task TryWakeSlotAsync(BoltReceiver receiver, byte slot)
+    {
+        var device = receiver.TryGetDevice(slot);
+        if (device is null) return;
+        if (device.Wpid == 0) return;           // slot is empty, nothing to wake
+        if (device.LinkUp) return;              // already linked, normal flow handles it
+
+        try
+        {
+            var lookup = await receiver.Root.GetFeatureAsync(slot, FeatureIds.DeviceInfo);
+            if (lookup is null)
+            {
+                // Device responded but reported no DeviceInfo feature.
+                // Still a successful ping — slot is reachable.
+                _logger.LogInformation("Slot {Slot} ping responded (no DeviceInfo) — marking linked", slot);
+            }
+            else
+            {
+                _logger.LogInformation("Slot {Slot} woken via ping — DeviceInfo index 0x{Idx:X2}", slot, lookup.Index);
+            }
+
+            device.LinkUp = true;
+            receiver.RefreshSlot(slot);
+            _ = EnrichSlotAsync(receiver, slot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation("Slot {Slot} wake ping failed — paired but offline ({Reason})",
+                slot, ex.GetType().Name);
         }
     }
 

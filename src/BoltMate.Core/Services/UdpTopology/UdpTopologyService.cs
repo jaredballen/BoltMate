@@ -180,11 +180,9 @@ public sealed class UdpTopologyService : IUdpTopologyService
         var endpoint = $"{_settings.MulticastGroup}:{_settings.Port}";
         var initial = (_permGranted, _nicAvailable) switch
         {
-            (false, _) => TransportHealth.PermissionDenied(endpoint,
-                "Local Network permission not yet granted — UDP topology parked"),
-            (_, false) => TransportHealth.Offline(endpoint,
-                "no usable network interface — UDP topology parked"),
-            _          => TransportHealth.Unknown(endpoint, "no broadcasts emitted yet"),
+            (false, _) => TransportHealth.PermissionDenied(endpoint),
+            (_, false) => TransportHealth.Offline(endpoint),
+            _          => TransportHealth.Starting(endpoint),
         };
         _udpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(initial);
         _lastUdpState = initial.State;
@@ -192,7 +190,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         _disposables.Add(_udpHealth);
     }
 
-    private TransportState _lastUdpState = TransportState.Unknown;
+    private TransportState _lastUdpState = TransportState.Starting;
 
     private void EmitUdpHealth(TransportState state, string detail)
     {
@@ -212,7 +210,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         var outcomes = _recentOutcomes.ToArray();
         if (outcomes.Length < 3)
         {
-            EmitUdpHealth(TransportState.Unknown, $"waiting for outbound to settle ({outcomes.Length}/3)");
+            EmitUdpHealth(TransportState.Starting, "Starting service");
             return;
         }
         var echoed = 0;
@@ -220,14 +218,17 @@ public sealed class UdpTopologyService : IUdpTopologyService
         var rate = (double)echoed / outcomes.Length;
         if (rate >= HealthyEchoRateThreshold)
         {
-            EmitUdpHealth(TransportState.Healthy,
-                $"{echoed}/{outcomes.Length} recent broadcasts echoed back ({rate * 100:F0}%)");
+            // Heuristic counters stay in the log; UI shows the label only.
+            _logger.LogDebug("UDP healthy: {Echoed}/{Total} recent broadcasts echoed ({Rate:F0}%)",
+                echoed, outcomes.Length, rate * 100);
+            EmitUdpHealth(TransportState.Healthy, string.Empty);
         }
         else
         {
+            _logger.LogDebug("UDP blocked: {Echoed}/{Total} recent broadcasts echoed ({Rate:F0}%)",
+                echoed, outcomes.Length, rate * 100);
             EmitUdpHealth(TransportState.Blocked,
-                $"only {echoed}/{outcomes.Length} recent broadcasts echoed back. " +
-                "Multicast loopback is being dropped — check Local Network permission (macOS) or firewall inbound rule (Windows).");
+                "Multicast traffic is being dropped — check your firewall.");
         }
     }
 
@@ -297,7 +298,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         _nicSubscription?.Dispose();
         _nicSubscription = null;
         StopLoopsAndCloseSocket();
-        EmitUdpHealth(TransportState.Unknown, "topology disabled");
+        EmitUdpHealth(TransportState.Disabled, "Disabled");
     }
 
     private void ReevaluateGate()
@@ -316,12 +317,11 @@ public sealed class UdpTopologyService : IUdpTopologyService
         if (!_permGranted)
         {
             EmitUdpHealth(TransportState.PermissionDenied,
-                "Local Network permission not granted — UDP topology parked");
+                "Local Network permission required");
         }
         else
         {
-            EmitUdpHealth(TransportState.Offline,
-                "no usable network interface — UDP topology parked");
+            EmitUdpHealth(TransportState.Offline, "No network connection");
         }
     }
 

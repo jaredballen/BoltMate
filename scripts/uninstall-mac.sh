@@ -28,11 +28,12 @@ done
 say() { echo "→ $*"; }
 
 say "Killing running processes"
-# Match anywhere "BoltMate" appears in the command line — covers the new
-# "BoltMate" binary inside Contents/MacOS as well as legacy "BoltMate.App"
-# paths during the transition.
-pkill -f BoltMate 2>/dev/null || true
-pkill -f boltmate 2>/dev/null || true
+# Exact-name match only — `pkill -f BoltMate` would also kill any shell
+# whose argv path contains "BoltMate" (e.g. this very script when run
+# from /Users/.../BoltMate/scripts/), self-terminating with SIGTERM.
+# The bundle exec is named "BoltMate"; the CLI is "boltmate".
+pkill -x BoltMate 2>/dev/null || true
+pkill -x boltmate 2>/dev/null || true
 sleep 1
 
 say "Unloading LaunchAgents"

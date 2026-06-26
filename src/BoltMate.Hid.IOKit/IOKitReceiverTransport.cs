@@ -6,30 +6,30 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BoltMate.Hid.IOKit;
 
 /// <summary>
-/// macOS-only transport that bypasses libhidapi and talks to IOKit
-/// (IOHIDManager + IOHIDDevice) directly. Required because libhidapi's
-/// <c>hid_darwin_set_open_exclusive(0)</c> doesn't actually deliver shared
-/// access on recent macOS — concurrent opens still fail with
-/// <c>kIOReturnExclusiveAccess</c>, and worse, holding the management
-/// interface open via libhidapi disables device-firmware button handling
-/// (wheel-mode toggle, gesture buttons). IOKit-direct with explicit
-/// <c>kIOHIDOptionsTypeNone</c> preserves shared access and firmware
-/// behaviour.
+/// macOS-only transport that talks to IOKit (IOHIDManager + IOHIDDevice)
+/// directly. Required because libhidapi's <c>hid_darwin_set_open_exclusive(0)</c>
+/// no longer delivers shared access on recent macOS, and holding the
+/// management interface via libhidapi disables device-firmware buttons.
+/// IOKit-direct with <c>kIOHIDOptionsTypeNone</c> preserves shared access
+/// and firmware behaviour.
+///
+/// HOT-PLUG STRATEGY — see reference_iohidmanager_threading memory for the
+/// full story. We've conclusively failed to use IOHIDManager hot-plug
+/// callbacks from .NET (every attempt crashes with
+/// <c>os_unfair_lock is corrupt</c>). So instead: a fresh IOHIDManager is
+/// created, opened, and CopyDevices'd on every Enumerate call. No
+/// persistent manager, no scheduling, no callbacks. The assumption being
+/// tested is that a brand-new just-opened manager reports current device
+/// state (vs the stale snapshot a long-lived one returns). If true,
+/// hot-plug detection works at poll-interval granularity (~2s).
 /// </summary>
 public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<IOKitReceiverTransport> _logger;
-    private readonly IntPtr _manager;
-    // Permission gate. Returns true once the OS has granted Input
-    // Monitoring. We never call IOHIDManagerOpen until it does, because
-    // doing so under TCC=Unknown triggers the system prompt — which we
-    // want to happen at a moment the wizard has just primed the user
-    // for, not at process start.
     private readonly Func<bool> _isInputMonitoringGranted;
     private readonly IDisposable? _grantSubscription;
-    private bool _managerOpen;
-    private readonly object _openLock = new();
+    private bool _disposed;
 
     public IOKitReceiverTransport(
         ILoggerFactory? loggerFactory = null,
@@ -41,90 +41,72 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
 
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger = _loggerFactory.CreateLogger<IOKitReceiverTransport>();
-        // No gate wired → assume granted (legacy / Cli / tests). Production
-        // app wires _permissions.InputMonitoring.IsGranted at composition.
         _isInputMonitoringGranted = isInputMonitoringGranted ?? (static () => true);
-        // Mid-run revoke handler. If the user toggles Input Monitoring off
-        // in System Settings while we're running, IOHIDDeviceOpen calls
-        // start returning kIOReturnNotPermitted and existing IOHIDDeviceRefs
-        // become invalid. Close the manager so the next grant cleanly
-        // re-opens; ReceiverManager's poll will see Enumerate return empty
-        // in the meantime and dispose any standing connections.
+        // grantChanges is no longer load-bearing (no persistent manager to
+        // close), but kept for API compat. A subscription that logs the
+        // transition is enough.
         _grantSubscription = grantChanges?.Subscribe(granted =>
-        {
-            if (!granted) ForceClose();
-        });
+            _logger.LogInformation("Input Monitoring grant changed → {Granted}", granted));
 
-        _manager = IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, IOKitInterop.OptionsNone);
-        if (_manager == IntPtr.Zero)
-            throw new InvalidOperationException("IOHIDManagerCreate failed");
-
-        var match = IOKitInterop.CreateMatchingDictionary(
-            BoltConstants.LogitechVendorId, BoltConstants.BoltReceiverProductId);
-        IOKitInterop.IOHIDManagerSetDeviceMatching(_manager, match);
-        IOKitInterop.CFRelease(match);
-
-        _logger.LogInformation("IOKit transport initialised — IOHIDManagerOpen deferred until permission grant");
+        _logger.LogInformation("IOKit transport initialised (fresh-manager-per-poll mode)");
     }
 
     /// <summary>
-    /// Lazy IOHIDManagerOpen — first call after the permission gate flips
-    /// open performs the real open. Subsequent calls are no-ops. Also
-    /// detects a sticky-open state where the gate has since closed (revoke
-    /// mid-run) and closes the manager so a future grant gets a fresh open.
+    /// Build a fresh IOHIDManager, open it, set Bolt-receiver matching,
+    /// run the body with the device set, then tear down. The manager only
+    /// exists for the duration of the body.
     /// </summary>
-    private bool EnsureManagerOpen()
+    private T WithFreshManager<T>(Func<IntPtr[], T> body, T fallback)
     {
-        var granted = _isInputMonitoringGranted();
-        if (_managerOpen)
+        if (!_isInputMonitoringGranted()) return fallback;
+
+        var manager = IOKitInterop.IOHIDManagerCreate(IntPtr.Zero, IOKitInterop.OptionsNone);
+        if (manager == IntPtr.Zero)
         {
-            if (granted) return true;
-            // Granted then revoked — drop the open so the OS doesn't keep
-            // feeding us reads on a stale handle.
-            ForceClose();
-            return false;
+            _logger.LogWarning("IOHIDManagerCreate failed");
+            return fallback;
         }
-        if (!granted) return false;
-        lock (_openLock)
+
+        try
         {
-            if (_managerOpen) return true;
-            var openResult = IOKitInterop.IOHIDManagerOpen(_manager, IOKitInterop.OptionsNone);
+            var match = IOKitInterop.CreateMatchingDictionary(
+                BoltConstants.LogitechVendorId, BoltConstants.BoltReceiverProductId);
+            IOKitInterop.IOHIDManagerSetDeviceMatching(manager, match);
+            IOKitInterop.CFRelease(match);
+
+            var openResult = IOKitInterop.IOHIDManagerOpen(manager, IOKitInterop.OptionsNone);
             if (openResult != IOKitInterop.Success)
             {
-                _logger.LogWarning("IOHIDManagerOpen returned 0x{Code:X8} — enumeration may still work", openResult);
+                _logger.LogWarning("IOHIDManagerOpen returned 0x{Code:X8}", openResult);
+                // Still try CopyDevices — sometimes it works even when Open
+                // returned non-success (e.g. 0xE00002C5 exclusive access).
             }
-            _managerOpen = true;
-            _logger.LogInformation("IOKit manager opened (permission granted)");
-            return true;
-        }
-    }
 
-    private void ForceClose()
-    {
-        lock (_openLock)
+            var set = IOKitInterop.IOHIDManagerCopyDevices(manager);
+            if (set == IntPtr.Zero) return fallback;
+
+            try
+            {
+                var count = (int)IOKitInterop.CFSetGetCount(set);
+                if (count == 0) return body(Array.Empty<IntPtr>());
+
+                var devices = new IntPtr[count];
+                IOKitInterop.CFSetGetValues(set, devices);
+                return body(devices);
+            }
+            finally { IOKitInterop.CFRelease(set); }
+        }
+        finally
         {
-            if (!_managerOpen) return;
-            try { IOKitInterop.IOHIDManagerClose(_manager, IOKitInterop.OptionsNone); }
-            catch { /* best-effort */ }
-            _managerOpen = false;
-            _logger.LogInformation("IOKit manager closed (permission revoked or torn down)");
+            try { IOKitInterop.IOHIDManagerClose(manager, IOKitInterop.OptionsNone); } catch { }
+            try { IOKitInterop.CFRelease(manager); } catch { }
         }
     }
 
     public IReadOnlyList<BoltReceiverInfo> Enumerate()
     {
-        if (!EnsureManagerOpen()) return Array.Empty<BoltReceiverInfo>();
-        var set = IOKitInterop.IOHIDManagerCopyDevices(_manager);
-        if (set == IntPtr.Zero) return Array.Empty<BoltReceiverInfo>();
-
-        try
+        return WithFreshManager(devices =>
         {
-            var count = (int)IOKitInterop.CFSetGetCount(set);
-            if (count == 0) return Array.Empty<BoltReceiverInfo>();
-
-            var devices = new IntPtr[count];
-            IOKitInterop.CFSetGetValues(set, devices);
-
             var result = new List<BoltReceiverInfo>();
             foreach (var dev in devices)
             {
@@ -140,43 +122,41 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
                 var serial = IOKitInterop.GetStringProperty(dev, "SerialNumber") ?? "";
                 var release = (ushort)(IOKitInterop.GetInt32Property(dev, "VersionNumber") ?? 0);
 
-                // Path encodes LocationID + the raw IOHIDDeviceRef pointer so
-                // Open(info) can find this exact interface again. The pointer
-                // remains valid while the IOHIDManager retains the device set.
-                var path = $"iokit:{locationId:X8}:{dev.ToInt64():X16}";
+                // Path keyed on LocationID ONLY. The IOHIDDeviceRef pointer
+                // is unstable across our fresh-manager-per-poll cycles (new
+                // manager → new ref → different value every 2s). If the path
+                // changes between polls, ReceiverManager treats it as
+                // remove+add → tears down the open connection →
+                // DeviceEnricher restarts feature reads → names/battery
+                // never stabilise. LocationID is a USB bus-stable identifier
+                // for the same physical port; two receivers can't share it
+                // at the same time. Open() re-enumerates to find the live
+                // ref for that LocationID.
+                var path = $"iokit:{locationId:X8}";
 
                 result.Add(new BoltReceiverInfo(path, serial, product, manufacturer, release));
             }
-            return result;
-        }
-        finally { IOKitInterop.CFRelease(set); }
+            return (IReadOnlyList<BoltReceiverInfo>)result;
+        }, Array.Empty<BoltReceiverInfo>());
     }
 
     public IReceiverConnection Open(BoltReceiverInfo info)
     {
-        if (!EnsureManagerOpen())
+        if (!_isInputMonitoringGranted())
             throw new InvalidOperationException(
                 "Input Monitoring permission not granted — cannot open IOKit device.");
 
-        // Path format: "iokit:<locationId>:<deviceRef>". Re-enumerate to
-        // find the live IOHIDDeviceRef matching that location, then open it.
-        // (Stashing the pointer in the path string is fine within a single
-        // process lifetime — but re-enumerating is more robust against
-        // hotplug.)
-        var set = IOKitInterop.IOHIDManagerCopyDevices(_manager);
-        if (set == IntPtr.Zero)
-            throw new InvalidOperationException("IOHIDManagerCopyDevices returned null");
+        var parts = info.Path.Split(':');
+        if (parts.Length < 2 || !uint.TryParse(parts[1], System.Globalization.NumberStyles.HexNumber, null, out var targetLocation))
+            throw new ArgumentException($"Unrecognised IOKit path: {info.Path}");
 
-        try
+        // Re-enumerate fresh, find the device by LocationID, CFRetain the
+        // ref (so it survives the manager's release), then IOHIDDeviceOpen
+        // on the retained ref. The IOKitReceiverConnection takes ownership
+        // and CFReleases on dispose.
+        IntPtr retainedRef = IntPtr.Zero;
+        WithFreshManager<int>(devices =>
         {
-            var count = (int)IOKitInterop.CFSetGetCount(set);
-            var devices = new IntPtr[count];
-            IOKitInterop.CFSetGetValues(set, devices);
-
-            var parts = info.Path.Split(':');
-            if (parts.Length != 3 || !uint.TryParse(parts[1], System.Globalization.NumberStyles.HexNumber, null, out var targetLocation))
-                throw new ArgumentException($"Unrecognised IOKit path: {info.Path}");
-
             foreach (var dev in devices)
             {
                 if (dev == IntPtr.Zero) continue;
@@ -187,32 +167,34 @@ public sealed class IOKitReceiverTransport : IReceiverTransport, IDisposable
                 if (usagePage != BoltConstants.ManagementUsagePage) continue;
                 if (usage != BoltConstants.ManagementUsage) continue;
 
-                var openResult = IOKitInterop.IOHIDDeviceOpen(dev, IOKitInterop.OptionsNone);
-                if (openResult != IOKitInterop.Success)
-                    throw new InvalidOperationException(
-                        $"IOHIDDeviceOpen failed: 0x{openResult:X8} (0xE00002C5 = exclusive access; 0xE00002BC = no Input Monitoring permission)");
-
-                _logger.LogInformation("Opened receiver {Product} via IOKit-direct (location 0x{Loc:X8})",
-                    info.ProductString, location);
-                return new IOKitReceiverConnection(dev, info.Path,
-                    _loggerFactory.CreateLogger<IOKitReceiverConnection>());
+                IOKitInterop.CFRetain(dev);
+                retainedRef = dev;
+                break;
             }
+            return 0;
+        }, 0);
 
+        if (retainedRef == IntPtr.Zero)
             throw new InvalidOperationException($"No matching IOHIDDevice for location 0x{targetLocation:X8}");
+
+        var openResult = IOKitInterop.IOHIDDeviceOpen(retainedRef, IOKitInterop.OptionsNone);
+        if (openResult != IOKitInterop.Success)
+        {
+            try { IOKitInterop.CFRelease(retainedRef); } catch { }
+            throw new InvalidOperationException(
+                $"IOHIDDeviceOpen failed: 0x{openResult:X8} (0xE00002C5 = exclusive access; 0xE00002BC = no Input Monitoring permission)");
         }
-        finally { IOKitInterop.CFRelease(set); }
+
+        _logger.LogInformation("Opened receiver {Product} via IOKit-direct (location 0x{Loc:X8})",
+            info.ProductString, targetLocation);
+        return new IOKitReceiverConnection(retainedRef, info.Path,
+            _loggerFactory.CreateLogger<IOKitReceiverConnection>());
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _grantSubscription?.Dispose();
-        if (_manager != IntPtr.Zero)
-        {
-            if (_managerOpen)
-            {
-                IOKitInterop.IOHIDManagerClose(_manager, IOKitInterop.OptionsNone);
-            }
-            IOKitInterop.CFRelease(_manager);
-        }
     }
 }
