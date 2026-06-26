@@ -361,6 +361,7 @@ public partial class App : Application
         {
             var status = snapshot.IsAlerting ? OverallStatus.AnyDenied : OverallStatus.AllGood;
             _trayStatus?.SetPermissionStatus(status);
+            _trayStatus?.SetHealth(snapshot);
             _trayController?.SetPermissionStatus(status);
         }));
 

@@ -120,6 +120,25 @@ public sealed class TrayIconStatusController : IDisposable
         Refresh();
     }
 
+    /// <summary>
+    /// Push a fresh app-health snapshot. Drives the tooltip's
+    /// composite-cause string (so the user can hover the tray icon and
+    /// see "permissions, receiver" without needing the menu). The Alert
+    /// state itself is derived in <see cref="ResolveState"/>; this just
+    /// feeds the human-readable why.
+    /// </summary>
+    public void SetHealth(BoltMate.App.Services.AppHealthSnapshot snapshot)
+    {
+        _healthPermAlerting = snapshot.Permissions is not null;
+        _healthNetAlerting  = snapshot.Network is not null;
+        _healthRecvAlerting = snapshot.Receiver is not null;
+        Refresh();
+    }
+
+    private bool _healthPermAlerting;
+    private bool _healthNetAlerting;
+    private bool _healthRecvAlerting;
+
     public void BindHealth(IObservable<TransportHealth>? udpHealth, IObservable<TransportHealth>? syncHealth)
     {
         if (udpHealth is not null)
@@ -195,12 +214,16 @@ public sealed class TrayIconStatusController : IDisposable
         string tooltip;
         if (state == State.Alert)
         {
+            // Tooltip causes come from the AppHealthSnapshot push (3
+            // categories) PLUS the legacy direct-Blocked transitional
+            // signals (only relevant during the first ~second before
+            // Health subscription wires up).
             var causes = new System.Collections.Generic.List<string>(3);
-            if (AreRequiredPermissionsDenied()) causes.Add("permissions");
-            if (_udpBlockedAlert) causes.Add("UDP");
-            if (_syncBlockedAlert) causes.Add("Bonjour/TCP");
+            if (_healthPermAlerting || AreRequiredPermissionsDenied()) causes.Add("permissions");
+            if (_healthNetAlerting  || _udpBlockedAlert || _syncBlockedAlert) causes.Add("network");
+            if (_healthRecvAlerting) causes.Add("no receiver");
             tooltip = causes.Count > 0
-                ? $"BoltMate — action needed ({string.Join(", ", causes)} blocked)"
+                ? $"BoltMate — action needed ({string.Join(", ", causes)})"
                 : "BoltMate — action needed";
         }
         else
@@ -250,8 +273,17 @@ public sealed class TrayIconStatusController : IDisposable
     {
         // Two-state model only: anything in the composite alert rule
         // returns Alert; everything else is the resting Neutral state.
-        // Peer-presence has no UI signal at the bolt level anymore —
-        // peers live in the Status tab's Other-computers card.
+        //
+        // Primary signal is the AppHealthService snapshot pushed via
+        // SetPermissionStatus — that covers Permissions denied, Network
+        // alerting (PermissionDenied / Offline / both Blocked), and
+        // Receiver missing — all three trackers, all with their own
+        // debounce. The legacy direct-permission + sustained-blocked
+        // checks below stay as belt-and-braces fallbacks for the
+        // transient window before the Health subscription is wired
+        // during ContinueBootstrap.
+        if (_permissionStatus != OverallStatus.AllGood)
+            return State.Alert;
         if (AreRequiredPermissionsDenied() || _udpBlockedAlert || _syncBlockedAlert)
             return State.Alert;
         return State.Neutral;

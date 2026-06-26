@@ -71,7 +71,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private DateTimeOffset _mdnsStartedAt;
     private readonly System.Reactive.Subjects.BehaviorSubject<TransportHealth> _mdnsHealth;
     private System.Threading.Timer? _mdnsHealthTimer;
-    private TransportState _lastMdnsState = TransportState.Unknown;
+    private TransportState _lastMdnsState = TransportState.Starting;
     private static readonly TimeSpan MdnsEchoFreshness = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MdnsWarmup = TimeSpan.FromSeconds(30);
 
@@ -93,7 +93,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private DateTimeOffset _lastPeerDiscovered;
     private string? _lastTcpFailureMessage;
     private readonly System.Reactive.Subjects.BehaviorSubject<TransportHealth> _tcpHealth;
-    private TransportState _lastTcpState = TransportState.Unknown;
+    private TransportState _lastTcpState = TransportState.Starting;
     private static readonly TimeSpan TcpConnectGrace = TimeSpan.FromSeconds(15);
 
     /// <summary>
@@ -133,28 +133,27 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
             || tcp.State is TransportState.PermissionDenied)
         {
             return new TransportHealth(TransportState.PermissionDenied, endpoint,
-                "Local Network permission not granted — Bonjour + TCP parked", now);
+                "Local Network permission required", now);
         }
         // Offline dominates Blocked next — no NIC means no transport.
-        // We could merge with PermissionDenied above, but the remediation
-        // is different so the state distinction stays.
         if (mdns.State is TransportState.Offline
             || tcp.State is TransportState.Offline)
         {
             return new TransportHealth(TransportState.Offline, endpoint,
-                "no usable network interface — Bonjour + TCP parked", now);
+                "No network connection", now);
+        }
+        if (mdns.State is TransportState.Disabled
+            && tcp.State is TransportState.Disabled)
+        {
+            return new TransportHealth(TransportState.Disabled, endpoint, "Disabled", now);
         }
         if (mdns.State is TransportState.Blocked)
-            return new TransportHealth(TransportState.Blocked, endpoint,
-                $"Bonjour discovery blocked — {mdns.DetailMessage}", now);
+            return new TransportHealth(TransportState.Blocked, endpoint, mdns.DetailMessage, now);
         if (tcp.State is TransportState.Blocked)
-            return new TransportHealth(TransportState.Blocked, endpoint,
-                $"TCP backchannel blocked — {tcp.DetailMessage}", now);
+            return new TransportHealth(TransportState.Blocked, endpoint, tcp.DetailMessage, now);
         if (mdns.State is TransportState.Healthy && tcp.State is TransportState.Healthy)
-            return new TransportHealth(TransportState.Healthy, endpoint,
-                "Bonjour + TCP both healthy", now);
-        return new TransportHealth(TransportState.Unknown, endpoint,
-            $"Bonjour: {mdns.DetailMessage}. TCP: {tcp.DetailMessage}.", now);
+            return new TransportHealth(TransportState.Healthy, endpoint, string.Empty, now);
+        return new TransportHealth(TransportState.Starting, endpoint, "Starting service", now);
     }
 
     private readonly TimeProvider _time;
@@ -206,14 +205,14 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         var (mdnsInit, tcpInit) = (_permGranted, _nicAvailable) switch
         {
             (false, _) => (
-                TransportHealth.PermissionDenied(MdnsEndpointLabel(), "Local Network permission not yet granted"),
-                TransportHealth.PermissionDenied(TcpEndpointLabel(), "Local Network permission not yet granted")),
+                TransportHealth.PermissionDenied(MdnsEndpointLabel()),
+                TransportHealth.PermissionDenied(TcpEndpointLabel())),
             (_, false) => (
-                TransportHealth.Offline(MdnsEndpointLabel(), "no usable network interface"),
-                TransportHealth.Offline(TcpEndpointLabel(), "no usable network interface")),
+                TransportHealth.Offline(MdnsEndpointLabel()),
+                TransportHealth.Offline(TcpEndpointLabel())),
             _ => (
-                TransportHealth.Unknown(MdnsEndpointLabel(), "Bonjour publisher not started yet"),
-                TransportHealth.Unknown(TcpEndpointLabel(), "no Bonjour peers discovered yet")),
+                TransportHealth.Starting(MdnsEndpointLabel()),
+                TransportHealth.Starting(TcpEndpointLabel())),
         };
         _mdnsHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(mdnsInit);
         _tcpHealth = new System.Reactive.Subjects.BehaviorSubject<TransportHealth>(tcpInit);
@@ -239,7 +238,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         // No peers discovered yet → can't say whether we'd reach them.
         if (_lastPeerDiscovered == default)
         {
-            EmitTcpHealth(TransportState.Unknown, "no Bonjour peers discovered yet");
+            EmitTcpHealth(TransportState.Starting, "Starting service");
             return;
         }
 
@@ -248,8 +247,8 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         foreach (var c in _peerClients.Values) if (c.Connected) connected++;
         if (connected > 0)
         {
-            EmitTcpHealth(TransportState.Healthy,
-                $"connected to {connected} peer{(connected == 1 ? "" : "s")} via TCP");
+            _logger.LogDebug("TCP healthy: connected to {Connected} peer(s)", connected);
+            EmitTcpHealth(TransportState.Healthy, string.Empty);
             return;
         }
 
@@ -259,14 +258,15 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         var sinceDiscover = _time.GetUtcNow() - _lastPeerDiscovered;
         if (sinceDiscover < TcpConnectGrace)
         {
-            EmitTcpHealth(TransportState.Unknown, $"connect attempts in flight ({sinceDiscover.TotalSeconds:F0}s since discovery)");
+            EmitTcpHealth(TransportState.Starting, "Starting service");
             return;
         }
 
+        if (_lastTcpFailureMessage is not null)
+            _logger.LogDebug("TCP blocked: port {Port}, last error: {Error}",
+                _settings.TcpPort, _lastTcpFailureMessage);
         EmitTcpHealth(TransportState.Blocked,
-            $"discovered peer(s) via Bonjour but couldn't open TCP port {_settings.TcpPort}. " +
-            "The peer likely has a firewall inbound rule blocking the port — verify BoltMate is allowed through Windows Defender Firewall / macOS Local Network access on that machine. " +
-            (_lastTcpFailureMessage is null ? "" : $"Last error: {_lastTcpFailureMessage}"));
+            "Can't reach peers — check the firewall on the other machine.");
     }
 
     private string MdnsEndpointLabel() =>
@@ -286,7 +286,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         if (_multicast is null || _serviceDiscovery is null)
         {
             EmitMdnsHealth(TransportState.Blocked,
-                "Bonjour publisher failed to start. On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted.");
+                "Bonjour publisher couldn't start — confirm the Bonjour service is running.");
             return;
         }
         var now = _time.GetUtcNow();
@@ -294,18 +294,19 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         var sinceEcho = now - _lastSelfMdnsEcho;
         if (_lastSelfMdnsEcho == default && sinceStart < MdnsWarmup)
         {
-            EmitMdnsHealth(TransportState.Unknown, $"warming up ({sinceStart.TotalSeconds:F0}/{MdnsWarmup.TotalSeconds:F0}s)");
+            EmitMdnsHealth(TransportState.Starting, "Starting service");
             return;
         }
         if (_lastSelfMdnsEcho == default || sinceEcho > MdnsEchoFreshness)
         {
+            _logger.LogDebug("mDNS blocked: no self-echo in {Seconds}s",
+                (sinceEcho == default ? sinceStart : sinceEcho).TotalSeconds);
             EmitMdnsHealth(TransportState.Blocked,
-                $"Bonjour service has not echoed our own advert in {(sinceEcho == default ? sinceStart : sinceEcho).TotalSeconds:F0}s. " +
-                "On Windows: confirm the 'Bonjour Service' is running. On macOS: confirm Local Network access is granted. " +
-                "If both look right, multicast (224.0.0.251:5353) may be filtered on this network.");
+                "Bonjour traffic is being filtered — check your firewall or network.");
             return;
         }
-        EmitMdnsHealth(TransportState.Healthy, $"last self-echo {sinceEcho.TotalSeconds:F0}s ago");
+        _logger.LogDebug("mDNS healthy: last self-echo {Seconds}s ago", sinceEcho.TotalSeconds);
+        EmitMdnsHealth(TransportState.Healthy, string.Empty);
     }
 
     /// <summary>Idempotently starts the mDNS publisher, browser, and TCP listener.</summary>
@@ -347,8 +348,8 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         _nicSubscription?.Dispose();
         _nicSubscription = null;
         StopAndRelease();
-        EmitMdnsHealth(TransportState.Unknown, "topology disabled");
-        EmitTcpHealth(TransportState.Unknown, "topology disabled");
+        EmitMdnsHealth(TransportState.Disabled, "Disabled");
+        EmitTcpHealth(TransportState.Disabled, "Disabled");
     }
 
     private void ReevaluateGate()
@@ -362,17 +363,13 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         StopAndRelease();
         if (!_permGranted)
         {
-            EmitMdnsHealth(TransportState.PermissionDenied,
-                "Local Network permission not granted — Bonjour publisher parked");
-            EmitTcpHealth(TransportState.PermissionDenied,
-                "Local Network permission not granted — TCP listener parked");
+            EmitMdnsHealth(TransportState.PermissionDenied, "Local Network permission required");
+            EmitTcpHealth(TransportState.PermissionDenied, "Local Network permission required");
         }
         else
         {
-            EmitMdnsHealth(TransportState.Offline,
-                "no usable network interface — Bonjour publisher parked");
-            EmitTcpHealth(TransportState.Offline,
-                "no usable network interface — TCP listener parked");
+            EmitMdnsHealth(TransportState.Offline, "No network connection");
+            EmitTcpHealth(TransportState.Offline, "No network connection");
         }
     }
 
@@ -491,7 +488,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         {
             _logger.LogWarning(ex, "MdnsTcp: mDNS publish/browse init failed; TCP listener still active for peers that find us another way");
             EmitMdnsHealth(TransportState.Blocked,
-                $"Bonjour publisher failed to start: {ex.Message}");
+                "Bonjour publisher couldn't start — confirm the Bonjour service is running.");
         }
 
         // 3. Mirror UDP outgoing announcements onto every TCP peer.

@@ -181,7 +181,26 @@ public sealed class SettingsViewModel : ViewModelBase
     public string OpenNetworkSettingsLabel { get; } =
         OperatingSystem.IsWindows() ? "Open Network Settings" : "Open Privacy Settings";
 
-    private string _udpStateLabel = "Unknown";
+    // Transport-row "Grant" / "Open Settings" CTA — surfaced only when
+    // the transport state is PermissionDenied. Click target is the
+    // existing OpenNetworkSettingsCommand (same destination as the
+    // permission-card CTA — System Settings → Privacy & Security on
+    // Mac, Defender Firewall on Win).
+    private bool _udpShowGrantNetworkButton;
+    public bool UdpShowGrantNetworkButton
+    {
+        get => _udpShowGrantNetworkButton;
+        set => this.RaiseAndSetIfChanged(ref _udpShowGrantNetworkButton, value);
+    }
+
+    private bool _syncShowGrantNetworkButton;
+    public bool SyncShowGrantNetworkButton
+    {
+        get => _syncShowGrantNetworkButton;
+        set => this.RaiseAndSetIfChanged(ref _syncShowGrantNetworkButton, value);
+    }
+
+    private string _udpStateLabel = "Starting";
     public string UdpStateLabel
     {
         get => _udpStateLabel;
@@ -209,7 +228,7 @@ public sealed class SettingsViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _udpIndicatorColor, value);
     }
 
-    private string _syncStateLabel = "Unknown";
+    private string _syncStateLabel = "Starting";
     public string SyncStateLabel
     {
         get => _syncStateLabel;
@@ -470,12 +489,12 @@ public sealed class SettingsViewModel : ViewModelBase
         if (_udpHealth is not null)
             Activation.Add(_udpHealth.Subscribe(h => Dispatcher.UIThread.Post(() => UpdateUdpHealth(h))));
         else
-            Dispatcher.UIThread.Post(() => UpdateUdpHealth(TransportHealth.Unknown("239.255.41.42:41420", "cross-machine sync disabled")));
+            Dispatcher.UIThread.Post(() => UpdateUdpHealth(TransportHealth.Disabled("239.255.41.42:41420")));
 
         if (_syncHealth is not null)
             Activation.Add(_syncHealth.Subscribe(h => Dispatcher.UIThread.Post(() => UpdateSyncHealth(h))));
         else
-            Dispatcher.UIThread.Post(() => UpdateSyncHealth(TransportHealth.Unknown("Bonjour / mDNS + TCP sync", "cross-machine sync disabled")));
+            Dispatcher.UIThread.Post(() => UpdateSyncHealth(TransportHealth.Disabled("Bonjour / mDNS + TCP sync")));
 
         Activation.Add(_permissions.Autostart.IsGrantedChanged
             .Subscribe(_ => Dispatcher.UIThread.Post(RefreshLaunchAtLogin)));
@@ -647,9 +666,10 @@ public sealed class SettingsViewModel : ViewModelBase
         var (label, color) = LabelAndColor(h.State);
         UdpStateLabel = label;
         UdpIndicatorColor = color;
-        UdpDetail = $"{label} — {h.DetailMessage}";
+        UdpDetail = ComposeDetail(label, h.DetailMessage);
         _udpBlocked = h.State == TransportState.Blocked;
         NetworkBlocked = _udpBlocked || _syncBlocked;
+        UdpShowGrantNetworkButton = h.State == TransportState.PermissionDenied;
     }
 
     private void UpdateSyncHealth(TransportHealth h)
@@ -658,22 +678,39 @@ public sealed class SettingsViewModel : ViewModelBase
         var (label, color) = LabelAndColor(h.State);
         SyncStateLabel = label;
         SyncIndicatorColor = color;
-        SyncDetail = $"{label} — {h.DetailMessage}";
+        SyncDetail = ComposeDetail(label, h.DetailMessage);
         _syncBlocked = h.State == TransportState.Blocked;
         NetworkBlocked = _udpBlocked || _syncBlocked;
+        SyncShowGrantNetworkButton = h.State == TransportState.PermissionDenied;
+    }
+
+    // Detail text shown next to the state pill:
+    //   Healthy   → label only (clean — no diagnostic chatter)
+    //   Disabled  → label only
+    //   anything else → "{Label} — {DetailMessage}" so the user gets the
+    //                   short reason next to the state.
+    private static string ComposeDetail(string label, string detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail) || detail.Equals(label, StringComparison.OrdinalIgnoreCase))
+            return label;
+        return $"{label} — {detail}";
     }
 
     // Status semantic colors mirror DesignTokens.axaml:
-    //   Healthy #34C759 · Unknown #C2C2C8 · Blocked dot #FF453A
+    //   Healthy #34C759 · Starting/Disabled #C2C2C8 · Blocked/Offline/Denied #FF453A
     // Kept as raw hex strings here so the VM can be exercised without an
     // Avalonia application context (e.g. unit tests). The Status tab XAML
     // could equally bind to brushes by key — string equality with
     // DynamicResource keys would still resolve.
     private static (string Label, string Color) LabelAndColor(TransportState state) => state switch
     {
-        TransportState.Healthy => ("Healthy", "#34C759"),
-        TransportState.Blocked => ("Blocked", "#FF453A"),
-        _ => ("Unknown", "#C2C2C8"),
+        TransportState.Healthy          => ("Healthy",           "#34C759"),
+        TransportState.Blocked          => ("Blocked",           "#FF453A"),
+        TransportState.PermissionDenied => ("Permission denied", "#FF9F0A"),
+        TransportState.Offline          => ("Offline",           "#FF9F0A"),
+        TransportState.Starting         => ("Starting",          "#C2C2C8"),
+        TransportState.Disabled         => ("Disabled",          "#8E8E93"),
+        _                                => ("Starting",          "#C2C2C8"),
     };
 
     // ---- About tab helpers --------------------------------------------

@@ -45,8 +45,8 @@ public sealed class AppHealthService : IAppHealthService
     private readonly CategoryTracker _netTracker = new("Network", TimeSpan.FromSeconds(30));
     private readonly CategoryTracker _recvTracker = new("Receiver", TimeSpan.FromSeconds(5));
 
-    private TransportHealth _udpHealth = TransportHealth.Unknown("");
-    private TransportHealth _syncHealth = TransportHealth.Unknown("");
+    private TransportHealth _udpHealth = TransportHealth.Starting("");
+    private TransportHealth _syncHealth = TransportHealth.Starting("");
 
     private readonly BehaviorSubject<AppHealthSnapshot> _health;
 
@@ -173,7 +173,7 @@ public sealed class AppHealthService : IAppHealthService
                           && _syncHealth.State is TransportState.Blocked;
         _netTracker.RawBad = bothBlocked;
         _netTracker.CurrentDetail = bothBlocked
-            ? $"both transports blocked — UDP multicast: {_udpHealth.DetailMessage} || Bonjour sync: {_syncHealth.DetailMessage}"
+            ? "All network paths blocked — peers can't be reached. Check firewall and network settings."
             : "at least one transport reachable";
     }
 
