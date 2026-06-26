@@ -2,6 +2,7 @@ using BoltMate.Core.Services;
 using System;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -233,6 +234,25 @@ public partial class App : Application
             _disposables.Add(_manager.Receivers.CountChanged
                 .Where(c => c > 0)
                 .Subscribe(_ => _permissions.InputMonitoring.AcknowledgeExternalGrant()));
+        }
+
+        // macOS USB hot-plug — start the IOServiceAddMatchingNotification
+        // watcher and route its signal to ReceiverManager.Refresh() so
+        // attaches / detaches surface sub-second instead of waiting for
+        // the 2s timer tick. Refresh runs on the .NET thread pool, NOT on
+        // the notifier's CFRunLoop thread (the notifier callback itself
+        // does zero IOKit work — see UsbBoltNotifier xmldoc + memory).
+        if (OperatingSystem.IsMacOS())
+        {
+            var usbNotifier = Services.GetRequiredService<BoltMate.Hid.IOKit.UsbBoltNotifier>();
+            usbNotifier.Start();
+            _disposables.Add(usbNotifier.Changes
+                .Subscribe(_ => Task.Run(() =>
+                {
+                    try { _manager.Refresh(); }
+                    catch (Exception ex) { log.LogWarning(ex, "Refresh on USB notification failed"); }
+                })));
+            _disposables.Add(usbNotifier);
         }
 
         // One manager-scoped SwitcherService handles fan-out across every

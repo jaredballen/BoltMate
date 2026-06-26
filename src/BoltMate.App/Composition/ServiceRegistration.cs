@@ -82,6 +82,23 @@ public static class ServiceRegistration
             sp.GetRequiredService<IReceiverTransport>(),
             loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
 
+        // macOS USB hot-plug notifier — fires near-instant when a Bolt
+        // receiver attaches or detaches via IOServiceAddMatchingNotification
+        // (a different IOKit object class than IOHIDDevice, which can't be
+        // safely callback-subscribed from .NET; see
+        // reference_iohidmanager_threading memory). The notifier itself
+        // does NO IOKit property reads — it only signals a managed
+        // observable. App.ContinueBootstrap subscribes to drive an
+        // immediate ReceiverManager.Refresh() on each event so hot-plug
+        // surfaces in the UI sub-second instead of waiting for the 2s
+        // poll tick.
+        if (OperatingSystem.IsMacOS())
+        {
+            services.AddSingleton<BoltMate.Hid.IOKit.UsbBoltNotifier>(sp =>
+                new BoltMate.Hid.IOKit.UsbBoltNotifier(
+                    sp.GetRequiredService<ILogger<BoltMate.Hid.IOKit.UsbBoltNotifier>>()));
+        }
+
         services.AddSingleton<SwitcherService>(sp => new SwitcherService(
             sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<ILogger<SwitcherService>>()));
