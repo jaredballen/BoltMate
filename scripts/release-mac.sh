@@ -152,6 +152,16 @@ if [[ "$NO_INSTALL" = 0 ]]; then
     /usr/libexec/ApplicationFirewall/socketfilterfw \
         --remove /Applications/BoltMate.app/Contents/MacOS/BoltMate 2>/dev/null || true
 
+    echo "==> Flushing Notification Center icon cache"
+    # NotificationCenter caches the bundle icon at first banner display
+    # and won't re-read until restarted. iconservicesagent + iconservicesd
+    # hold the user-level Icon Services cache that resolves CFBundleIconFile.
+    # Bouncing all three so the next notification picks up the new .icns.
+    rm -rf ~/Library/Caches/com.apple.iconservices ~/Library/Caches/com.apple.iconservices.store 2>/dev/null || true
+    killall iconservicesagent 2>/dev/null || true
+    killall iconservicesd 2>/dev/null || true
+    killall NotificationCenter 2>/dev/null || true
+
     echo "==> Nudging icon services + Dock/Finder so the new bundle's icon repaints"
     # macOS caches Finder/Dock icons aggressively by bundle path inode +
     # mod time. A fresh `cp -a` already updates mod time, but the cached

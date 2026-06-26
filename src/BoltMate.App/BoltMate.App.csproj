@@ -186,6 +186,8 @@
     <AvaloniaResource Include="Assets/tray-icon-light@2x.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark.png" />
     <AvaloniaResource Include="Assets/tray-icon-dark@2x.png" />
+    <AvaloniaResource Include="Assets/tray-icon-alert.png" />
+    <AvaloniaResource Include="Assets/tray-icon-alert@2x.png" />
     <AvaloniaResource Include="Assets/app-icon-1024.png" />
 
     <!-- Brand mark: rendered to PNG at install time via qlmanage from

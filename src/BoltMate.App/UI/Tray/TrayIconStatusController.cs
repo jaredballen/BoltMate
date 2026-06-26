@@ -60,6 +60,12 @@ public sealed class TrayIconStatusController : IDisposable
     // Cached compositions. Built lazily; rebuilt only on theme change.
     private WindowIcon? _neutralIcon;
     private WindowIcon? _alertIcon;
+    // Tracks the URI the cached _neutralIcon was built from. When the
+    // OS taskbar theme flips and the resolved URI no longer matches,
+    // we discard the cache and rebuild. Win 11's `SystemUsesLightTheme`
+    // does NOT trigger PlatformSettings.ColorValuesChanged (Avalonia
+    // watches `AppsUseLightTheme`), so the poll is what catches it.
+    private Uri? _neutralIconUri;
 
     public TrayIconStatusController(TrayIcon trayIcon, IPermissionsService permissions, ILogger logger)
     {
@@ -202,9 +208,20 @@ public sealed class TrayIconStatusController : IDisposable
             tooltip = "BoltMate";
         }
 
+        // Detect taskbar theme flips on each poll — the cached
+        // _neutralIcon needs to be discarded when SystemUsesLightTheme
+        // changes (Win 11 settings → Personalization → Colors).
+        var baseUri = ResolveBaseIconUri();
+        var themeChanged = !Equals(baseUri, _neutralIconUri);
+        if (themeChanged)
+        {
+            _neutralIcon = null;
+            _neutralIconUri = baseUri;
+        }
+
         try
         {
-            if (state != _last)
+            if (state != _last || (themeChanged && state == State.Neutral))
             {
                 _trayIcon.Icon = GetOrBuild(state);
                 _last = state;
@@ -262,61 +279,68 @@ public sealed class TrayIconStatusController : IDisposable
 
     private WindowIcon BuildAlert()
     {
-        // Composite the silhouette with an amber "!" badge in the lower-
-        // right corner. Amber is #FFBF00 per the design tokens.
-        //
-        // Long-term: replace the badge with a full-bolt amber tint
-        // (mask the silhouette + fill with amber). For now the badge
-        // keeps the silhouette intact and overlays the cause signal.
-        var uri = ResolveBaseIconUri();
-        using var baseStream = AssetLoader.Open(uri);
-        using var baseBitmap = new Bitmap(baseStream);
+        // Pre-rendered amber-tinted bolt — full silhouette in #FFBF00,
+        // not a corner badge. Template flag is dropped at the call site
+        // so AppKit shows the color as-is.
+        using var stream = AssetLoader.Open(new Uri("avares://BoltMate/Assets/tray-icon-alert.png"));
+        return new WindowIcon(stream);
+    }
 
-        var w = baseBitmap.PixelSize.Width;
-        var h = baseBitmap.PixelSize.Height;
-        var rtb = new RenderTargetBitmap(new PixelSize(w, h), new Vector(96, 96));
-        using (var ctx = rtb.CreateDrawingContext())
-        {
-            ctx.DrawImage(baseBitmap, new Rect(0, 0, w, h));
+    /// <summary>
+    /// Public form of <see cref="ResolveBaseIconUri"/> so the bootstrap
+    /// can paint a theme-aware tray icon BEFORE this controller exists
+    /// (during first-run welcome the controller hasn't been instantiated
+    /// yet — without this, the XAML-default light asset stays on
+    /// regardless of the OS theme).
+    /// </summary>
+    public static Uri ResolveNeutralIconUri() => ResolveBaseIconUri();
 
-            // Badge sits in the lower-right corner ~45% of the icon dimension.
-            var badgeSize = Math.Max(10, w * 0.45);
-            var rect = new Rect(w - badgeSize, h - badgeSize, badgeSize, badgeSize);
-            var amber = new SolidColorBrush(Color.FromRgb(0xFF, 0xBF, 0x00));
-            ctx.DrawEllipse(amber, new Pen(Brushes.White, badgeSize * 0.08),
-                rect.Center, rect.Width / 2, rect.Height / 2);
-
-            // Exclamation point: vertical stroke + dot, both white on amber.
-            var glyphPen = new Pen(Brushes.White, badgeSize * 0.14,
-                lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-            var cx = rect.X + badgeSize * 0.5;
-            var topY = rect.Y + badgeSize * 0.25;
-            var stemBottomY = rect.Y + badgeSize * 0.6;
-            ctx.DrawLine(glyphPen, new Point(cx, topY), new Point(cx, stemBottomY));
-            var dotRadius = badgeSize * 0.09;
-            ctx.DrawEllipse(Brushes.White, null,
-                new Point(cx, rect.Y + badgeSize * 0.78), dotRadius, dotRadius);
-        }
-
-        using var ms = new MemoryStream();
-        rtb.Save(ms);
-        ms.Position = 0;
-        return new WindowIcon(ms);
+    /// <summary>Convenience: opens the avares stream and wraps in
+    /// <see cref="WindowIcon"/>.</summary>
+    public static WindowIcon LoadNeutralIcon()
+    {
+        using var stream = AssetLoader.Open(ResolveBaseIconUri());
+        return new WindowIcon(stream);
     }
 
     private static Uri ResolveBaseIconUri()
     {
-        // On Windows, pick light/dark based on platform theme so the
-        // silhouette is readable. On Mac with the template flag dropped we
-        // use the dark variant — a white silhouette renders on the typical
-        // dark menubar.
+        // Mac: AppKit template-inverts the silhouette per menubar mode.
+        // The "dark" asset (white bolt) is what we hand it.
         if (OperatingSystem.IsMacOS())
             return new Uri("avares://BoltMate/Assets/tray-icon-dark.png");
+
+        // Windows: the system tray follows `SystemUsesLightTheme`, NOT
+        // `AppsUseLightTheme`. Avalonia's PlatformSettings.GetColorValues
+        // reads AppsUseLightTheme, which can be inverted from the system
+        // setting (Win 11 exposes both as separate toggles). Read the
+        // system value directly so the tray icon stays readable against
+        // whatever the taskbar actually is.
+        if (OperatingSystem.IsWindows())
+        {
+            return ReadWinSystemUsesLightTheme()
+                ? new Uri("avares://BoltMate/Assets/tray-icon-light.png")
+                : new Uri("avares://BoltMate/Assets/tray-icon-dark.png");
+        }
 
         var theme = Application.Current?.PlatformSettings?.GetColorValues().ThemeVariant;
         return theme == PlatformThemeVariant.Dark
             ? new Uri("avares://BoltMate/Assets/tray-icon-dark.png")
             : new Uri("avares://BoltMate/Assets/tray-icon-light.png");
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool ReadWinSystemUsesLightTheme()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            if (key?.GetValue("SystemUsesLightTheme") is int v)
+                return v != 0;
+        }
+        catch { /* registry read failed — fall through to light default */ }
+        return true;
     }
 
     public void Dispose() => _disposables.Dispose();

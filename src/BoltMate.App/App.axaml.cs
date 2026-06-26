@@ -127,6 +127,24 @@ public partial class App : Application
         // tab. Owns a 2s polling timer; pushes deltas via Rx observables.
         _permissions = Services.GetRequiredService<IPermissionsService>();
 
+        // Paint the tray icon to match the current OS theme right away.
+        // TrayIconStatusController only instantiates inside ContinueBootstrap
+        // — during first-run welcome that hasn't happened yet, so without
+        // this the XAML-default `tray-icon-light.png` (black bolt) stays
+        // shown even on a dark Win taskbar or dark Mac menubar.
+        try
+        {
+            var initialTrays = TrayIcon.GetIcons(this);
+            if (initialTrays is not null && initialTrays.Count > 0)
+            {
+                initialTrays[0].Icon = TrayIconStatusController.LoadNeutralIcon();
+            }
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Initial tray icon paint failed (non-fatal)");
+        }
+
         // ====================================================================
         // First-run gate
         // ====================================================================
