@@ -30,18 +30,21 @@ backend completion. Living document — update phase status as work lands.
 
 ### Phase 0 — Infrastructure provisioning
 
-Status: **in progress** — pending B2C tenant + Resend signup.
+Status: **complete** — Apple/LinkedIn/Facebook/GitHub OAuth IdPs deferred to wire when those provider apps are ready.
 
-- [x] Azure subscription confirmed (`jaredballen@gmail.com`), resource group `boltmate-prod` created (eastus2, tagged)
-- [ ] B2C tenant provisioned, OAuth providers configured (Apple, Google,
-      LinkedIn, GitHub, Facebook), user flow for sign-up/sign-in **— portal-only, pending user**
+- [x] Azure subscription confirmed + renamed to `BoltMate`, resource group `boltmate-prod` created (eastus2, tagged)
+- [x] Entra External ID tenant `BoltMate` (`boltmateauth.onmicrosoft.com`),
+      app registration `BoltMate` (one app, web + mobile/desktop redirect URIs),
+      user flow `B2C_1_signup_signin` linked. Google IdP wired + tested end-to-end
+      (real Gmail → Google consent → `boltmate.app/auth/callback?code=...`).
+      Apple/LinkedIn/Facebook/GitHub deferred.
 - [x] Cosmos DB Free Tier (`boltmate-prod-cosmos`), database `boltmate`,
       containers `Licenses` (pk `/email`) + `RefreshLog` (pk `/licenseId`, TTL 30d)
 - [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded:
       `Stripe--SecretKey` (test mode), `Stripe--PublishableKey` (test),
-      `Stripe--WebhookSecret`, `Resend--ApiKey`, RSA key
-      `boltmate-jwt-signing` (2048, sign/verify only).
-      Pending: `B2C--ClientId` after that service exists.
+      `Stripe--WebhookSecret`, `Resend--ApiKey`, `B2C--ClientId`,
+      `B2C--TenantId`, `B2C--Authority`, RSA key `boltmate-jwt-signing`
+      (2048, sign/verify only).
 - [x] Function App `boltmate-prod-api` (Consumption Linux, dotnet-isolated 10).
       Custom domain `api.boltmate.app` bound (CNAME + asuid TXT validated).
       System-assigned managed identity granted KV Secrets User + Crypto User + Cosmos Data Contributor.
