@@ -37,10 +37,11 @@ Status: **in progress** — pending B2C tenant + Resend signup.
       LinkedIn, GitHub, Facebook), user flow for sign-up/sign-in **— portal-only, pending user**
 - [x] Cosmos DB Free Tier (`boltmate-prod-cosmos`), database `boltmate`,
       containers `Licenses` (pk `/email`) + `RefreshLog` (pk `/licenseId`, TTL 30d)
-- [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded so far:
+- [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded:
       `Stripe--SecretKey` (test mode), `Stripe--PublishableKey` (test),
-      `Stripe--WebhookSecret`, RSA key `boltmate-jwt-signing` (2048, sign/verify only).
-      Pending: `Resend--ApiKey`, `B2C--ClientId` after those services exist.
+      `Stripe--WebhookSecret`, `Resend--ApiKey`, RSA key
+      `boltmate-jwt-signing` (2048, sign/verify only).
+      Pending: `B2C--ClientId` after that service exists.
 - [x] Function App `boltmate-prod-api` (Consumption Linux, dotnet-isolated 10).
       Custom domain `api.boltmate.app` bound (CNAME + asuid TXT validated).
       System-assigned managed identity granted KV Secrets User + Crypto User + Cosmos Data Contributor.
@@ -58,6 +59,11 @@ Status: **in progress** — pending B2C tenant + Resend signup.
       `asuid.api.boltmate.app` TXT, apex `boltmate.app` CNAME (proxy on, flattened),
       `www.boltmate.app` CNAME (proxy on), `_dnsauth.boltmate.app` + `_dnsauth.www.boltmate.app` TXT validators
 - [x] Application Insights `boltmate-prod-insights` for Function telemetry
+- [x] Resend signed up + `boltmate.app` domain verified (DKIM + SPF + bounce
+      MX on `send.boltmate.app`). API key stashed in KV.
+- [x] Cloudflare Email Routing enabled on `boltmate.app`. Rule:
+      `support@boltmate.app` → `jaredballen+boltmate@gmail.com`.
+      Catch-all: Drop. CF auto-managed MX + DKIM + SPF records on apex.
 
 ### Phase 1 — Backend completion
 
