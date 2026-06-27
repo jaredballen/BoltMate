@@ -30,26 +30,43 @@ backend completion. Living document — update phase status as work lands.
 
 ### Phase 0 — Infrastructure provisioning
 
-Status: **not started**
+Status: **complete** — Apple/LinkedIn/Facebook/GitHub OAuth IdPs deferred to wire when those provider apps are ready.
 
-- [ ] Azure subscription confirmed, resource group `boltmate-prod` created
-- [ ] B2C tenant provisioned, OAuth providers configured (Apple, Google,
-      LinkedIn, GitHub, Facebook), user flow for sign-up/sign-in
-- [ ] Cosmos DB (Free tier — 1000 RU/s, 25 GB), database `boltmate`,
-      containers `Licenses` + `RefreshLog`
-- [ ] KeyVault provisioned, secrets seeded:
-      `Stripe:SecretKey`, `Stripe:WebhookSecret`, `Resend:ApiKey`,
-      `B2C:ClientId`, `JwtSigningKey` (RSA, managed key)
-- [ ] Function App (Consumption plan) deployed from `BoltMate.LicenseApi`
-      project. Custom domain `api.boltmate.app`.
-- [ ] Storage Account for log blob retention, container `support-bundles`,
+- [x] Azure subscription confirmed + renamed to `BoltMate`, resource group `boltmate-prod` created (eastus2, tagged)
+- [x] Entra External ID tenant `BoltMate` (`boltmateauth.onmicrosoft.com`),
+      app registration `BoltMate` (one app, web + mobile/desktop redirect URIs),
+      user flow `B2C_1_signup_signin` linked. Google IdP wired + tested end-to-end
+      (real Gmail → Google consent → `boltmate.app/auth/callback?code=...`).
+      Apple/LinkedIn/Facebook/GitHub deferred.
+- [x] Cosmos DB Free Tier (`boltmate-prod-cosmos`), database `boltmate`,
+      containers `Licenses` (pk `/email`) + `RefreshLog` (pk `/licenseId`, TTL 30d)
+- [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded:
+      `Stripe--SecretKey` (test mode), `Stripe--PublishableKey` (test),
+      `Stripe--WebhookSecret`, `Resend--ApiKey`, `B2C--ClientId`,
+      `B2C--TenantId`, `B2C--Authority`, RSA key `boltmate-jwt-signing`
+      (2048, sign/verify only).
+- [x] Function App `boltmate-prod-api` (Consumption Linux, dotnet-isolated 10).
+      Custom domain `api.boltmate.app` bound (CNAME + asuid TXT validated).
+      System-assigned managed identity granted KV Secrets User + Crypto User + Cosmos Data Contributor.
+- [x] Storage Account `boltmateprodstorage` (Standard_LRS), container `support-bundles`,
       lifecycle policy: auto-delete after 30 days
-- [ ] Static Web App (Free tier) provisioned, custom domain `boltmate.app`
-- [ ] Stripe: Product `boltmate`, Price `$14.99 one-time USD`
-- [ ] Stripe webhook endpoint → `https://api.boltmate.app/api/stripe-webhook`,
-      events: `checkout.session.completed`, `charge.refunded`, `price.updated`
-- [ ] Stripe restricted API keys: site-build (read prices), webhook (full)
-- [ ] DNS records via Cloudflare for the four hostnames
+- [x] Static Web App `boltmate-prod-web` (Free tier) — apex + www custom domain
+      DNS-TXT validated, SSL certs auto-issued by Azure
+- [x] Stripe: Product `boltmate` (`prod_UmBxsLh8wgbAFZ`), Price `$14.99 one-time USD`
+      (`price_1TmdZyLkIsnQS4tDrUGhDrBg`, lookup key `boltmate_lifetime`)
+- [x] Stripe webhook endpoint `we_1TmeI1LkIsnQS4tDzHOPy6mo` → `https://api.boltmate.app/api/stripe-webhook`,
+      events: `checkout.session.completed`, `charge.refunded`, `price.updated`. Sandbox mode.
+- [ ] Stripe restricted API keys: site-build (read prices), webhook (full) — currently
+      using CLI-generated test key (expires 2026-09-24), swap to Restricted Key before going live
+- [x] DNS records via Cloudflare: `api.boltmate.app` CNAME (proxy off),
+      `asuid.api.boltmate.app` TXT, apex `boltmate.app` CNAME (proxy on, flattened),
+      `www.boltmate.app` CNAME (proxy on), `_dnsauth.boltmate.app` + `_dnsauth.www.boltmate.app` TXT validators
+- [x] Application Insights `boltmate-prod-insights` for Function telemetry
+- [x] Resend signed up + `boltmate.app` domain verified (DKIM + SPF + bounce
+      MX on `send.boltmate.app`). API key stashed in KV.
+- [x] Cloudflare Email Routing enabled on `boltmate.app`. Rule:
+      `support@boltmate.app` → `jaredballen+boltmate@gmail.com`.
+      Catch-all: Drop. CF auto-managed MX + DKIM + SPF records on apex.
 
 ### Phase 1 — Backend completion
 
@@ -152,6 +169,20 @@ Status: **not started**
 - [ ] New `doc/site-architecture.md`: site layout, auth flow, Stripe wiring
 - [ ] Update `doc/licensing_architecture.md` to reflect $14.99 + `sub`-based
       trust ring + auto-trial provisioning
+
+## Deferred from Phase 0
+
+- **Apple + Facebook OAuth IdPs**: original design called for 5 providers
+  (Apple, Google, LinkedIn, GitHub, Facebook). Phase 0 only wired Google.
+  Apple + Facebook step-by-steps in
+  `~/.claude/projects/.../memory/project_todo_oauth_providers.md`.
+  Wire before Phase 2 site launch — visible on `/checkout` sign-in surface.
+- **LinkedIn + GitHub OAuth IdPs**: further deferred. LinkedIn's consumer
+  use case is questionable; GitHub requires custom OIDC provider config
+  (no built-in IdP in Entra External ID).
+- **Stripe live mode**: currently sandbox. Swap to live mode + replace
+  CLI-generated test key with a Restricted Key (read prices for site
+  build, full for webhook handler) before public launch.
 
 ## Open notes / future considerations
 
