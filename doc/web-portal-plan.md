@@ -170,6 +170,20 @@ Status: **not started**
 - [ ] Update `doc/licensing_architecture.md` to reflect $14.99 + `sub`-based
       trust ring + auto-trial provisioning
 
+## Deferred from Phase 0
+
+- **Apple + Facebook OAuth IdPs**: original design called for 5 providers
+  (Apple, Google, LinkedIn, GitHub, Facebook). Phase 0 only wired Google.
+  Apple + Facebook step-by-steps in
+  `~/.claude/projects/.../memory/project_todo_oauth_providers.md`.
+  Wire before Phase 2 site launch — visible on `/checkout` sign-in surface.
+- **LinkedIn + GitHub OAuth IdPs**: further deferred. LinkedIn's consumer
+  use case is questionable; GitHub requires custom OIDC provider config
+  (no built-in IdP in Entra External ID).
+- **Stripe live mode**: currently sandbox. Swap to live mode + replace
+  CLI-generated test key with a Restricted Key (read prices for site
+  build, full for webhook handler) before public launch.
+
 ## Open notes / future considerations
 
 - `auth.boltmate.app` Cloudflare CNAME must be **proxy off** (grey cloud) so
