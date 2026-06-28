@@ -220,7 +220,11 @@ passed Bearer to `/api/entitlement` for license queries and to
 
 See `doc/web-portal-plan.md` for the phased rollout and
 `doc/licensing_architecture.md` for the licensing stack (sections 1–4
-are ground truth; section 5 is design history).
+are ground truth; section 5 is design history). End-to-end test setup
+(local LicenseApi + real Azure backend + Stripe test mode) is in
+`doc/e2e-runbook.md`; the desktop app reads
+`BOLTMATE_LICENSE_BASE_URL` to flip the entitlement endpoint at
+runtime without a rebuild.
 
 ## Pending UX work
 

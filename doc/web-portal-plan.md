@@ -342,6 +342,23 @@ Status: **not started**
 - [ ] Strip the handoff's $29 placeholder; `loadPricing()` already
       ships the live $14.99.
 
+### Phase 9 — End-to-end dev environment
+
+Status: **runbook ready; provisioning is a manual ops step**
+
+- [x] `BOLTMATE_LICENSE_BASE_URL` env var override on the desktop app
+      flips `Issuer` + `EntitlementEndpoint` to `http://localhost:7071`
+      without a rebuild. OAuth keeps hitting the real Entra tenant so
+      the id_token the API receives is genuinely signed.
+- [x] `doc/e2e-runbook.md` walks the 90-min Azure provisioning
+      (Cosmos free tier + KeyVault + RBAC), Stripe test mode setup,
+      Stripe CLI webhook tunnel, three-terminal workflow (`func start`
+      + `stripe listen` + `swa start`), and six smoke scenarios
+      (trial → purchase → refund → delete → price refresh → trial
+      reminder).
+- [ ] Actually provision the test resource group. Manual; rerun
+      annually-ish to keep the env warm.
+
 ## Deferred from Phase 0
 
 - **Apple OAuth IdP**: wired 2026-06-28 (Services ID `app.boltmate.web`,
