@@ -223,8 +223,19 @@ public static class ServiceRegistration
             opts.ServiceName = "BoltMate";
             opts.SecureStoreKey = "com.jaredballen.BoltMate.entitlement";
 
-            opts.Issuer = "https://api.boltmate.app";
-            opts.EntitlementEndpoint = new Uri("https://api.boltmate.app/api/entitlement");
+            // BOLTMATE_LICENSE_BASE_URL override flips Issuer +
+            // EntitlementEndpoint at runtime so a developer can point a
+            // local build at `func start` (typically
+            // http://localhost:7071) without rebuilding. Default is the
+            // production Function App at api.boltmate.app.
+            // The OAuth + KeyVault verify endpoints stay on production —
+            // there's only one Entra tenant + signing key, so localhost
+            // and prod both speak to the same identity backend.
+            var baseUrl = Environment.GetEnvironmentVariable("BOLTMATE_LICENSE_BASE_URL")
+                          ?? "https://api.boltmate.app";
+            baseUrl = baseUrl.TrimEnd('/');
+            opts.Issuer = baseUrl;
+            opts.EntitlementEndpoint = new Uri($"{baseUrl}/api/entitlement");
 
             // Entra External ID OAuth2 endpoints for the BoltMate tenant.
             opts.AuthorizeEndpoint = new Uri(
