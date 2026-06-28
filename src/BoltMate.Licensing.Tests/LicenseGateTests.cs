@@ -22,7 +22,7 @@ public sealed class LicenseGateTests
         var status = await gate.ActivateAsync();
 
         Assert.Equal(LicenseState.Valid, status.State);
-        Assert.Equal(LicenseTier.Pro, status.Tier);
+        Assert.Equal(LicenseTier.Boltmate, status.Tier);
         Assert.Equal("user@example.com", status.Email);
         Assert.True(status.IsEntitled);
     }

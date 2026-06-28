@@ -5,7 +5,7 @@ namespace BoltMate.Licensing;
 
 public sealed record LicenseStatus(
     LicenseState State,
-    LicenseTier Tier,
+    LicenseTier? Tier,
     string? Email,
     string? LicenseId,
     DateTimeOffset? IssuedAt,
@@ -15,5 +15,5 @@ public sealed record LicenseStatus(
     public bool IsEntitled => State is LicenseState.Valid or LicenseState.GracePeriod;
 
     public static LicenseStatus NotActivated { get; } = new(
-        LicenseState.NotActivated, LicenseTier.Free, null, null, null, null, null);
+        LicenseState.NotActivated, null, null, null, null, null, null);
 }
