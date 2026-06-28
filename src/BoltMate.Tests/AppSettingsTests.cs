@@ -11,9 +11,10 @@ public class AppSettingsTests
     {
         var s = new AppSettings();
         Assert.Equal(1, s.Version);
-        Assert.Equal(3, s.HostNames.Length);
         Assert.False(s.TelemetryEnabled);
-        Assert.Empty(s.Receivers);
+        Assert.False(s.HasShownWelcome);
+        Assert.True(s.AutoCheckForUpdates);
+        Assert.NotNull(s.Topology);
     }
 
     [Fact]
@@ -21,22 +22,18 @@ public class AppSettingsTests
     {
         var s = new AppSettings
         {
-            HostNames = ["Work Mac", "Win Box", "Linux Desktop"],
             TelemetryEnabled = true,
+            HasShownWelcome = true,
+            AutoCheckForUpdates = false,
         };
-        s.Receivers["CEB26A"] = new ReceiverSettings
-        {
-            Nickname = "Desk Bolt",
-            HostNames = ["a", "b", "c"],
-        };
+        s.Topology.Enabled = true;
 
         var json = JsonSerializer.Serialize(s);
         var back = JsonSerializer.Deserialize<AppSettings>(json)!;
 
-        Assert.Equal(s.HostNames, back.HostNames);
         Assert.True(back.TelemetryEnabled);
-        Assert.Single(back.Receivers);
-        Assert.Equal("Desk Bolt", back.Receivers["CEB26A"].Nickname);
-        Assert.Equal(new[] { "a", "b", "c" }, back.Receivers["CEB26A"].HostNames);
+        Assert.True(back.HasShownWelcome);
+        Assert.False(back.AutoCheckForUpdates);
+        Assert.True(back.Topology.Enabled);
     }
 }
