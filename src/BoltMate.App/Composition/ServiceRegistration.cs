@@ -141,10 +141,18 @@ public static class ServiceRegistration
         // platform we're on).
         services.AddSingleton<IMachineIdProvider, HardwareMachineIdProvider>();
 
+        // Peer crypto — AES-GCM-wraps every cross-machine UDP + TCP
+        // frame. Key is resolved through IPeerCryptoKeySource (the
+        // LicenseGate). Signed out → no key → topology layer skips
+        // sends and drops receives.
+        services.AddSingleton<IPeerCryptoProvider>(sp => new AesGcmPeerCryptoProvider(
+            () => sp.GetRequiredService<BoltMate.Licensing.IPeerCryptoKeySource>().GetCurrentKey()));
+
         services.AddSingleton<IUdpTopologyService>(sp => new UdpTopologyService(
             sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<AppSettings>(),
             sp.GetRequiredService<IMachineIdProvider>(),
+            peerCrypto: sp.GetRequiredService<IPeerCryptoProvider>(),
             networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
             networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
             logger: sp.GetRequiredService<ILogger<UdpTopologyService>>()));
@@ -152,6 +160,7 @@ public static class ServiceRegistration
         services.AddSingleton<IMdnsTcpChannel>(sp => new MdnsTcpChannel(
             sp.GetRequiredService<IUdpTopologyService>(),
             sp.GetRequiredService<AppSettings>(),
+            peerCrypto: sp.GetRequiredService<IPeerCryptoProvider>(),
             networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
             networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
             logger: sp.GetRequiredService<ILogger<MdnsTcpChannel>>()));

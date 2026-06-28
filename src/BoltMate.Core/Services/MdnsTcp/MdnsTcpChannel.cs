@@ -39,6 +39,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private readonly IUdpTopologyService _udp;
     private readonly TopologySettings _settings;
     private readonly string _machineId;
+    private readonly IPeerCryptoProvider? _peerCrypto;
     private readonly ILogger<MdnsTcpChannel> _logger;
     private readonly CompositeDisposable _disposables = new();
     private readonly ConcurrentDictionary<string, TcpClient> _peerClients = new(StringComparer.OrdinalIgnoreCase);
@@ -171,12 +172,13 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     public MdnsTcpChannel(
         IUdpTopologyService udp,
         AppSettings appSettings,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<MdnsTcpChannel>? logger = null,
         TimeProvider? timeProvider = null)
         : this(udp, appSettings.Topology, udp.MachineId,
-               networkPermission, networkAvailability, logger, timeProvider)
+               peerCrypto, networkPermission, networkAvailability, logger, timeProvider)
     {
     }
 
@@ -188,6 +190,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         IUdpTopologyService udp,
         TopologySettings settings,
         string machineId,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<MdnsTcpChannel>? logger = null,
@@ -196,6 +199,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         _udp = udp;
         _settings = settings;
         _machineId = machineId;
+        _peerCrypto = peerCrypto;
         _networkPermission = networkPermission;
         _networkAvailability = networkAvailability;
         _permGranted = networkPermission?.IsGranted ?? true;
@@ -562,13 +566,37 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
                 var got = await ReadExactAsync(stream, lengthBuf, ct).ConfigureAwait(false);
                 if (!got) return;
                 var len = BitConverter.ToInt32(lengthBuf, 0);
-                if (len <= 0 || len > 64 * 1024) return; // sanity cap (64KB)
+                // Sanity cap. Plain ReceiverAnnouncement is tiny;
+                // log-bundle responses (#99) can run several MB. 12 MB
+                // is generous and still bounds memory for a single
+                // hostile frame.
+                if (len <= 0 || len > 12 * 1024 * 1024) return;
                 var payload = new byte[len];
                 if (!await ReadExactAsync(stream, payload, ct).ConfigureAwait(false)) return;
 
                 try
                 {
-                    var announcement = JsonSerializer.Deserialize(payload,
+                    // Decrypt mirror of UdpTopologyService — successful
+                    // decrypt is the trust signal that the sender is on
+                    // the same account. Same fallback ladder: legacy
+                    // tests with no crypto wired accept plaintext;
+                    // crypto wired but signed-out drops every frame.
+                    byte[] plaintext;
+                    if (_peerCrypto is { HasKey: true })
+                    {
+                        if (!_peerCrypto.TryDecrypt(payload, out plaintext))
+                            continue;
+                    }
+                    else if (_peerCrypto is null)
+                    {
+                        plaintext = payload;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    var announcement = JsonSerializer.Deserialize(plaintext,
                         ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                     if (announcement is not null)
                         _udp.InjectInbound(announcement, "tcp");
@@ -698,7 +726,23 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private void BroadcastToPeers(ReceiverAnnouncement ann)
     {
         if (_peerClients.IsEmpty) return;
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(ann, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(ann, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+
+        byte[] bytes;
+        if (_peerCrypto is { HasKey: true })
+        {
+            if (!_peerCrypto.TryEncrypt(plaintext, out bytes))
+                return; // race: key wiped between HasKey + TryEncrypt
+        }
+        else if (_peerCrypto is null)
+        {
+            bytes = plaintext;
+        }
+        else
+        {
+            return; // crypto wired but signed out — drop fan-out
+        }
+
         var prefix = BitConverter.GetBytes(bytes.Length);
 
         foreach (var (peerId, client) in _peerClients)

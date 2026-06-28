@@ -38,6 +38,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
     private readonly TopologySettings _settings;
     private readonly string _machineId;
     private readonly string _hostname;
+    private readonly IPeerCryptoProvider? _peerCrypto;
     private readonly ILogger<UdpTopologyService> _logger;
     private readonly Subject<ReceiverAnnouncement> _announcements = new();
     private readonly Subject<ReceiverAnnouncement> _outgoing = new();
@@ -136,12 +137,13 @@ public sealed class UdpTopologyService : IUdpTopologyService
         IReceiverManager manager,
         AppSettings appSettings,
         IMachineIdProvider machineIds,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<UdpTopologyService>? logger = null,
         TimeProvider? timeProvider = null)
         : this(manager, appSettings.Topology, machineIds.GetMachineId(),
-               networkPermission, networkAvailability, logger, timeProvider)
+               peerCrypto, networkPermission, networkAvailability, logger, timeProvider)
     {
     }
 
@@ -153,6 +155,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         IReceiverManager manager,
         TopologySettings settings,
         string machineId,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<UdpTopologyService>? logger = null,
@@ -162,6 +165,7 @@ public sealed class UdpTopologyService : IUdpTopologyService
         _settings = settings;
         _machineId = machineId;
         _hostname = SafeHostname();
+        _peerCrypto = peerCrypto;
         _networkPermission = networkPermission;
         _networkAvailability = networkAvailability;
         _permGranted = networkPermission?.IsGranted ?? true;
@@ -474,7 +478,33 @@ public sealed class UdpTopologyService : IUdpTopologyService
 
                 var seq = (ulong)Interlocked.Increment(ref _nextSeq);
                 var payload = BuildAnnouncement(seq);
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+                var plaintext = JsonSerializer.SerializeToUtf8Bytes(payload, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+
+                // Encrypt the announcement when peer crypto is wired and
+                // a key is loaded. No key = signed-out / dev / tests; in
+                // that case we skip the broadcast entirely rather than
+                // send plaintext that other accounts on the LAN could
+                // read or spoof.
+                byte[] bytes;
+                if (_peerCrypto is { HasKey: true })
+                {
+                    if (!_peerCrypto.TryEncrypt(plaintext, out bytes))
+                    {
+                        goto sleep; // race: key was wiped between HasKey + TryEncrypt
+                    }
+                }
+                else if (_peerCrypto is null)
+                {
+                    // No crypto wired at all (tests / legacy ctor): send
+                    // plaintext to preserve existing behavior.
+                    bytes = plaintext;
+                }
+                else
+                {
+                    // Crypto wired but signed-out — skip the tick.
+                    goto sleep;
+                }
+
                 try { _outgoing.OnNext(payload); } catch { /* observers must not block sends */ }
                 _outboundTracking[seq] = new OutboundTrack(_time.GetUtcNow());
                 var endpoints = AllEndpoints();
@@ -549,7 +579,29 @@ public sealed class UdpTopologyService : IUdpTopologyService
 
             try
             {
-                var announcement = JsonSerializer.Deserialize(result.Buffer, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+                // Try-decrypt first when crypto is wired. A successful
+                // decrypt is proof the sender holds our account's
+                // SyncKey — every other BoltMate user on the LAN
+                // (different account, or no account) silently fails
+                // here. When crypto isn't wired, fall back to treating
+                // the buffer as raw plaintext for backwards compat.
+                byte[] plaintext;
+                if (_peerCrypto is { HasKey: true })
+                {
+                    if (!_peerCrypto.TryDecrypt(result.Buffer, out plaintext))
+                        continue; // wrong account / tamper / foreign traffic
+                }
+                else if (_peerCrypto is null)
+                {
+                    plaintext = result.Buffer;
+                }
+                else
+                {
+                    // Crypto wired but signed-out — drop everything.
+                    continue;
+                }
+
+                var announcement = JsonSerializer.Deserialize(plaintext, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
                 if (announcement is null) continue;
                 HandleInbound(announcement, "udp");
             }
