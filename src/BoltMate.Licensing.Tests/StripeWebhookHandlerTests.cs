@@ -142,6 +142,7 @@ public sealed class StripeWebhookHandlerTests
         var handler = new StripeWebhookHandler(
             Options.Create(new LicenseApiOptions { StripeWebhookSecret = "whsec_test" }),
             fakes.Licenses,
+            fakes.Emails,
             NullLogger<StripeWebhookHandler>.Instance);
         return (handler, fakes);
     }
@@ -183,5 +184,6 @@ public sealed class StripeWebhookHandlerTests
     internal sealed class Fakes
     {
         public FakeLicenseRepository Licenses { get; } = new();
+        public FakeEmailNotifier Emails { get; } = new();
     }
 }

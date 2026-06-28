@@ -30,12 +30,14 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
 {
     private readonly LicenseApiOptions _options;
     private readonly ILicenseRepository _licenses;
+    private readonly IEmailNotifier _notifier;
     private readonly ILogger<StripeWebhookHandler> _log;
 
-    public StripeWebhookHandler(IOptions<LicenseApiOptions> options, ILicenseRepository licenses, ILogger<StripeWebhookHandler> log)
+    public StripeWebhookHandler(IOptions<LicenseApiOptions> options, ILicenseRepository licenses, IEmailNotifier notifier, ILogger<StripeWebhookHandler> log)
     {
         _options = options.Value;
         _licenses = licenses;
+        _notifier = notifier;
         _log = log;
     }
 
@@ -107,6 +109,7 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
             existing.StripePaymentIntentId = session.PaymentIntentId;
             await _licenses.UpsertAsync(existing, ct).ConfigureAwait(false);
             _log.LogInformation("Upgraded {LicenseId} → Boltmate for {Email}.", existing.Id, email);
+            await _notifier.PurchaseConfirmationAsync(email, existing.Id, ct).ConfigureAwait(false);
             return;
         }
 
@@ -137,6 +140,7 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
         await _licenses.UpsertAsync(record, ct).ConfigureAwait(false);
         _log.LogInformation("Issued {LicenseId} (Boltmate) to {Email} from session {SessionId}.",
             record.Id, email, session.Id);
+        await _notifier.PurchaseConfirmationAsync(email, record.Id, ct).ConfigureAwait(false);
     }
 
     private async Task HandleRefundOrDisputeAsync(Charge charge, CancellationToken ct)

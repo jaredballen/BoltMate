@@ -127,7 +127,7 @@ public sealed class SupportFunctionTests
     {
         var fakes = new Fakes();
         var fn = new SupportFunction(
-            fakes.IdTokens, fakes.Bundles, fakes.Sink,
+            fakes.IdTokens, fakes.Bundles, fakes.Sink, fakes.Emails,
             Options.Create(new LicenseApiOptions { SupportBundleMaxSizeMB = maxMB }),
             NullLogger<SupportFunction>.Instance);
         return (fn, fakes);
@@ -184,5 +184,6 @@ public sealed class SupportFunctionTests
         public FakeIdTokenValidator IdTokens { get; } = new();
         public FakeSupportBundleStore Bundles { get; } = new();
         public FakeSupportTicketSink Sink { get; } = new();
+        public FakeEmailNotifier Emails { get; } = new();
     }
 }

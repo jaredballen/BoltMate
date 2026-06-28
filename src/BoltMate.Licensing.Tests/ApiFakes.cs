@@ -57,6 +57,57 @@ internal sealed class FakeLicenseRepository : ILicenseRepository
         if (!ByEmail.Remove(email)) return Task.FromResult(0);
         return Task.FromResult(1);
     }
+
+    public Task<IReadOnlyList<LicenseRecord>> ListActiveTrialsExpiringBetweenAsync(
+        DateTimeOffset from, DateTimeOffset to, string notifiedFlag, CancellationToken ct = default)
+    {
+        Func<LicenseRecord, bool> flagFalse = notifiedFlag switch
+        {
+            "t3" => r => !r.TrialNotifiedT3,
+            "t1" => r => !r.TrialNotifiedT1,
+            "expired" => r => !r.TrialNotifiedExpired,
+            _ => throw new ArgumentOutOfRangeException(nameof(notifiedFlag)),
+        };
+        var hits = ByEmail.Values
+            .Where(r => r.Tier == BoltMate.Licensing.Contracts.LicenseTier.Trial
+                        && r.Status == "active"
+                        && r.ExpiresAt is { } e && e >= from && e < to
+                        && flagFalse(r))
+            .ToList();
+        return Task.FromResult<IReadOnlyList<LicenseRecord>>(hits);
+    }
+}
+
+internal sealed class FakeEmailNotifier : IEmailNotifier
+{
+    public List<(string To, string LicenseId)> Purchase { get; } = new();
+    public List<(string To, int DaysLeft, DateTimeOffset Expires)> TrialEnding { get; } = new();
+    public List<string> Expired { get; } = new();
+    public List<(string To, string Subject)> SupportAck { get; } = new();
+
+    public Task PurchaseConfirmationAsync(string toEmail, string licenseId, CancellationToken ct = default)
+    {
+        Purchase.Add((toEmail, licenseId));
+        return Task.CompletedTask;
+    }
+
+    public Task TrialEndingAsync(string toEmail, int daysLeft, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        TrialEnding.Add((toEmail, daysLeft, expiresAt));
+        return Task.CompletedTask;
+    }
+
+    public Task TrialExpiredAsync(string toEmail, CancellationToken ct = default)
+    {
+        Expired.Add(toEmail);
+        return Task.CompletedTask;
+    }
+
+    public Task SupportTicketAckAsync(string toEmail, string subject, CancellationToken ct = default)
+    {
+        SupportAck.Add((toEmail, subject));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class FakeIdTokenValidator : IIdTokenValidator
