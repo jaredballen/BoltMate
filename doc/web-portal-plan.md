@@ -70,22 +70,57 @@ Status: **complete** — Apple/LinkedIn/Facebook/GitHub OAuth IdPs deferred to w
 
 ### Phase 1 — Backend completion
 
-Status: **not started**
+Status: **complete**
 
-- [ ] Rename `LicenseSkus.Pro = "boltmate-pro"` → `LicenseSkus.Boltmate = "boltmate"`
-- [ ] Add `LicenseTier.Trial`, update enum order if needed
-- [ ] `EntitlementFunction`: auto-provision 14-day Trial on first hit with no
-      license. Bind to verified email from B2C ID token. Hardware-ID hash anti-
-      abuse: block re-trial within 12 months.
-- [ ] `StripeWebhookFunction`: handle `checkout.session.completed` →
-      upgrade Trial → Boltmate, set `ExpiresAt = null`. Handle `charge.refunded`
-      → set status `Revoked`. Idempotent on retries (use `event.id` dedup).
-- [ ] `SupportFunction`: accept multipart (description, email, optional
-      zip). Bearer token optional — if present, validate via `IIdTokenValidator`
-      and use token's email; else require submitted email. Write zip to
-      Blob Storage. Resend email with download link.
-- [ ] Backend tests: trial provisioning, Stripe webhook idempotency,
-      support function multipart, refund flow
+- [x] Rename `LicenseSkus.Pro = "boltmate-pro"` → `LicenseSkus.Boltmate = "boltmate"`
+- [x] `LicenseTier` enum: dropped `Free`; only `Trial=1` and `Boltmate=2`
+      remain. `LicenseStatus.Tier` is nullable for unentitled states
+      (NotActivated / Revoked / SignatureInvalid). `JwtVerifier` rejects
+      JWTs whose tier claim isn't a known value (was silently defaulting
+      to Free, which no longer exists).
+- [x] `EntitlementFunction` auto-provisions a 14-day Trial on first hit
+      w/ no license. Optional `hardware_id_hash` body field gates the
+      12-month re-trial block (configurable via `TrialReuseBlockDays`).
+      JWT `ExpiresAt` clamped to the license's own `ExpiresAt` so a
+      14-day Trial can't hand out a 30-day refresh token. New
+      `trial_reused` error code on `EntitlementErrorCodes`. New
+      `EntitlementRequest` wire type with optional `hardware_id_hash`.
+- [x] `StripeWebhookHandler` completion:
+      - `checkout.session.completed` upgrades existing Trial → Boltmate
+        in place. Preserves `HardwareIdHash` + `TrialOriginAt` so the
+        12-month block survives any future refund. Fresh purchase (no
+        prior Trial) creates a Boltmate record directly. Idempotent via
+        tier+SessionId equality check on re-delivery.
+      - `charge.refunded` / `charge.dispute.created` reverse-lookup by
+        Stripe `PaymentIntentId` → `status="revoked"`, tier → Trial,
+        `ExpiresAt` → `RevokedAt`. Idempotent via already-revoked check.
+      - Internal `DispatchAsync(Event)` seam exposed via
+        `InternalsVisibleTo` so tests can skip signature verification.
+- [x] `SupportFunction` rewritten for dual content-type:
+      `application/json` (anonymous site form) and `multipart/form-data`
+      (in-app "Send logs" with bundle attachment). Optional Bearer ID
+      token validated via `IIdTokenValidator` — when present, overrides
+      submitted email and tags `source=authenticated`. New
+      `ISupportBundleStore` + `BlobSupportBundleStore` upload bundles to
+      Azure Storage `support-bundles` container via the Function App's
+      managed identity and return a user-delegation SAS URL (30-day
+      default, matched by storage lifecycle auto-delete). Hard cap on
+      bundle size via `SupportBundleMaxSizeMB` (default 25 MB).
+      `SupportTicket` carries `BundleUrl` + `BundleSizeBytes` + `Source`
+      through to `ResendSupportTicketSink`.
+- [x] Backend tests: 18 new (EntitlementFunctionTests×7,
+      StripeWebhookHandlerTests×6, SupportFunctionTests×6) + the
+      existing 12 = 31 total in `BoltMate.Licensing.Tests`, all passing.
+      `ApiFakes.cs` provides in-memory doubles for the seven service
+      interfaces touched in Phase 1.
+
+Tooling changes:
+- `Microsoft.Azure.Functions.Worker.*` 2.0.0 → 2.0.7 (.NET 10 compat)
+- `Azure.Identity` 1.13.1 → 1.17.0 (transitive minimum)
+- New package `Azure.Storage.Blobs` for support bundle uploads
+- `BoltMate.LicenseApi` granted the `Storage Blob Data Contributor`
+  role on `boltmateprodstorage` so the managed identity can write to
+  `support-bundles` and mint user-delegation SAS tokens.
 
 ### Phase 2 — Site MVP
 
