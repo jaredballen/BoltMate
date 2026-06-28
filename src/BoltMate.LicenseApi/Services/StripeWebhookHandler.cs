@@ -42,7 +42,14 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
     public async Task HandleAsync(string payload, string signature, CancellationToken ct = default)
     {
         var stripeEvent = EventUtility.ConstructEvent(payload, signature, _options.StripeWebhookSecret);
+        await DispatchAsync(stripeEvent, ct).ConfigureAwait(false);
+    }
 
+    // Internal seam — lets tests skip signature verification by handing
+    // in an already-parsed Event. Production caller always goes through
+    // HandleAsync which performs the signature check first.
+    internal async Task DispatchAsync(Event stripeEvent, CancellationToken ct = default)
+    {
         switch (stripeEvent.Type)
         {
             case "checkout.session.completed":

@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BoltMate.Licensing\BoltMate.Licensing.csproj" />
     <ProjectReference Include="..\BoltMate.Licensing.Contracts\BoltMate.Licensing.Contracts.csproj" />
+    <ProjectReference Include="..\BoltMate.LicenseApi\BoltMate.LicenseApi.csproj" />
   </ItemGroup>
 
 </Project>
