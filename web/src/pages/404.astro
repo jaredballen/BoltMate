@@ -1,0 +1,25 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Not found — BoltMate" pathname="/404">
+  <section class="section nf">
+    <div class="container nf-inner">
+      <p class="eyebrow">404</p>
+      <h1>This page is on a different host.</h1>
+      <p>Press Easy-Switch on the keyboard, or go back home.</p>
+      <a href="/" class="btn btn-primary">Back to BoltMate</a>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .nf {
+    min-height: 50vh;
+    display: grid;
+    place-items: center;
+    text-align: center;
+  }
+  .nf-inner { max-width: 520px; }
+  .nf p { font-size: 1.05rem; color: var(--bm-fg-secondary); margin: 12px 0 20px; }
+</style>
