@@ -445,6 +445,11 @@ public partial class App : Application
 
     private void StartPermissionWatchdog(ILogger log)
     {
+        // Eager-resolve so its IUdpTopologyService.Announcements
+        // subscription is live as soon as the topology stack starts.
+        var hostnameAdvisor = Services.GetRequiredService<HostnameAdvisoryService>();
+        _disposables.Add(hostnameAdvisor);
+
         // AppHealthService is now DI-resolved. Wire its observable to the
         // tray + OS notification side-effects from here so the service
         // itself stays pure.

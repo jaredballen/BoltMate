@@ -171,6 +171,18 @@ public static class ServiceRegistration
             sp.GetRequiredService<IUdpTopologyService>(),
             sp.GetRequiredService<ILogger<TopologyCorrelator>>()));
 
+        // Hostname-mismatch advisor — fires when a peer's announced
+        // hostname doesn't appear in any local device's HostBindings,
+        // i.e. the user has signed into BoltMate on another machine
+        // but hasn't paired the peripherals there yet. The peer-
+        // message crypto layer (#104) now owns the trust ring, so
+        // hostname mismatch is a UX hint rather than a security
+        // check.
+        services.AddSingleton<HostnameAdvisoryService>(sp => new HostnameAdvisoryService(
+            sp.GetRequiredService<IUdpTopologyService>(),
+            sp.GetRequiredService<IReceiverManager>(),
+            sp.GetRequiredService<ILogger<HostnameAdvisoryService>>()));
+
         // App health monitor. Pure observable surface — the App layer
         // subscribes to Health to wire tray badges + OS notifications.
         services.AddSingleton<IAppHealthService>(sp => new AppHealthService(
