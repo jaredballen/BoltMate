@@ -3,6 +3,7 @@ using System;
 using BoltMate.App.Services;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;
+using BoltMate.Core.Topology;
 using BoltMate.Hid.Abstractions;
 using BoltMate.Licensing.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;
@@ -134,9 +135,16 @@ public static class ServiceRegistration
         // is called. The Settings → Network toggle calls Start/Stop on
         // these instead of destroying and re-creating, so the DI graph
         // stays simple.
+        // Hardware-derived MachineId — same value across reboots, no
+        // persisted GUID in AppSettings. Salted SHA-256 of the OS
+        // IOPlatformUUID / MachineGuid / /etc/machine-id (whichever
+        // platform we're on).
+        services.AddSingleton<IMachineIdProvider, HardwareMachineIdProvider>();
+
         services.AddSingleton<IUdpTopologyService>(sp => new UdpTopologyService(
             sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<AppSettings>(),
+            sp.GetRequiredService<IMachineIdProvider>(),
             networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
             networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
             logger: sp.GetRequiredService<ILogger<UdpTopologyService>>()));

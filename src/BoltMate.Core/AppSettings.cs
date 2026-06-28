@@ -112,9 +112,6 @@ public sealed class TopologySettings
     /// </summary>
     public int CorrelationWindowSeconds { get; set; } = 3;
 
-    /// <summary>Stable machine id (UUID). Auto-generated on first save.</summary>
-    public string? MachineId { get; set; }
-
     /// <summary>
     /// How many times each announcement is sent back-to-back. Cheap insurance
     /// against single dropped UDP packets — receivers dedup by (machineId, Seq).
