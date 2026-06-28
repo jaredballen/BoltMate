@@ -78,6 +78,16 @@ internal sealed class FakeLicenseRepository : ILicenseRepository
     }
 }
 
+internal sealed class FakeGitHubDispatcher : IGitHubDispatcher
+{
+    public List<(string EventType, object? Payload)> Dispatches { get; } = new();
+    public Task DispatchAsync(string eventType, object? clientPayload, CancellationToken ct = default)
+    {
+        Dispatches.Add((eventType, clientPayload));
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class FakeEmailNotifier : IEmailNotifier
 {
     public List<(string To, string LicenseId)> Purchase { get; } = new();
