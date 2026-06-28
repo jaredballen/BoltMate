@@ -21,6 +21,14 @@ public sealed class LicenseApiOptions
     public string StripeWebhookSecret { get; set; } = string.Empty;
     public string StripeSecretKey { get; set; } = string.Empty;
 
+    /// <summary>Stable Stripe Price lookup key used by the Checkout
+    /// Session. Insulates code from Price ID rotations.</summary>
+    public string StripePriceLookupKey { get; set; } = "boltmate_lifetime";
+
+    /// <summary>Site URL the Checkout success / cancel return paths
+    /// hang off. e.g. <c>https://boltmate.app</c>.</summary>
+    public string SiteOrigin { get; set; } = "https://boltmate.app";
+
     public string SupportEmailTo { get; set; } = string.Empty;
     public string ResendApiKey { get; set; } = string.Empty;
 
