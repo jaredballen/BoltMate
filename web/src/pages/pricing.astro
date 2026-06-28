@@ -1,0 +1,191 @@
+---
+import Base from "../layouts/Base.astro";
+import { loadPricing } from "../lib/pricing.ts";
+
+const pricing = await loadPricing();
+
+const faq = [
+  {
+    q: "What hardware do I need?",
+    a: "A shared Logitech Bolt receiver and at least one paired Logitech peripheral (keyboard / mouse / headset) that supports Easy-Switch. BoltMate is a companion to Logi Options+ — you'll still pair and rename devices there.",
+  },
+  {
+    q: "Does it replace Logi Options+ Flow?",
+    a: "No. Flow keeps doing its single-device thing. BoltMate listens for Flow's host changes and fans the same switch out to your other paired devices and across the LAN to your other machines.",
+  },
+  {
+    q: "What's the 14-day trial?",
+    a: "Sign in once. We provision a trial license bound to your account. After 14 days you'll need to buy the lifetime license to keep using BoltMate. No card required to start.",
+  },
+  {
+    q: "What does the license cover?",
+    a: "Every machine you sign into. The license is bound to your email; there's no per-seat or per-device count. Use it on your Mac and your Windows desktop and a laptop — all yours.",
+  },
+];
+---
+
+<Base title="Pricing — BoltMate" pathname="/pricing">
+  <section class="section pricing-hero">
+    <div class="container">
+      <p class="eyebrow">Pricing</p>
+      <h1>One price. Every device. Every desk.</h1>
+      <p class="lede">
+        Sign in to start. Try BoltMate free for 14 days, then buy
+        the lifetime license once and it works on every machine you
+        log into.
+      </p>
+    </div>
+  </section>
+
+  <section class="section pricing-cards-section">
+    <div class="container pricing-grid">
+      <article class="plan plan-trial">
+        <header>
+          <p class="plan-label">Trial</p>
+          <p class="plan-amount">Free <span>for 14 days</span></p>
+        </header>
+        <ul>
+          <li>Full BoltMate functionality</li>
+          <li>Every paired device, every machine you sign into</li>
+          <li>No card required</li>
+        </ul>
+        <a href="https://github.com/jaredballen/BoltMate/releases/latest" class="btn btn-outline">Download &amp; sign in</a>
+        <p class="plan-fineprint">Mac (Apple Silicon &amp; Intel) · Windows 11 · sideload installer</p>
+      </article>
+
+      <article class="plan plan-buy" id="buy">
+        <header>
+          <p class="plan-label">Lifetime</p>
+          <p class="plan-amount">
+            {pricing.amount} <span>once</span>
+          </p>
+        </header>
+        <ul>
+          <li>Everything in Trial, forever</li>
+          <li>One purchase covers every machine you sign into</li>
+          <li>Refundable for 14 days, no questions</li>
+        </ul>
+        <a href="/checkout" class="btn btn-primary">Buy lifetime — {pricing.amount}</a>
+        <p class="plan-fineprint">
+          {pricing.fromFallback
+            ? "Showing default price — live Stripe lookup will replace this on deploy."
+            : `Charged via Stripe in ${pricing.currency}.`}
+        </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section faq-section">
+    <div class="container">
+      <p class="eyebrow">Questions</p>
+      <h2>Common things people ask.</h2>
+      <dl class="faq">
+        {faq.map((item) => (
+          <div class="faq-item">
+            <dt>{item.q}</dt>
+            <dd>{item.a}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .pricing-hero {
+    padding-block: 72px 32px;
+    background:
+      radial-gradient(60% 80% at 30% 0%, var(--bm-green-tint-08), transparent 70%),
+      var(--bm-bg);
+  }
+  .pricing-hero h1 { max-width: 18ch; }
+  .lede { font-size: 1.125rem; color: var(--bm-fg-secondary); max-width: 56ch; }
+
+  .pricing-cards-section { padding-top: 0; }
+  .pricing-grid {
+    display: grid;
+    gap: 22px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  @media (max-width: 820px) {
+    .pricing-grid { grid-template-columns: 1fr; }
+  }
+  .plan {
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-lg);
+    padding: 28px;
+    display: grid;
+    gap: 18px;
+    align-content: start;
+  }
+  .plan-buy {
+    border-color: var(--bm-green);
+    box-shadow: 0 24px 80px -30px var(--bm-green-tint-40);
+  }
+  .plan header { display: grid; gap: 6px; }
+  .plan-label {
+    font-family: var(--bm-font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--bm-fg-tertiary);
+    margin: 0;
+  }
+  .plan-buy .plan-label { color: var(--bm-green); }
+  .plan-amount {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--bm-fg);
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .plan-amount span {
+    display: inline-block;
+    font-size: 0.95rem;
+    color: var(--bm-fg-tertiary);
+    font-weight: 500;
+    margin-left: 6px;
+    letter-spacing: 0;
+  }
+  .plan ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  .plan ul li {
+    color: var(--bm-fg-secondary);
+    padding-left: 20px;
+    position: relative;
+  }
+  .plan ul li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--bm-green);
+  }
+  .plan .btn { justify-self: start; }
+  .plan-fineprint { margin: 0; font-size: 0.82rem; color: var(--bm-fg-tertiary); }
+
+  .faq-section {
+    padding-block: var(--bm-rhythm);
+    background: var(--bm-bg-band);
+    border-block: 1px solid var(--bm-stroke);
+  }
+  .faq {
+    display: grid;
+    gap: 18px;
+    margin: 28px 0 0;
+  }
+  .faq-item {
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-md);
+    padding: 20px 22px;
+  }
+  .faq-item dt {
+    font-weight: 600;
+    color: var(--bm-fg);
+    margin-bottom: 8px;
+  }
+  .faq-item dd {
+    margin: 0;
+    color: var(--bm-fg-secondary);
+  }
+</style>
