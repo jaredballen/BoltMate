@@ -113,6 +113,13 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
         // No existing license — fresh purchase before any Trial provision
         // (rare: user purchased directly from the site without ever launching
         // the desktop app). Create the record straight at Boltmate tier.
+        // Mint a SyncKey here too so the peer-message envelope works on
+        // first launch; EntitlementFunction's lazy-fill would also cover
+        // it but seeding at creation keeps the row in a complete state
+        // immediately.
+        var syncKey = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(syncKey);
+
         var record = new LicenseRecord
         {
             Id = $"lic_{Guid.NewGuid():N}",
@@ -125,6 +132,7 @@ internal sealed class StripeWebhookHandler : IStripeWebhookHandler
             StripeCustomerId = session.CustomerId,
             StripeCheckoutSessionId = session.Id,
             StripePaymentIntentId = session.PaymentIntentId,
+            SyncKeyBase64 = Convert.ToBase64String(syncKey),
         };
         await _licenses.UpsertAsync(record, ct).ConfigureAwait(false);
         _log.LogInformation("Issued {LicenseId} (Boltmate) to {Email} from session {SessionId}.",
