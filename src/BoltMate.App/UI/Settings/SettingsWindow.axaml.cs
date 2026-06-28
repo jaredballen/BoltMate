@@ -56,14 +56,21 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
         Closed += (_, _) => ViewModel?.TeardownActivation();
     }
 
+    private BoltMate.App.Services.Support.SupportSubmissionService? _support;
+    private BoltMate.Licensing.ILicenseGate? _licenseGate;
+
     public SettingsWindow(
         IReceiverManager manager,
         AppSettings settings,
         IPermissionsService permissions,
         BoltMate.App.Core.Notifications.INotificationService? notifications = null,
         IObservable<TransportHealth>? udpHealth = null,
-        IObservable<TransportHealth>? syncHealth = null) : this()
+        IObservable<TransportHealth>? syncHealth = null,
+        BoltMate.App.Services.Support.SupportSubmissionService? support = null,
+        BoltMate.Licensing.ILicenseGate? licenseGate = null) : this()
     {
+        _support = support;
+        _licenseGate = licenseGate;
         ViewModel = new SettingsViewModel(
             manager,
             settings,
@@ -73,7 +80,9 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
             udpHealth,
             syncHealth,
             peerAnnouncementsProvider: () => PeerAnnouncementsProvider?.Invoke() ?? Array.Empty<ReceiverAnnouncement>(),
-            peerStatsProvider: () => PeerStatsProvider?.Invoke() ?? Array.Empty<PeerStats>());
+            peerStatsProvider: () => PeerStatsProvider?.Invoke() ?? Array.Empty<PeerStats>(),
+            support: support,
+            licenseGate: licenseGate);
     }
 
     private bool _hibernating;
@@ -126,7 +135,9 @@ public partial class SettingsWindow : ReactiveWindow<SettingsViewModel>
             udpHealth,
             syncHealth,
             peerAnnouncementsProvider: () => PeerAnnouncementsProvider?.Invoke() ?? Array.Empty<ReceiverAnnouncement>(),
-            peerStatsProvider: () => PeerStatsProvider?.Invoke() ?? Array.Empty<PeerStats>());
+            peerStatsProvider: () => PeerStatsProvider?.Invoke() ?? Array.Empty<PeerStats>(),
+            support: _support,
+            licenseGate: _licenseGate);
         if (IsVisible) ViewModel.WireActivation();
     }
 

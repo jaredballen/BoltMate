@@ -406,9 +406,45 @@ public sealed class SettingsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> OpenNetworkSettingsCommand { get; }
     public ReactiveCommand<Unit, Unit> CheckForUpdatesCommand { get; }
     public ReactiveCommand<Unit, Unit> OpenLogsFolderCommand { get; }
+    public ReactiveCommand<Unit, Unit> SendLogsCommand { get; private set; } = null!;
     public ReactiveCommand<Unit, Unit> OpenNotificationSettingsCommand { get; }
+
+    private string _sendLogsMessage = string.Empty;
+    public string SendLogsMessage
+    {
+        get => _sendLogsMessage;
+        set => this.RaiseAndSetIfChanged(ref _sendLogsMessage, value);
+    }
+
+    private string _sendLogsEmail = string.Empty;
+    public string SendLogsEmail
+    {
+        get => _sendLogsEmail;
+        set => this.RaiseAndSetIfChanged(ref _sendLogsEmail, value);
+    }
+
+    private string _sendLogsStatus = string.Empty;
+    public string SendLogsStatus
+    {
+        get => _sendLogsStatus;
+        set => this.RaiseAndSetIfChanged(ref _sendLogsStatus, value);
+    }
+
+    private bool _sendLogsBusy;
+    public bool SendLogsBusy
+    {
+        get => _sendLogsBusy;
+        set => this.RaiseAndSetIfChanged(ref _sendLogsBusy, value);
+    }
+
+    /// <summary>True when we have a Bearer email cached from the License gate. UI hides the email field then.</summary>
+    public bool SendLogsRequiresEmail => _supportEmailIsImplicit is false;
+
+    private bool _supportEmailIsImplicit;
     /// <summary>Nav-button-bound tab switcher. Parameter is a tab key constant.</summary>
     public ReactiveCommand<string, Unit> SelectTabCommand { get; }
+
+    private readonly BoltMate.App.Services.Support.SupportSubmissionService? _support;
 
     public SettingsViewModel(
         IReceiverManager manager,
@@ -419,8 +455,12 @@ public sealed class SettingsViewModel : ViewModelBase
         IObservable<TransportHealth>? udpHealth = null,
         IObservable<TransportHealth>? syncHealth = null,
         Func<IEnumerable<ReceiverAnnouncement>>? peerAnnouncementsProvider = null,
-        Func<IEnumerable<PeerStats>>? peerStatsProvider = null)
+        Func<IEnumerable<PeerStats>>? peerStatsProvider = null,
+        BoltMate.App.Services.Support.SupportSubmissionService? support = null,
+        BoltMate.Licensing.ILicenseGate? licenseGate = null)
     {
+        _support = support;
+        _supportEmailIsImplicit = licenseGate?.Current.IsEntitled == true && !string.IsNullOrEmpty(licenseGate.Current.Email);
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(permissions);
@@ -460,6 +500,10 @@ public sealed class SettingsViewModel : ViewModelBase
             this.WhenAnyValue(x => x.CanCheckForUpdates));
 
         OpenLogsFolderCommand = ReactiveCommand.Create(() => RevealInFileManager(AppPaths.LogsDirectory));
+
+        SendLogsCommand = ReactiveCommand.CreateFromTask(SendLogsAsync,
+            this.WhenAnyValue(x => x.SendLogsBusy, x => x.SendLogsMessage,
+                (busy, msg) => !busy && !string.IsNullOrWhiteSpace(msg)));
 
         OpenNotificationSettingsCommand = ReactiveCommand.Create(() =>
         {
@@ -768,6 +812,45 @@ public sealed class SettingsViewModel : ViewModelBase
         finally
         {
             LaunchAtLoginEnabled = true;
+        }
+    }
+
+    private async System.Threading.Tasks.Task SendLogsAsync()
+    {
+        if (_support is null)
+        {
+            SendLogsStatus = "Support submission not wired in this build.";
+            return;
+        }
+        SendLogsBusy = true;
+        SendLogsStatus = "Gathering logs and asking peers…";
+        try
+        {
+            var result = await _support.SubmitAsync(new BoltMate.App.Services.Support.SupportSubmissionInput
+            {
+                Message = SendLogsMessage,
+                Email = _supportEmailIsImplicit ? null : SendLogsEmail,
+            }).ConfigureAwait(true);
+
+            if (result.Success)
+            {
+                SendLogsStatus = result.PeerCount > 0
+                    ? $"Sent. Included logs from {result.PeerCount} other machine(s)."
+                    : "Sent. We'll reply by email.";
+                SendLogsMessage = string.Empty;
+            }
+            else
+            {
+                SendLogsStatus = result.Error ?? "Submission failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            SendLogsStatus = "Failed: " + ex.Message;
+        }
+        finally
+        {
+            SendLogsBusy = false;
         }
     }
 

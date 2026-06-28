@@ -751,21 +751,53 @@
                                     Background="{DynamicResource CardBackgroundBrush}"
                                     BorderThickness="1" CornerRadius="{StaticResource CardCornerRadius}"
                                     Padding="16,15">
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
-                                    <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
-                                        <TextBlock Text="Diagnostics"
-                                                   FontSize="13" FontWeight="SemiBold"
+                                <StackPanel Spacing="14">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
+                                        <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
+                                            <TextBlock Text="Diagnostics"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                            <TextBlock Text="{Binding LogsPathLine}"
+                                                       FontSize="11.5" TextWrapping="Wrap"
+                                                       FontFamily="{StaticResource MonoFontFamily}"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Content="Open logs folder"
+                                                VerticalAlignment="Center"
+                                                Command="{Binding OpenLogsFolderCommand}" />
+                                    </Grid>
+
+                                    <!-- Send logs to support: description + optional email + send -->
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Send logs to BoltMate support"
+                                                   FontSize="12" FontWeight="SemiBold"
                                                    Foreground="{DynamicResource TextPrimaryBrush}" />
-                                        <TextBlock Text="{Binding LogsPathLine}"
+                                        <TextBlock Text="We'll bundle this machine's logs plus any reachable peers signed into your account. Logs are scrubbed of secrets before upload."
                                                    FontSize="11.5" TextWrapping="Wrap"
-                                                   FontFamily="{StaticResource MonoFontFamily}"
                                                    Foreground="{DynamicResource TextTertiaryBrush}" />
+                                        <TextBox Text="{Binding SendLogsMessage}"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="80"
+                                                 Watermark="Describe what's wrong…" />
+                                        <TextBox Text="{Binding SendLogsEmail}"
+                                                 IsVisible="{Binding SendLogsRequiresEmail}"
+                                                 Watermark="Email (so we can reply)" />
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding SendLogsStatus}"
+                                                       FontSize="11.5"
+                                                       VerticalAlignment="Center"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}" />
+                                            <Button Grid.Column="1"
+                                                    Content="Send"
+                                                    VerticalAlignment="Center"
+                                                    Command="{Binding SendLogsCommand}" />
+                                        </Grid>
                                     </StackPanel>
-                                    <Button Grid.Column="1"
-                                            Content="Open logs folder"
-                                            VerticalAlignment="Center"
-                                            Command="{Binding OpenLogsFolderCommand}" />
-                                </Grid>
+                                </StackPanel>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>

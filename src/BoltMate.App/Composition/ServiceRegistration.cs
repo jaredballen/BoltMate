@@ -183,6 +183,24 @@ public static class ServiceRegistration
             sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<ILogger<HostnameAdvisoryService>>()));
 
+        // Support submission — bundles local logs, fetches peers'
+        // bundles over the encrypted TCP backchannel, and POSTs the
+        // outer zip to /api/support. Auth model:
+        // - signed in: server validates the Bearer JWT and pulls email
+        //   from the token (TODO: gate currently doesn't expose JWT —
+        //   service falls back to the anonymous path)
+        // - signed out: user-supplied email is included in the form
+        services.AddSingleton<BoltMate.App.Services.Support.LogBundler>(sp =>
+            new BoltMate.App.Services.Support.LogBundler(
+                sp.GetRequiredService<ILogger<BoltMate.App.Services.Support.LogBundler>>()));
+
+        services.AddSingleton<BoltMate.App.Services.Support.SupportSubmissionService>(sp =>
+            new BoltMate.App.Services.Support.SupportSubmissionService(
+                sp.GetRequiredService<BoltMate.App.Services.Support.LogBundler>(),
+                sp.GetRequiredService<IMdnsTcpChannel>(),
+                sp.GetRequiredService<BoltMate.Licensing.ILicenseGate>(),
+                sp.GetRequiredService<ILogger<BoltMate.App.Services.Support.SupportSubmissionService>>()));
+
         // App health monitor. Pure observable surface — the App layer
         // subscribes to Health to wire tray badges + OS notifications.
         services.AddSingleton<IAppHealthService>(sp => new AppHealthService(
