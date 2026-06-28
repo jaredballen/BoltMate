@@ -1,0 +1,303 @@
+---
+import Base from "../layouts/Base.astro";
+
+// All dynamic data fetched on the client after SWA auth lands —
+// keeps the page itself static (no SSR runtime on SWA Free).
+---
+
+<Base title="Your account — BoltMate" pathname="/account">
+  <section class="section account-hero">
+    <div class="container account-grid">
+      <div id="account-loading" class="state-card">
+        <p class="eyebrow">One moment</p>
+        <h1>Loading your license…</h1>
+      </div>
+
+      <div id="account-unauth" class="state-card" hidden>
+        <p class="eyebrow">Signed out</p>
+        <h1>Please sign in to see your license.</h1>
+        <a href="/.auth/login/aad?post_login_redirect_uri=/account" class="btn btn-primary">Sign in</a>
+      </div>
+
+      <div id="account-error" class="state-card error" hidden>
+        <p class="eyebrow">Hmm</p>
+        <h1>Couldn't load your license.</h1>
+        <p id="account-error-msg" class="lede"></p>
+        <a href="/support" class="btn btn-outline">Contact support</a>
+      </div>
+
+      <div id="account-ok" hidden>
+        <header class="account-header">
+          <p class="eyebrow" id="tier-eyebrow">Tier</p>
+          <h1 id="greeting">Your BoltMate license</h1>
+          <p id="status-line" class="lede"></p>
+        </header>
+
+        <div id="trial-banner" class="trial-banner" hidden>
+          <div>
+            <p class="banner-title">Your trial ended</p>
+            <p class="banner-body">
+              Pick up the lifetime license to keep BoltMate running on every machine you sign into.
+            </p>
+          </div>
+          <a href="/checkout" class="btn btn-primary">Buy lifetime — $14.99</a>
+        </div>
+
+        <section class="card-grid">
+          <article class="card">
+            <h2>Downloads</h2>
+            <p>Install BoltMate on every machine you use.</p>
+            <ul class="download-list">
+              <li>
+                <a href="https://github.com/jaredballen/BoltMate/releases/latest" class="btn btn-outline">
+                  Download for macOS (.dmg)
+                </a>
+                <span>Apple Silicon &amp; Intel</span>
+              </li>
+              <li>
+                <a href="https://github.com/jaredballen/BoltMate/releases/latest" class="btn btn-outline">
+                  Download for Windows (.exe)
+                </a>
+                <span>Windows 11 / 10</span>
+              </li>
+            </ul>
+          </article>
+
+          <article class="card license-card">
+            <h2>License</h2>
+            <dl>
+              <dt>Tier</dt>
+              <dd id="license-tier">—</dd>
+              <dt>Issued</dt>
+              <dd id="license-issued">—</dd>
+              <dt id="expires-label">Expires</dt>
+              <dd id="license-expires">—</dd>
+              <dt>Email</dt>
+              <dd id="license-email">—</dd>
+            </dl>
+            <p class="card-fineprint">
+              Your license is bound to your email. Sign in on any other
+              machine with the same identity to activate it there.
+            </p>
+          </article>
+        </section>
+
+        <p class="signout-row">
+          Wrong account?
+          <a href="/.auth/logout?post_logout_redirect_uri=/">Sign out</a>
+        </p>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<script is:inline>
+// Decode a JWT payload without verifying it — verification belongs to
+// the API; here we only need the exp claim so the UI can render the
+// trial-expired banner correctly.
+function jwtPayload(jwt) {
+  try {
+    const seg = jwt.split(".")[1];
+    const pad = "=".repeat((4 - (seg.length % 4)) % 4);
+    const json = atob(seg.replace(/-/g, "+").replace(/_/g, "/") + pad);
+    return JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function show(id) {
+  ["account-loading", "account-unauth", "account-error", "account-ok"].forEach((k) => {
+    const el = document.getElementById(k);
+    if (el) el.hidden = (k !== id);
+  });
+}
+
+async function run() {
+  // SWA Easy Auth principal endpoint — populated when the user is
+  // signed in via the aad provider configured in staticwebapp.config.json.
+  let me;
+  try {
+    const r = await fetch("/.auth/me");
+    me = await r.json();
+  } catch (e) {
+    show("account-unauth");
+    return;
+  }
+
+  const principal = me?.clientPrincipal;
+  if (!principal) {
+    show("account-unauth");
+    return;
+  }
+
+  const email =
+    principal.userDetails ||
+    principal.claims?.find?.((c) => c.typ === "email" || c.typ?.endsWith("/emailaddress"))?.val ||
+    "(unknown)";
+  document.getElementById("license-email").textContent = email;
+  document.getElementById("greeting").textContent = "Welcome back, " + email;
+
+  // Hit /api/entitlement w/o a body — the Function picks up the
+  // user's Microsoft Entra External ID id_token from the SWA-injected
+  // X-MS-TOKEN-AAD-ID-TOKEN header.
+  const idToken = principal.accessToken || (me && me.id_token);
+  if (!idToken) {
+    showError("Missing identity token — try signing out and back in.");
+    return;
+  }
+
+  let resp;
+  try {
+    resp = await fetch("/api/entitlement", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + idToken },
+      body: JSON.stringify({}),
+    });
+  } catch (e) {
+    showError("Network error — try again in a minute.");
+    return;
+  }
+
+  if (resp.status === 401) { show("account-unauth"); return; }
+  if (resp.status === 403) {
+    showError("Your license was revoked. Email support@boltmate.app if this is unexpected.");
+    return;
+  }
+  if (!resp.ok) {
+    showError("Couldn't load entitlement (status " + resp.status + ").");
+    return;
+  }
+
+  const body = await resp.json();
+  const payload = jwtPayload(body.jwt) || {};
+  const tier = payload.tier || "Trial";
+  const iat = payload.iat ? new Date(payload.iat * 1000).toISOString() : null;
+  const exp = payload.exp ? new Date(payload.exp * 1000) : null;
+  const now = new Date();
+
+  document.getElementById("license-tier").textContent = tier;
+  document.getElementById("license-issued").textContent = fmtDate(iat);
+  document.getElementById("tier-eyebrow").textContent = tier === "Boltmate" ? "Lifetime" : "Trial";
+
+  if (tier === "Boltmate") {
+    document.getElementById("expires-label").textContent = "Status";
+    document.getElementById("license-expires").textContent = "Licensed for life";
+    document.getElementById("status-line").textContent = "Lifetime license — active on every machine you sign into.";
+  } else {
+    document.getElementById("expires-label").textContent = "Expires";
+    document.getElementById("license-expires").textContent = exp ? fmtDate(exp.toISOString()) : "—";
+    if (exp && exp.getTime() <= now.getTime()) {
+      document.getElementById("trial-banner").hidden = false;
+      document.getElementById("status-line").textContent = "Your trial has expired.";
+    } else if (exp) {
+      const daysLeft = Math.max(0, Math.ceil((exp.getTime() - now.getTime()) / 86400000));
+      document.getElementById("status-line").textContent =
+        daysLeft === 1 ? "1 day left in your trial." : daysLeft + " days left in your trial.";
+    }
+  }
+
+  show("account-ok");
+}
+
+function showError(msg) {
+  document.getElementById("account-error-msg").textContent = msg;
+  show("account-error");
+}
+
+run();
+</script>
+
+<style>
+  .account-hero { padding-block: 56px; min-height: 50vh; }
+  .account-grid { display: grid; gap: 28px; }
+  .state-card {
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-lg);
+    padding: 36px;
+    max-width: 520px;
+  }
+  .state-card.error { border-color: #ff7a6a44; }
+  .lede { font-size: 1.05rem; color: var(--bm-fg-secondary); }
+
+  .account-header { max-width: 760px; margin-bottom: 24px; }
+  .account-header h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); }
+
+  .trial-banner {
+    background: #0a0a0c;
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-lg);
+    padding: 22px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 22px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .banner-title {
+    margin: 0;
+    color: var(--bm-fg);
+    font-weight: 600;
+    font-size: 1.05rem;
+  }
+  .banner-body {
+    margin: 4px 0 0;
+    color: var(--bm-fg-secondary);
+    max-width: 56ch;
+  }
+
+  .card-grid {
+    display: grid;
+    gap: 22px;
+    grid-template-columns: 1fr 1fr;
+  }
+  @media (max-width: 840px) {
+    .card-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-lg);
+    padding: 24px;
+  }
+  .card h2 { font-size: 1.1rem; margin-bottom: 8px; }
+
+  .download-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; }
+  .download-list li { display: grid; gap: 4px; }
+  .download-list span { font-size: 0.82rem; color: var(--bm-fg-tertiary); }
+
+  .license-card dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 8px 18px;
+    margin: 12px 0 0;
+  }
+  .license-card dt {
+    color: var(--bm-fg-tertiary);
+    font-family: var(--bm-font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .license-card dd { margin: 0; color: var(--bm-fg); }
+  .card-fineprint {
+    margin: 18px 0 0;
+    font-size: 0.82rem;
+    color: var(--bm-fg-tertiary);
+  }
+
+  .signout-row {
+    margin: 28px 0 0;
+    color: var(--bm-fg-tertiary);
+    font-size: 0.92rem;
+  }
+</style>
