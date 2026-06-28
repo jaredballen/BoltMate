@@ -159,15 +159,40 @@ Status: **complete**
 
 ### Phase 3 — Checkout + Account
 
-Status: **not started**
+Status: **complete**
 
-- [ ] `/checkout` 2-step (Sign-in → Stripe Checkout redirect). On success,
-      redirect to `/account`.
-- [ ] `/account` page (B2C-gated). Calls `/api/entitlement` with Bearer
-      token, renders trial countdown or "licensed for life" badge.
-- [ ] Download buttons for `.dmg` / `.msi` (links to GitHub Releases artifacts
-      or Azure Blob — TBD)
-- [ ] Trial-expired re-entry banner per design
+- [x] `/checkout` page acts as a hand-off shim — Easy Auth's
+      `allowedRoles: ["authenticated"]` rule sends the user through
+      sign-in if needed, then a small inline script POSTs the SWA-
+      injected ID token to `/api/checkout`, receives the Stripe
+      Checkout Session URL, and `window.location`s there. Cancel /
+      retry / error states all surface on the page.
+- [x] New `CheckoutFunction` (`POST /api/checkout`). Validates the
+      Bearer ID token via the existing `IIdTokenValidator`, resolves
+      the active Stripe Price by lookup key `boltmate_lifetime` (same
+      key the site uses at build time so a live-mode swap doesn't break
+      either side), creates a Checkout Session with `mode=payment`,
+      `customer_email=<token email>`, `metadata={sku: boltmate,
+      oauth_sub: <subject>}`, success URL
+      `/account?checkout=success&session_id={CHECKOUT_SESSION_ID}` and
+      cancel URL `/pricing?checkout=cancelled`. Returns
+      `{ url, sessionId }`. New `LicenseApiOptions` keys
+      `StripePriceLookupKey` + `SiteOrigin`.
+- [x] `/account` page (B2C-gated). After Easy Auth lands, fetches
+      `/.auth/me` to read the principal + id token, POSTs an empty body
+      to `/api/entitlement` (so the EntitlementFunction auto-provisions
+      a Trial if no license exists yet), and decodes the returned JWT
+      to render: tier + issued + expires/status + email, download
+      buttons, sign-out row, and a trial-expired banner when the JWT
+      exp claim is in the past. Loading / Unauth / Error states all
+      handled.
+- [x] Download buttons for `.dmg` / `.exe` link to the latest GitHub
+      Release. Azure Blob + CDN hosting deferred — the GH Releases
+      surface is good enough for v1 and is the same shelf the
+      desktop-side `UpdateService` will check against.
+- [x] Trial-expired re-entry banner per the design handoff — dark
+      near-black bar with "Buy lifetime — $14.99" CTA, auto-displayed
+      when `exp <= now` on the decoded entitlement JWT.
 
 ### Phase 4 — App auth integration
 
