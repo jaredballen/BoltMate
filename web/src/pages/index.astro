@@ -1,0 +1,221 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base>
+  <section class="hero">
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">For multi-Mac + Windows desks</p>
+        <h1>Let the keyboard lead — the whole desk follows.</h1>
+        <p class="lede">
+          Logi Options+ Flow only moves your mouse between computers.
+          BoltMate fans every Easy-Switch press out to <em>every</em>
+          paired Logitech Bolt device on every machine, so your
+          keyboard, mouse, and headset all jump together.
+        </p>
+        <div class="hero-cta">
+          <a href="/pricing" class="btn btn-primary">Start free 14-day trial</a>
+          <a href="/#how-it-works" class="btn btn-outline">How it works</a>
+        </div>
+        <p class="compat">100% compatible with Logi Options+ Flow.</p>
+      </div>
+      <aside class="hero-diagram" aria-hidden="true">
+        <div class="machine machine-a"><span>Mac</span></div>
+        <div class="machine machine-b"><span>PC</span></div>
+        <div class="device device-kb">⌨</div>
+        <div class="device device-mouse">🖱</div>
+        <div class="device device-hp">🎧</div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="how-it-works" class="section">
+    <div class="container">
+      <p class="eyebrow">How it works</p>
+      <h2>One press. Every device follows.</h2>
+      <div class="how-grid">
+        <article class="card">
+          <h3>You switch</h3>
+          <p>
+            Tap Easy-Switch on any paired device, or let Flow's edge-crossing fire.
+            BoltMate watches the Bolt receiver for any kind of host change.
+          </p>
+        </article>
+        <article class="card">
+          <h3>BoltMate catches it</h3>
+          <p>
+            HID++ snooping over the receiver's management interface
+            picks up the switch in &lt; 50 ms — before the device firmware
+            even disconnects.
+          </p>
+        </article>
+        <article class="card">
+          <h3>The rest follow</h3>
+          <p>
+            All other paired peripherals on every machine in your trust
+            ring get the matching host-change command. Whole desk, one
+            press.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="privacy" class="section privacy-band">
+    <div class="container">
+      <p class="eyebrow">Privacy by default</p>
+      <h2>Your desk talks to your desk. Not to us.</h2>
+      <div class="privacy-grid">
+        <div>
+          <h3>LAN-only sync</h3>
+          <p>
+            Cross-machine state lives on your local network. Multicast
+            UDP + Bonjour-discovered TCP, no relay servers, no cloud
+            mailbox for switch events.
+          </p>
+        </div>
+        <div>
+          <h3>No keystroke logging</h3>
+          <p>
+            macOS calls our permission "Input Monitoring," but BoltMate
+            uses it only to read host-switch HID++ frames from the Bolt
+            receiver. Keystrokes, mouse coordinates, none of it is
+            captured.
+          </p>
+        </div>
+        <div>
+          <h3>License, not tracker</h3>
+          <p>
+            Your account exists so we can give you a license. There's no
+            usage telemetry, no analytics SDK, no third-party trackers
+            on this page.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container pricing-teaser">
+      <div>
+        <p class="eyebrow">Simple price</p>
+        <h2>$14.99 once. Yours for the life of the desk.</h2>
+        <p>
+          14 days free to try, then a one-time payment unlocks BoltMate
+          forever on every machine you sign into.
+        </p>
+        <a href="/pricing" class="btn btn-primary">See pricing</a>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    padding-block: 88px 64px;
+    background:
+      radial-gradient(60% 80% at 70% 0%, var(--bm-green-tint-08), transparent 70%),
+      var(--bm-bg);
+  }
+  .hero-grid {
+    display: grid;
+    gap: 36px;
+    grid-template-columns: 1.15fr 1fr;
+    align-items: center;
+  }
+  @media (max-width: 880px) {
+    .hero-grid { grid-template-columns: 1fr; }
+  }
+  .lede {
+    font-size: 1.125rem;
+    color: var(--bm-fg-secondary);
+    max-width: 56ch;
+  }
+  .hero-cta { display: flex; gap: 12px; margin: 22px 0 16px; flex-wrap: wrap; }
+  .compat { font-size: 0.88rem; color: var(--bm-fg-tertiary); margin: 0; }
+
+  .hero-diagram {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    max-width: 420px;
+    margin-inline: auto;
+    width: 100%;
+  }
+  .machine {
+    position: absolute;
+    width: 38%;
+    aspect-ratio: 16 / 10;
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke-strong);
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-family: var(--bm-font-mono);
+    font-size: 0.86rem;
+    color: var(--bm-fg-secondary);
+    box-shadow: 0 18px 60px -20px rgba(0,0,0,0.6);
+  }
+  .machine-a { top: 12%; left: 6%; }
+  .machine-b { top: 12%; right: 6%; border-color: var(--bm-green); color: var(--bm-green); }
+  .machine span { padding: 4px 10px; }
+
+  .device {
+    position: absolute;
+    font-size: 1.8rem;
+    line-height: 1;
+    width: 56px; height: 56px;
+    display: grid; place-items: center;
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke-strong);
+    border-radius: 50%;
+    color: var(--bm-fg);
+    box-shadow: 0 12px 30px -10px rgba(0,0,0,0.6);
+    animation: drift 6s ease-in-out infinite;
+  }
+  .device-kb     { bottom: 18%; left: 24%; animation-delay: 0s; }
+  .device-mouse  { bottom: 8%;  left: 50%; transform: translateX(-50%); animation-delay: 0.5s; }
+  .device-hp     { bottom: 18%; right: 24%; animation-delay: 1s; }
+  @keyframes drift {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .device-mouse { transform: translateX(-50%); }
+
+  .how-grid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 32px;
+  }
+  @media (max-width: 860px) {
+    .how-grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    padding: 22px;
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-md);
+  }
+  .card h3 { margin-bottom: 6px; }
+
+  .privacy-band {
+    background: var(--bm-bg-band);
+    border-block: 1px solid var(--bm-stroke);
+  }
+  .privacy-grid {
+    display: grid;
+    gap: 22px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 28px;
+  }
+  @media (max-width: 860px) {
+    .privacy-grid { grid-template-columns: 1fr; }
+  }
+
+  .pricing-teaser {
+    text-align: center;
+    max-width: 640px;
+  }
+  .pricing-teaser h2 { margin-bottom: 12px; }
+</style>

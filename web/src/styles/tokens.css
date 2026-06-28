@@ -1,0 +1,41 @@
+/*
+  Brand tokens — single source of truth shared with the desktop app's
+  DesignTokens.axaml. Hex values match.
+*/
+:root {
+  --bm-bg:               #1c1c1e;
+  --bm-bg-elev:          #232325;
+  --bm-bg-band:          #15161a;
+  --bm-fg:               #f5f5f7;
+  --bm-fg-secondary:     #c2c2c8;
+  --bm-fg-tertiary:      #8e8e93;
+
+  --bm-green:            #99ff55;
+  --bm-green-tint-08:    #99ff5514;
+  --bm-green-tint-20:    #99ff5533;
+  --bm-green-tint-40:    #99ff5566;
+
+  --bm-stroke:           #2c2c2e;
+  --bm-stroke-strong:    #3a3a3c;
+
+  --bm-radius-sm: 8px;
+  --bm-radius-md: 12px;
+  --bm-radius-lg: 18px;
+
+  --bm-container-max: 1120px;
+  --bm-gutter: 28px;
+  --bm-rhythm: 80px;
+
+  --bm-font-text: "SF Pro Text", -apple-system, BlinkMacSystemFont,
+                  "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --bm-font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo,
+                  Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
