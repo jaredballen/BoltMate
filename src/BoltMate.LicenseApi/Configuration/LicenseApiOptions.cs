@@ -24,6 +24,20 @@ public sealed class LicenseApiOptions
     public string SupportEmailTo { get; set; } = string.Empty;
     public string ResendApiKey { get; set; } = string.Empty;
 
+    /// <summary>e.g. https://boltmateprodstorage.blob.core.windows.net</summary>
+    public string StorageAccountUri { get; set; } = string.Empty;
+
+    public string SupportBundlesContainer { get; set; } = "support-bundles";
+
+    /// <summary>How long the SAS URL we email to ourselves stays valid.
+    /// Bundle is auto-deleted by storage lifecycle policy after 30 days
+    /// regardless — this caps the URL's exposure window.</summary>
+    public int SupportBundleSasLifetimeDays { get; set; } = 30;
+
+    /// <summary>Hard cap on incoming multipart upload size in MB to guard
+    /// against accidental log floods or malicious payloads.</summary>
+    public int SupportBundleMaxSizeMB { get; set; } = 25;
+
     public int RefreshTokenLifetimeDays { get; set; } = 30;
     public int Refresh24hCap { get; set; } = 5;
     public int Refresh30dCap { get; set; } = 20;
