@@ -4,6 +4,7 @@ using BoltMate.App.Services;
 using BoltMate.Core;
 using BoltMate.Core.Permissions;
 using BoltMate.Hid.Abstractions;
+using BoltMate.Licensing.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -161,6 +162,37 @@ public static class ServiceRegistration
             sp.GetRequiredService<IUdpTopologyService>(),
             sp.GetRequiredService<IMdnsTcpChannel>(),
             sp.GetRequiredService<ILogger<AppHealthService>>()));
+
+        // Licensing — LicenseGate + LoopbackAuthFlow + JwtVerifier +
+        // Keychain/DPAPI secure store, all driven off the scaffolded
+        // BoltMate.Licensing extension. Endpoint + OAuth client settings
+        // hard-coded to the production Entra External ID + Function App
+        // wired up in Phase 0. The JWT public key is the RSA verify-only
+        // partner of `boltmate-jwt-signing` in KeyVault; it's NOT a
+        // secret (anyone who downloads the app can read it), so it
+        // lives in code rather than rotating through KV at runtime.
+        services.AddBoltMateLicensing(opts =>
+        {
+            opts.ServiceName = "BoltMate";
+            opts.SecureStoreKey = "com.jaredballen.BoltMate.entitlement";
+
+            opts.Issuer = "https://api.boltmate.app";
+            opts.EntitlementEndpoint = new Uri("https://api.boltmate.app/api/entitlement");
+
+            // Entra External ID OAuth2 endpoints for the BoltMate tenant.
+            opts.AuthorizeEndpoint = new Uri(
+                "https://boltmateauth.ciamlogin.com/da0651cd-08cf-42d3-bf57-e36b3c960aee/oauth2/v2.0/authorize");
+            opts.TokenEndpoint = new Uri(
+                "https://boltmateauth.ciamlogin.com/da0651cd-08cf-42d3-bf57-e36b3c960aee/oauth2/v2.0/token");
+            opts.OAuthClientId = "fe3bbdfe-a387-4b8f-be0a-03c5b3e9e593";
+            opts.OAuthScopes = new[] { "openid", "email", "profile", "offline_access" };
+
+            // Filled in after Phase 6 publishes a stable signing key —
+            // until then LicenseGate.EvaluateStored returns
+            // SignatureInvalid and the wizard falls back to a fresh
+            // OAuth round-trip on every launch.
+            opts.PublicKeyPem = string.Empty;
+        });
 
         return services;
     }
