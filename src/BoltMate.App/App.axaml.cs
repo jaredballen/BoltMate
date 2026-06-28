@@ -224,6 +224,7 @@ public partial class App : Application
             _permissions!,
             isFirstRun: true,
             notifications: LocalNotifications.Service,
+            licenseGate: _licenseGate,
             log: _loggerFactory.CreateLogger<WelcomeWindow>());
         _welcomeWindow.WelcomeCompleted += () =>
         {
@@ -467,6 +468,7 @@ public partial class App : Application
                 _permissions ?? new PermissionsService(notifications: null, _loggerFactory),
                 isFirstRun: false,
                 notifications: LocalNotifications.Service,
+                licenseGate: _licenseGate,
                 log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a
             // first run. Just open at the primer and let the user trigger /

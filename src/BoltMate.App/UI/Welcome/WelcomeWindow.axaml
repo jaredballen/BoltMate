@@ -159,6 +159,58 @@
                  ShowXxx flag. Padding matches the handoff's 40 px. -->
             <Grid Margin="40">
 
+                <!-- ===================== 0. SIGN IN ===================== -->
+                <!-- New first page added for Phase 4 — License gate. The
+                     "Welcome wizard rewrite" memory still applies; for now
+                     this gets the OAuth round-trip wired through with the
+                     bare minimum visual scaffolding. -->
+                <Grid x:Name="PageSignIn"
+                      IsVisible="{Binding ShowSignIn}"
+                      RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
+
+                    <Border Grid.Row="0"
+                            Width="64" Height="64"
+                            CornerRadius="17"
+                            Background="{DynamicResource BrandBlackTileBrush}"
+                            HorizontalAlignment="Left" Margin="0,4,0,16"
+                            BoxShadow="0 8 30 0 #40000000">
+                        <Image Source="avares://BoltMate/Assets/BoltMate_logo.png"
+                               Width="40" Height="40"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Sign in to continue"
+                               FontSize="26" FontWeight="SemiBold"
+                               LetterSpacing="-0.4"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2"
+                               MaxWidth="340" HorizontalAlignment="Left"
+                               Text="BoltMate uses your account to issue a license and remember your trust ring across machines. Sign in once per machine; we'll open a browser to complete OAuth."
+                               FontSize="14.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,8,0,0" />
+
+                    <TextBlock Grid.Row="3"
+                               Text="{Binding SignInStatus}"
+                               IsVisible="{Binding SignInStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextTertiaryBrush}"
+                               Margin="0,18,0,0" />
+
+                    <StackPanel Grid.Row="5" Orientation="Horizontal"
+                                HorizontalAlignment="Right" Spacing="8"
+                                Margin="0,18,0,0"
+                                VerticalAlignment="Bottom">
+                        <Button Content="Sign in"
+                                Classes="primary"
+                                Command="{Binding SignInCommand}"
+                                IsEnabled="{Binding !SignInBusy}" />
+                    </StackPanel>
+                </Grid>
+
                 <!-- ===================== 1a. WELCOME ===================== -->
                 <!-- All hero content packs to the top; the * row pushes the
                      trailing footer button to the bottom-right of the pane. -->

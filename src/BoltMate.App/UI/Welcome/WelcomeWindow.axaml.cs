@@ -42,10 +42,11 @@ public partial class WelcomeWindow : Window
         IPermissionsService permissions,
         bool isFirstRun = true,
         BoltMate.App.Core.Notifications.INotificationService? notifications = null,
+        BoltMate.Licensing.ILicenseGate? licenseGate = null,
         ILogger? log = null)
     {
         _isFirstRun = isFirstRun;
-        _vm = new WelcomeViewModel(settings, permissions, isFirstRun, notifications, log);
+        _vm = new WelcomeViewModel(settings, permissions, isFirstRun, notifications, licenseGate, log);
         DataContext = _vm;
         InitializeComponent();
 

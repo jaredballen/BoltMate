@@ -41,6 +41,7 @@ public sealed class WelcomeViewModel : ViewModelBase
     public const string PermissionInputMonitoring = "input-monitoring";
     public const string PermissionNotifications = "notifications";
 
+    public const string PageSignIn = "PageSignIn";
     public const string PageWelcome = "PageWelcome";
     public const string PageNetworkPrimer = "PageNetworkPrimer";
     public const string PageNetworkRefusal = "PageNetworkRefusal";
@@ -52,7 +53,7 @@ public sealed class WelcomeViewModel : ViewModelBase
 
     private static readonly string[] AllPageNames =
     {
-        PageWelcome, PageNetworkPrimer, PageNetworkRefusal,
+        PageSignIn, PageWelcome, PageNetworkPrimer, PageNetworkRefusal,
         PageInputMonitoringPrimer, PageInputMonitoringRefusal,
         PageNotificationsPrimer,
         PageDone, PageLinux,
@@ -60,6 +61,7 @@ public sealed class WelcomeViewModel : ViewModelBase
 
     private readonly AppSettings _settings;
     private readonly IPermissionsService _permissions;
+    private readonly BoltMate.Licensing.ILicenseGate? _licenseGate;
     private readonly BoltMate.App.Core.Notifications.INotificationService? _notifications;
     private readonly ILogger _log;
     private readonly bool _isFirstRun;
@@ -89,13 +91,14 @@ public sealed class WelcomeViewModel : ViewModelBase
 
     // ---- Page state ---------------------------------------------------
 
-    private string _currentPage = PageWelcome;
+    private string _currentPage = PageSignIn;
     public string CurrentPage
     {
         get => _currentPage;
         set
         {
             this.RaiseAndSetIfChanged(ref _currentPage, value);
+            this.RaisePropertyChanged(nameof(ShowSignIn));
             this.RaisePropertyChanged(nameof(ShowWelcome));
             this.RaisePropertyChanged(nameof(ShowNetworkPrimer));
             this.RaisePropertyChanged(nameof(ShowNetworkRefusal));
@@ -109,6 +112,7 @@ public sealed class WelcomeViewModel : ViewModelBase
         }
     }
 
+    public bool ShowSignIn => CurrentPage == PageSignIn;
     public bool ShowWelcome => CurrentPage == PageWelcome;
     public bool ShowNetworkPrimer => CurrentPage == PageNetworkPrimer;
     public bool ShowNetworkRefusal => CurrentPage == PageNetworkRefusal;
@@ -256,6 +260,7 @@ public sealed class WelcomeViewModel : ViewModelBase
         IPermissionsService permissions,
         bool isFirstRun,
         BoltMate.App.Core.Notifications.INotificationService? notifications = null,
+        BoltMate.Licensing.ILicenseGate? licenseGate = null,
         ILogger? log = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -263,9 +268,14 @@ public sealed class WelcomeViewModel : ViewModelBase
 
         _settings = settings;
         _permissions = permissions;
+        _licenseGate = licenseGate;
         _notifications = notifications;
         _isFirstRun = isFirstRun;
         _log = log ?? NullLogger.Instance;
+
+        // Skip sign-in if the cached license already verifies.
+        if (_licenseGate?.Current.IsEntitled == true)
+            _currentPage = PageWelcome;
 
         BuildSteps();
         UpdateStepStates();
@@ -317,6 +327,58 @@ public sealed class WelcomeViewModel : ViewModelBase
             QuitRequested?.Invoke(1);
         });
         DoneOpenCommand = ReactiveCommand.CreateFromTask(OnDoneOpenAsync);
+
+        SignInCommand = ReactiveCommand.CreateFromTask(OnSignInAsync);
+    }
+
+    public ReactiveCommand<Unit, Unit> SignInCommand { get; }
+
+    private string _signInStatus = string.Empty;
+    public string SignInStatus
+    {
+        get => _signInStatus;
+        set => this.RaiseAndSetIfChanged(ref _signInStatus, value);
+    }
+
+    private bool _signInBusy;
+    public bool SignInBusy
+    {
+        get => _signInBusy;
+        set => this.RaiseAndSetIfChanged(ref _signInBusy, value);
+    }
+
+    private async Task OnSignInAsync()
+    {
+        if (_licenseGate is null)
+        {
+            // Dev path — no license gate registered. Skip straight in.
+            CurrentPage = PageWelcome;
+            return;
+        }
+        SignInBusy = true;
+        SignInStatus = "Opening browser…";
+        try
+        {
+            var status = await _licenseGate.ActivateAsync().ConfigureAwait(true);
+            if (status.IsEntitled)
+            {
+                _log.LogInformation("Sign-in completed: {State} tier={Tier}", status.State, status.Tier);
+                CurrentPage = PageWelcome;
+            }
+            else
+            {
+                SignInStatus = "Sign-in didn't complete. Try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Sign-in failed");
+            SignInStatus = "Sign-in failed: " + ex.Message;
+        }
+        finally
+        {
+            SignInBusy = false;
+        }
     }
 
     // ---- Activation lifecycle -----------------------------------------
