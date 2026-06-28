@@ -47,6 +47,8 @@ public partial class App : Application
     private AppSettings _settings = new();
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private IPermissionsService? _permissions;
+    private BoltMate.Licensing.ILicenseGate? _licenseGate;
+    private BoltMate.Licensing.LicenseStatus _licenseStatus = BoltMate.Licensing.LicenseStatus.NotActivated;
 
     // Tracks whether we have already nagged the user with a notification
     // during THIS run. Re-fires after a relaunch; we deliberately don't
@@ -127,6 +129,24 @@ public partial class App : Application
         // tab. Owns a 2s polling timer; pushes deltas via Rx observables.
         _permissions = Services.GetRequiredService<IPermissionsService>();
 
+        // License gate — single source of truth for "is this user
+        // authenticated + entitled". Resolve from DI; the cached JWT
+        // (if any) loads on first LoadAsync. We deliberately DON'T
+        // block startup on the load: the welcome flow's sign-in page
+        // (Phase 4 task #93) will drive ActivateAsync explicitly when
+        // the user hits Sign In. The status snapshot stays available
+        // via _licenseStatus so the rest of bootstrap can decide
+        // whether to route through the sign-in wizard page.
+        _licenseGate = Services.GetRequiredService<BoltMate.Licensing.ILicenseGate>();
+        _licenseStatus = _licenseGate.Current;
+        _disposables.Add(_licenseGate.StatusChanges.Subscribe(s =>
+        {
+            _licenseStatus = s;
+            log.LogInformation("License status → {State} tier={Tier} email={Email}",
+                s.State, s.Tier, s.Email ?? "(none)");
+        }));
+        _ = LoadLicenseAsync(log);
+
         // Paint the tray icon to match the current OS theme right away.
         // TrayIconStatusController only instantiates inside ContinueBootstrap
         // — during first-run welcome that hasn't happened yet, so without
@@ -169,6 +189,76 @@ public partial class App : Application
         ContinueBootstrap(log);
     }
 
+    /// <summary>
+    /// Kicks off the LicenseGate's initial load from secure storage.
+    /// Fire-and-forget — the published <see cref="ILicenseGate.Status"/>
+    /// observable is the integration surface, and this method's
+    /// completion isn't itself a precondition for bootstrap.
+    /// </summary>
+    private async Task LoadLicenseAsync(ILogger log)
+    {
+        if (_licenseGate is null) return;
+        try
+        {
+            var status = await _licenseGate.LoadAsync().ConfigureAwait(false);
+            log.LogInformation("Initial license load: {State}", status.State);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "License load failed (non-fatal at startup).");
+        }
+    }
+
+    /// <summary>
+    /// Sign-out side: wipes the cached entitlement JWT from the
+    /// platform secure store, stops the cross-machine topology stack
+    /// so this machine drops off the LAN trust ring immediately, then
+    /// reopens the welcome wizard on the new <c>PageSignIn</c> page
+    /// so the user can re-auth or close.
+    /// </summary>
+    private async Task SignOutAndReopenSignInAsync(ILogger log)
+    {
+        try
+        {
+            if (_licenseGate is not null)
+                await _licenseGate.SignOutAsync().ConfigureAwait(false);
+            log.LogInformation("Sign-out complete; cached entitlement wiped.");
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Sign-out via LicenseGate failed (continuing teardown).");
+        }
+
+        // Drop us off the LAN trust ring while signed out so other
+        // machines on the same account stop expecting fan-out from
+        // this host. Network can be re-enabled after the next sign-in
+        // by ApplyTopologySettings.
+        try
+        {
+            _topology?.Stop();
+            _mdnsTcp?.Stop();
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Topology stop during sign-out threw.");
+        }
+
+        // Flip HasShownWelcome back so the wizard treats this like a
+        // first-run again (lands on PageSignIn).
+        _settings.HasShownWelcome = false;
+        try { _settings.Save(); } catch { /* best-effort */ }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_welcomeWindow is { IsVisible: true })
+            {
+                _welcomeWindow.Activate();
+                return;
+            }
+            ShowWelcomeAndDeferStartup(log);
+        });
+    }
+
     // ====================================================================
     // First-run welcome → bootstrap chain
     // ====================================================================
@@ -184,6 +274,7 @@ public partial class App : Application
             _permissions!,
             isFirstRun: true,
             notifications: LocalNotifications.Service,
+            licenseGate: _licenseGate,
             log: _loggerFactory.CreateLogger<WelcomeWindow>());
         _welcomeWindow.WelcomeCompleted += () =>
         {
@@ -308,6 +399,7 @@ public partial class App : Application
                 OnAboutClicked = () => OpenSettings(SettingsWindow.TabGeneral),
                 OnLicenseClicked = () => OpenSettings(SettingsWindow.TabLicense),
                 OnFixPermissionsClicked = OpenWelcomeToFirstUngranted,
+                OnSignOutClicked = () => _ = SignOutAndReopenSignInAsync(log),
             };
             _disposables.Add(_trayController);
 
@@ -427,6 +519,7 @@ public partial class App : Application
                 _permissions ?? new PermissionsService(notifications: null, _loggerFactory),
                 isFirstRun: false,
                 notifications: LocalNotifications.Service,
+                licenseGate: _licenseGate,
                 log: _loggerFactory.CreateLogger<WelcomeWindow>());
             // Don't flip HasShownWelcome here — this is a "fix" run, not a
             // first run. Just open at the primer and let the user trigger /

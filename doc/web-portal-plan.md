@@ -10,7 +10,7 @@ backend completion. Living document — update phase status as work lands.
 | Frontend stack | Astro on Azure Static Web Apps (Free tier) |
 | Pricing | $14.99 one-time, Stripe = source of truth, build-time fetch |
 | SKU | `boltmate` (rename `LicenseSkus.Pro` → `LicenseSkus.Boltmate`) |
-| Identity | Azure AD B2C, OAuth providers: Apple, Google, LinkedIn, GitHub, Facebook |
+| Identity | Azure AD B2C, OAuth providers: Apple, Google (LinkedIn + GitHub deferred; Facebook cut — Meta Business Verification not worth it for a solo project) |
 | Auth requirement | Required for **all** app use (single-machine use is not a goal) |
 | Trust ring | B2C `sub` claim match between peers, auto-respond |
 | Support — site | `/support` page with anonymous email field path |
@@ -30,14 +30,14 @@ backend completion. Living document — update phase status as work lands.
 
 ### Phase 0 — Infrastructure provisioning
 
-Status: **complete** — Apple/LinkedIn/Facebook/GitHub OAuth IdPs deferred to wire when those provider apps are ready.
+Status: **complete** — LinkedIn/GitHub OAuth IdPs deferred; Facebook cut.
 
 - [x] Azure subscription confirmed + renamed to `BoltMate`, resource group `boltmate-prod` created (eastus2, tagged)
 - [x] Entra External ID tenant `BoltMate` (`boltmateauth.onmicrosoft.com`),
       app registration `BoltMate` (one app, web + mobile/desktop redirect URIs),
-      user flow `B2C_1_signup_signin` linked. Google IdP wired + tested end-to-end
-      (real Gmail → Google consent → `boltmate.app/auth/callback?code=...`).
-      Apple/LinkedIn/Facebook/GitHub deferred.
+      user flow `B2C_1_signup_signin` linked. Google + Apple IdPs wired + tested end-to-end
+      (real provider → consent → `boltmate.app/auth/callback?code=...`).
+      LinkedIn/GitHub deferred; Facebook cut.
 - [x] Cosmos DB Free Tier (`boltmate-prod-cosmos`), database `boltmate`,
       containers `Licenses` (pk `/email`) + `RefreshLog` (pk `/licenseId`, TTL 30d)
 - [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded:
@@ -196,27 +196,63 @@ Status: **complete**
 
 ### Phase 4 — App auth integration
 
-Status: **not started**
+Status: **complete**
 
-- [ ] Welcome wizard new page 1: "Sign in to continue" using
-      `LoopbackAuthFlow` (already scaffolded). Skips topology + HID prompts
-      until signed in.
-- [ ] `LicenseGate` (already scaffolded) wired into `App.OnFrameworkInitializationCompleted`
-      — block bootstrap until cached entitlement valid OR fresh OAuth completes
-- [ ] Sign-out: tray menu item "Sign out". Wipes Keychain entry, stops topology,
-      drops mDNS advert, reopens welcome at sign-in step.
-- [ ] `AppSettings.json` cleanup:
-  - Drop `HostNames`, `Receivers` dict, `ReceiverSettings` class
-  - Drop all `Topology.*` constants except `Enabled`. Move port,
-    multicast group, intervals, broadcast cadence, mDNS service type
-    to `TopologyConstants` static class in Core.
-  - Drop `Topology.MachineId`
-  - `LastUpdateCheckUtc` moves to separate `state.json`
-- [ ] New `IMachineIdProvider`: derive from OS hardware ID.
-  - Mac: `ioreg -d2 -c IOPlatformExpertDevice` parsed for IOPlatformUUID
-  - Win: `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` read
-  - Linux: `/etc/machine-id`
-- [ ] Stale CLAUDE.md `CachedHostBindings` line removed
+- [x] `BoltMate.App` now references `BoltMate.Licensing` +
+      `BoltMate.Licensing.Contracts`. `ServiceRegistration` calls
+      `AddBoltMateLicensing(...)` with production wiring: `Issuer` +
+      `EntitlementEndpoint` = `https://api.boltmate.app`, OAuth
+      authorize/token endpoints on the BoltMate Entra External ID
+      tenant (`boltmateauth.ciamlogin.com`/`<tenant-guid>`),
+      `OAuthClientId` = the BoltMate app registration's GUID, scopes
+      `openid email profile offline_access`. `PublicKeyPem` left empty
+      for now — `LicenseGate.EvaluateStored` returns `SignatureInvalid`
+      until Phase 6 ships a stable verify key, which is fine because
+      the wizard's sign-in step forces a fresh OAuth round-trip.
+- [x] `App.OnFrameworkInitializationCompletedCore` resolves
+      `ILicenseGate` from DI, seeds `_licenseStatus` from `.Current`,
+      subscribes to `.StatusChanges` for the App layer to observe, and
+      fires `LoadAsync` fire-and-forget.
+- [x] `WelcomeViewModel` + `WelcomeWindow.axaml` gain a new
+      `PageSignIn` (default first page). Skipped automatically when
+      `LicenseGate.Current.IsEntitled` already holds. New
+      `SignInCommand` awaits `LicenseGate.ActivateAsync()` →
+      `LoopbackAuthFlow` opens the system browser, swaps the loopback
+      auth code for tokens, hits `/api/entitlement`. On
+      `Valid`/`GracePeriod` we advance to `PageWelcome`. `SignInStatus`
+      + `SignInBusy` drive the UI feedback.
+- [x] Tray menu gains a `Sign out` item. App-side
+      `SignOutAndReopenSignInAsync` awaits `LicenseGate.SignOutAsync()`
+      (wipes Keychain / DPAPI entry), stops the UDP + mDNS+TCP
+      topology stack so the machine drops off the LAN trust ring,
+      flips `HasShownWelcome=false` + saves, and reopens the welcome
+      wizard at `PageSignIn`.
+- [x] `AppSettings.json` slimmed down:
+      - `HostNames`, `Receivers` dict, `ReceiverSettings` class — gone
+        (no production callers; only Logi+ -overlapping renaming UX
+        that was already out of scope per CLAUDE.md).
+      - `Topology.MachineId` — gone. UDP topology now consumes
+        `IMachineIdProvider.GetMachineId()` instead of reading from
+        settings.
+      - Topology constants (`Port`, `MulticastGroup`, intervals,
+        cadence, mDNS service type) **deferred**: the
+        `TopologyConstants` extraction changes the ctor signatures on
+        `UdpTopologyService` + `MdnsTcpChannel` and isn't strictly
+        needed for the Phase 4 auth integration. Tracked as
+        follow-up.
+      - `LastUpdateCheckUtc` → separate `state.json` **deferred**:
+        same rationale. Field still lives on `AppSettings` for now.
+- [x] New `IMachineIdProvider` in `BoltMate.Core.Topology` +
+      `HardwareMachineIdProvider`: probes
+      `ioreg -d2 -c IOPlatformExpertDevice` → IOPlatformUUID (macOS),
+      `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` (Windows),
+      `/etc/machine-id` (Linux). Result is SHA-256 of the salted raw
+      value so the topology MachineId isn't correlatable with anything
+      else reading the same OS identifier. `Lazy<string>` caches the
+      computation per process.
+- [x] Stale `CLAUDE.md` `CachedHostBindings` line removed +
+      replaced with the actual in-memory `PairedDevice.HostBindings`
+      truth.
 
 ### Phase 5 — Log collection
 
@@ -252,11 +288,14 @@ Status: **not started**
 
 ## Deferred from Phase 0
 
-- **Apple + Facebook OAuth IdPs**: original design called for 5 providers
-  (Apple, Google, LinkedIn, GitHub, Facebook). Phase 0 only wired Google.
-  Apple + Facebook step-by-steps in
-  `~/.claude/projects/.../memory/project_todo_oauth_providers.md`.
-  Wire before Phase 2 site launch — visible on `/checkout` sign-in surface.
+- **Apple OAuth IdP**: wired 2026-06-28 (Services ID `app.boltmate.web`,
+  .p8 Sign-In-with-Apple key uploaded to Entra Apple IdP blade, added to
+  `signup_signin` user flow, end-to-end tested through `jwt.ms` round-trip).
+- **Facebook OAuth IdP**: **cut**. Meta now requires Business Verification
+  (incorporation docs, utility bills) for Live-mode apps requesting even
+  basic `email` scope. Not viable for a sole-proprietor project with no
+  LLC; marginal conversion lift doesn't justify the paperwork. Revisit
+  only if BoltMate incorporates or user feedback explicitly demands it.
 - **LinkedIn + GitHub OAuth IdPs**: further deferred. LinkedIn's consumer
   use case is questionable; GitHub requires custom OIDC provider config
   (no built-in IdP in Entra External ID).

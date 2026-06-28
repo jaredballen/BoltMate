@@ -88,7 +88,7 @@ Architectural rule across the codebase: **no CLR events on the public Core API.*
 
 Falls back to legacy "same host index for every sibling" routing when the origin's `HostBindings` aren't populated yet (cold-start before `DeviceEnricher` has read them).
 
-`HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. Persisted to disk in `AppSettings.CachedHostBindings` for offline-device bindings to survive restarts.
+`HostBindings` are read from HID++ 2.0 feature `0x1815 HOSTS_INFO` fn 0x10 on every link-up by `DeviceEnricher`. They live in `PairedDevice.HostBindings` (in-memory only) and are re-fetched on every receiver attach — there is no disk cache.
 
 ## App layer composition (BoltMate.App)
 

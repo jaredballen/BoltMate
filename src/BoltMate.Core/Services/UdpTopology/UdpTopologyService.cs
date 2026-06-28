@@ -135,23 +135,14 @@ public sealed class UdpTopologyService : IUdpTopologyService
     public UdpTopologyService(
         IReceiverManager manager,
         AppSettings appSettings,
+        IMachineIdProvider machineIds,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<UdpTopologyService>? logger = null,
         TimeProvider? timeProvider = null)
-        : this(manager, appSettings.Topology, EnsureMachineId(appSettings),
+        : this(manager, appSettings.Topology, machineIds.GetMachineId(),
                networkPermission, networkAvailability, logger, timeProvider)
     {
-    }
-
-    private static string EnsureMachineId(AppSettings appSettings)
-    {
-        if (!string.IsNullOrEmpty(appSettings.Topology.MachineId))
-            return appSettings.Topology.MachineId;
-        var id = Guid.NewGuid().ToString("N");
-        appSettings.Topology.MachineId = id;
-        appSettings.Save();
-        return id;
     }
 
     /// <summary>

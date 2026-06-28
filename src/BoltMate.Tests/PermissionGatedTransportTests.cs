@@ -22,7 +22,6 @@ public class PermissionGatedTransportTests
         UseMulticast = false,      // skip multicast — no loopback needed for these assertions
         TcpPort = 0,
         MdnsServiceType = "_boltmate-test._tcp.local",
-        MachineId = "test-machine",
     };
 
     [Fact]

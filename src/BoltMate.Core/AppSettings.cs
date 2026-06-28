@@ -13,12 +13,6 @@ public sealed class AppSettings
     /// <summary>Schema version of this settings file.</summary>
     public int Version { get; set; } = 1;
 
-    /// <summary>Friendly human names for the three Easy-Switch host slots (global default, per-receiver override below).</summary>
-    public string[] HostNames { get; set; } = ["Host 1", "Host 2", "Host 3"];
-
-    /// <summary>Per-receiver overrides keyed by receiver serial.</summary>
-    public Dictionary<string, ReceiverSettings> Receivers { get; set; } = new();
-
     /// <summary>
     /// Has the first-run welcome / permission-priming wizard finished? Set to
     /// true by <c>WelcomeWindow</c> when the user clicks "Open BoltMate" on
@@ -77,15 +71,6 @@ public sealed class AppSettings
     }
 }
 
-/// <summary>Per-receiver settings, keyed by receiver serial in <see cref="AppSettings.Receivers"/>.</summary>
-public sealed class ReceiverSettings
-{
-    /// <summary>Friendly receiver label.</summary>
-    public string? Nickname { get; set; }
-
-    /// <summary>Override host names just for this receiver (null = use global).</summary>
-    public string[]? HostNames { get; set; }
-}
 
 /// <summary>
 /// Cross-machine UDP topology settings. When enabled, the app broadcasts a
@@ -111,9 +96,6 @@ public sealed class TopologySettings
     /// and skip fan-out.
     /// </summary>
     public int CorrelationWindowSeconds { get; set; } = 3;
-
-    /// <summary>Stable machine id (UUID). Auto-generated on first save.</summary>
-    public string? MachineId { get; set; }
 
     /// <summary>
     /// How many times each announcement is sent back-to-back. Cheap insurance
@@ -155,6 +137,5 @@ public sealed class TopologySettings
 
 [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Default)]
 [JsonSerializable(typeof(AppSettings))]
-[JsonSerializable(typeof(ReceiverSettings))]
 [JsonSerializable(typeof(TopologySettings))]
 internal partial class AppSettingsContext : JsonSerializerContext { }

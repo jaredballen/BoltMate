@@ -157,6 +157,8 @@
   <ItemGroup>
     <ProjectReference Include="..\BoltMate.Core\BoltMate.Core.csproj" />
     <ProjectReference Include="..\BoltMate.App.Core\BoltMate.App.Core.csproj" />
+    <ProjectReference Include="..\BoltMate.Licensing\BoltMate.Licensing.csproj" />
+    <ProjectReference Include="..\BoltMate.Licensing.Contracts\BoltMate.Licensing.Contracts.csproj" />
     <ProjectReference Include="..\BoltMate.Hid.Abstractions\BoltMate.Hid.Abstractions.csproj" />
     <ProjectReference Include="..\BoltMate.Hid.IOKit\BoltMate.Hid.IOKit.csproj" />
     <ProjectReference Include="..\BoltMate.Hid.HidApi\BoltMate.Hid.HidApi.csproj" />

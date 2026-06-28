@@ -52,6 +52,9 @@ public sealed class TrayMenuController : IDisposable
     /// <summary>Click handler for the alert-state "Fix permissions…" entry.</summary>
     public Action? OnFixPermissionsClicked { get; set; }
 
+    /// <summary>Click handler for the "Sign out" menu entry.</summary>
+    public Action? OnSignOutClicked { get; set; }
+
     /// <summary>Bind the topology service. Tray-icon badge owns connection state; nothing to do here.</summary>
     public void Bind(IUdpTopologyService? topology) { }
 
@@ -95,6 +98,9 @@ public sealed class TrayMenuController : IDisposable
         var licenseItem = new NativeMenuItem("License");
         licenseItem.Click += (_, _) => OnLicenseClicked?.Invoke();
 
+        var signOutItem = new NativeMenuItem("Sign out");
+        signOutItem.Click += (_, _) => OnSignOutClicked?.Invoke();
+
         var quitItem = new NativeMenuItem("Quit BoltMate");
         quitItem.Click += (_, _) =>
         {
@@ -106,6 +112,7 @@ public sealed class TrayMenuController : IDisposable
         _menu.Items.Add(aboutItem);
         _menu.Items.Add(licenseItem);
         _menu.Items.Add(new NativeMenuItemSeparator());
+        _menu.Items.Add(signOutItem);
         _menu.Items.Add(quitItem);
     }
 }
