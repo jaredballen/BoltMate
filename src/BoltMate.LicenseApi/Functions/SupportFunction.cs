@@ -32,6 +32,7 @@ public sealed class SupportFunction
     private readonly IIdTokenValidator _idTokens;
     private readonly ISupportBundleStore _bundles;
     private readonly ISupportTicketSink _sink;
+    private readonly IEmailNotifier _notifier;
     private readonly LicenseApiOptions _options;
     private readonly ILogger<SupportFunction> _log;
 
@@ -39,12 +40,14 @@ public sealed class SupportFunction
         IIdTokenValidator idTokens,
         ISupportBundleStore bundles,
         ISupportTicketSink sink,
+        IEmailNotifier notifier,
         IOptions<LicenseApiOptions> options,
         ILogger<SupportFunction> log)
     {
         _idTokens = idTokens;
         _bundles = bundles;
         _sink = sink;
+        _notifier = notifier;
         _options = options.Value;
         _log = log;
     }
@@ -136,6 +139,10 @@ public sealed class SupportFunction
             Source: submission.Source ?? (authedSub is null ? "anonymous" : "authenticated"));
 
         await _sink.SubmitAsync(ticket, ct).ConfigureAwait(false);
+        // Auto-ack to the submitter so they see "got it" instead of
+        // wondering whether the form worked. Fire-and-forget — sink
+        // already succeeded; ack failure is logged but not surfaced.
+        await _notifier.SupportTicketAckAsync(email!, ticket.Subject, ct).ConfigureAwait(false);
         return new AcceptedResult();
     }
 

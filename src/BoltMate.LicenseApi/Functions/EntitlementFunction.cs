@@ -137,6 +137,48 @@ public sealed class EntitlementFunction
             license.SyncKeyBase64));
     }
 
+    /// <summary>
+    /// GDPR right-to-erasure. Authenticated DELETE: validates the Bearer
+    /// ID token, then hard-deletes every license row under that email
+    /// partition plus every refresh log row keyed to those licenses.
+    /// Returns 204 either way — never reveals whether a license existed.
+    /// </summary>
+    /// <remarks>
+    /// The hardware-reuse block survives because it's keyed on
+    /// HardwareIdHash, not email. If a user wipes their account and
+    /// re-signs-up from the same machine inside the reuse window, the
+    /// re-trial provision will still be blocked — exactly the
+    /// anti-farming behaviour we want.
+    /// </remarks>
+    [Function("DeleteEntitlement")]
+    public async Task<IActionResult> Delete(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "entitlement")] HttpRequest req,
+        CancellationToken ct)
+    {
+        var authHeader = (string?)req.Headers.Authorization;
+        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return Error(HttpStatusCode.Unauthorized, EntitlementErrorCodes.InvalidIdToken, "missing bearer token");
+
+        var idToken = authHeader["Bearer ".Length..].Trim();
+        var validated = await _idTokens.ValidateAsync(idToken, ct).ConfigureAwait(false);
+        if (validated is null)
+            return Error(HttpStatusCode.Unauthorized, EntitlementErrorCodes.InvalidIdToken, "id token invalid");
+
+        var licenses = await _licenses.ListByEmailAsync(validated.Email, ct).ConfigureAwait(false);
+
+        var refreshLogsRemoved = 0;
+        foreach (var license in licenses)
+            refreshLogsRemoved += await _refreshLog.DeleteByLicenseIdAsync(license.Id, ct).ConfigureAwait(false);
+
+        var licensesRemoved = await _licenses.DeleteByEmailAsync(validated.Email, ct).ConfigureAwait(false);
+
+        _log.LogInformation(
+            "Account deletion: email={Email} licenses={Licenses} refreshLogs={Logs}",
+            validated.Email, licensesRemoved, refreshLogsRemoved);
+
+        return new NoContentResult();
+    }
+
     private async Task<LicenseRecord> ProvisionTrialAsync(
         string email, string oauthSubject, string? hardwareIdHash, DateTimeOffset now, CancellationToken ct)
     {

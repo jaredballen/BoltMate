@@ -83,6 +83,71 @@ internal sealed class CosmosLicenseRepository : ILicenseRepository
         return false;
     }
 
+    public async Task<IReadOnlyList<LicenseRecord>> ListActiveTrialsExpiringBetweenAsync(
+        DateTimeOffset from, DateTimeOffset to, string notifiedFlag, CancellationToken ct = default)
+    {
+        // Cross-partition; small footprint because the window is narrow
+        // (one day's worth of trials, intersected with one of three
+        // dedup flags). LicenseTier.Trial is "Trial" in the wire enum.
+        var flagProp = notifiedFlag switch
+        {
+            "t3" => "trialNotifiedT3",
+            "t1" => "trialNotifiedT1",
+            "expired" => "trialNotifiedExpired",
+            _ => throw new ArgumentOutOfRangeException(nameof(notifiedFlag),
+                "Expected 't3', 't1', or 'expired'."),
+        };
+        var query = new QueryDefinition(
+            $"SELECT * FROM c WHERE c.tier = 'Trial' AND c.status = 'active' " +
+            $"AND c.expiresAt >= @from AND c.expiresAt < @to " +
+            $"AND (NOT IS_DEFINED(c.{flagProp}) OR c.{flagProp} = false)")
+            .WithParameter("@from", from)
+            .WithParameter("@to", to);
+
+        var results = new List<LicenseRecord>();
+        var iter = _container.GetItemQueryIterator<LicenseRecord>(query);
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync(ct).ConfigureAwait(false);
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    public async Task<int> DeleteByEmailAsync(string email, CancellationToken ct = default)
+    {
+        // Single-partition delete loop. Cheap — typical user has 1
+        // record under their partition. Idempotent on rerun (404 is
+        // swallowed for each id since a concurrent caller may have
+        // already removed the row).
+        var pk = email.ToLowerInvariant();
+        var query = new QueryDefinition("SELECT c.id FROM c WHERE c.partitionKey = @pk")
+            .WithParameter("@pk", pk);
+
+        var ids = new List<string>();
+        var iter = _container.GetItemQueryIterator<dynamic>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(pk) });
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync(ct).ConfigureAwait(false);
+            foreach (var p in page) ids.Add((string)p.id);
+        }
+
+        var removed = 0;
+        foreach (var id in ids)
+        {
+            try
+            {
+                await _container.DeleteItemAsync<LicenseRecord>(id, new PartitionKey(pk), cancellationToken: ct).ConfigureAwait(false);
+                removed++;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+        return removed;
+    }
+
     public async Task<LicenseRecord?> GetByStripePaymentIntentIdAsync(string paymentIntentId, CancellationToken ct = default)
     {
         // Cross-partition lookup keyed on Stripe's PaymentIntent ID.

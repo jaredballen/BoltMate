@@ -30,6 +30,38 @@ internal sealed class CosmosRefreshLogRepository : IRefreshLogRepository
         return _container.CreateItemAsync(record, new PartitionKey(licenseId), cancellationToken: ct);
     }
 
+    public async Task<int> DeleteByLicenseIdAsync(string licenseId, CancellationToken ct = default)
+    {
+        // Single-partition wipe. The refresh log can have many entries
+        // per license (every entitlement call); we iterate to drain. No
+        // rate-limit concern because the GDPR delete path is human-paced.
+        var query = new QueryDefinition("SELECT c.id FROM c WHERE c.partitionKey = @pk")
+            .WithParameter("@pk", licenseId);
+
+        var ids = new System.Collections.Generic.List<string>();
+        var iter = _container.GetItemQueryIterator<dynamic>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(licenseId) });
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync(ct).ConfigureAwait(false);
+            foreach (var p in page) ids.Add((string)p.id);
+        }
+
+        var removed = 0;
+        foreach (var id in ids)
+        {
+            try
+            {
+                await _container.DeleteItemAsync<RefreshRecord>(id, new PartitionKey(licenseId), cancellationToken: ct).ConfigureAwait(false);
+                removed++;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+            }
+        }
+        return removed;
+    }
+
     public async Task<int> CountSinceAsync(string licenseId, DateTimeOffset since, CancellationToken ct = default)
     {
         var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.partitionKey = @pk AND c.at >= @since")

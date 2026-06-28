@@ -86,6 +86,19 @@ import Base from "../layouts/Base.astro";
           Wrong account?
           <a href="/.auth/logout?post_logout_redirect_uri=/">Sign out</a>
         </p>
+
+        <section class="danger-zone">
+          <h2>Delete your account</h2>
+          <p>
+            Removes your BoltMate license and every record we hold against
+            this email. Any peer machines signed in with this account stop
+            syncing the next time they refresh. This cannot be undone.
+          </p>
+          <button type="button" id="delete-account-btn" class="btn btn-danger">
+            Delete account
+          </button>
+          <p id="delete-status" class="status" role="status" aria-live="polite"></p>
+        </section>
       </div>
     </div>
   </section>
@@ -204,6 +217,42 @@ async function run() {
     }
   }
 
+  // Wire the danger-zone delete button now that we have the id token.
+  const delBtn = document.getElementById("delete-account-btn");
+  const delStatus = document.getElementById("delete-status");
+  if (delBtn && delStatus) {
+    delBtn.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "Delete your BoltMate account?\n\nThis wipes your license and every refresh log row. You can re-sign-up later, but this machine may still be inside its 12-month trial-reuse cool-off."
+      );
+      if (!confirmed) return;
+      delStatus.textContent = "Deleting…";
+      delStatus.className = "status";
+      delBtn.disabled = true;
+      try {
+        const r = await fetch("/api/entitlement", {
+          method: "DELETE",
+          headers: { authorization: "Bearer " + idToken },
+        });
+        if (r.status === 204 || r.ok) {
+          delStatus.textContent = "Deleted. Signing you out…";
+          delStatus.classList.add("ok");
+          setTimeout(() => {
+            window.location.href = "/.auth/logout?post_logout_redirect_uri=/";
+          }, 1200);
+        } else {
+          delStatus.textContent = "Couldn't delete (status " + r.status + "). Email support@boltmate.app.";
+          delStatus.classList.add("error");
+          delBtn.disabled = false;
+        }
+      } catch (e) {
+        delStatus.textContent = "Network error — try again.";
+        delStatus.classList.add("error");
+        delBtn.disabled = false;
+      }
+    });
+  }
+
   show("account-ok");
 }
 
@@ -300,4 +349,40 @@ run();
     color: var(--bm-fg-tertiary);
     font-size: 0.92rem;
   }
+
+  .danger-zone {
+    margin-top: 56px;
+    padding: 22px 24px;
+    border: 1px solid #ff7a6a44;
+    border-radius: var(--bm-radius-lg);
+    background: #1a0a0a55;
+    max-width: 760px;
+  }
+  .danger-zone h2 {
+    margin: 0;
+    color: #ff7a6a;
+    font-size: 1.05rem;
+  }
+  .danger-zone p {
+    margin: 8px 0 14px;
+    color: var(--bm-fg-secondary);
+    font-size: 0.92rem;
+    max-width: 60ch;
+  }
+  .btn-danger {
+    background: transparent;
+    color: #ff7a6a;
+    border: 1px solid #ff7a6a;
+    padding: 10px 18px;
+    border-radius: var(--bm-radius-sm);
+    cursor: pointer;
+    font: inherit;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: #ff7a6a22;
+  }
+  .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status { margin: 12px 0 0; font-size: 0.9rem; color: var(--bm-fg-secondary); }
+  .status.ok { color: var(--bm-green); }
+  .status.error { color: #ff7a6a; }
 </style>

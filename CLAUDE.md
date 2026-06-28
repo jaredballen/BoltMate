@@ -197,6 +197,31 @@ Bolt receiver: VID `0x046D`, PID `0xC548`. Management interface = UsagePage `0xF
 
 The full task list (#1–#30) is tracked via TaskList. Phase 1 (headless service with reactive Core) is complete and tested; tasks #14–#25 cover the pairing/management feature expansion that grew during the design conversation. Phase 2 (full Avalonia UX) builds on the existing tray-scaffold App project.
 
+## Web portal
+
+The `web/` directory is the marketing + account site (Astro static
+build, deployed to Azure Static Web Apps Free at `boltmate.app`). The
+LicenseApi at `api.boltmate.app` is the same Azure Functions project
+that handles desktop entitlement — `BoltMate.LicenseApi`.
+
+Pages: `/` (marketing), `/pricing`, `/checkout` (Stripe Checkout
+launcher), `/account` (post-login: license info + downloads + GDPR
+delete), `/support` (anonymous JSON form posting `/api/support`),
+`/privacy`, `/terms`. Pricing is fetched live from Stripe at build time
+via `web/src/lib/pricing.ts`; the SWA build is re-triggered on Stripe
+`price.updated` via a `repository_dispatch` from
+`StripeWebhookHandler` → GitHub.
+
+Auth on the site uses SWA Easy Auth's `aad` provider wired to the same
+Entra External ID tenant the desktop app uses
+(`boltmateauth.onmicrosoft.com`). The id_token from `/.auth/me` is
+passed Bearer to `/api/entitlement` for license queries and to
+`DELETE /api/entitlement` for account erasure.
+
+See `doc/web-portal-plan.md` for the phased rollout and
+`doc/licensing_architecture.md` for the licensing stack (sections 1–4
+are ground truth; section 5 is design history).
+
 ## Pending UX work
 
 **Transport health surfacing (slice D of the network-diagnostics rework).**

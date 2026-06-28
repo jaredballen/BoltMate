@@ -67,4 +67,15 @@ public sealed class LicenseRecord
     /// regenerate casually.
     /// </summary>
     public string? SyncKeyBase64 { get; set; }
+
+    /// <summary>Set once the T-3 trial reminder email has been sent so
+    /// the daily TimerTrigger never sends it twice. Cleared only when
+    /// the row is hard-deleted.</summary>
+    public bool TrialNotifiedT3 { get; set; }
+
+    /// <summary>T-1 reminder send dedup flag — see <see cref="TrialNotifiedT3"/>.</summary>
+    public bool TrialNotifiedT1 { get; set; }
+
+    /// <summary>"Trial just expired" send dedup flag.</summary>
+    public bool TrialNotifiedExpired { get; set; }
 }

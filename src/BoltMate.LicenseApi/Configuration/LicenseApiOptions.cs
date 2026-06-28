@@ -57,4 +57,20 @@ public sealed class LicenseApiOptions
     /// re-issue another trial to the same hardware. Prevents users from
     /// looping email accounts to get unlimited trials. 365 days = 12 mo.</summary>
     public int TrialReuseBlockDays { get; set; } = 365;
+
+    /// <summary>GitHub org / user that owns the BoltMate site repo
+    /// receiving the <c>repository_dispatch</c> on Stripe Price changes.</summary>
+    public string GitHubRepoOwner { get; set; } = string.Empty;
+
+    /// <summary>Site repo name — typically the same as the main BoltMate repo
+    /// because the marketing site lives inside <c>web/</c>.</summary>
+    public string GitHubRepoName { get; set; } = string.Empty;
+
+    /// <summary>Personal Access Token (fine-grained, repo-scoped) with
+    /// <c>actions:write</c> on the site repo. Stored in App Configuration.</summary>
+    public string GitHubPat { get; set; } = string.Empty;
+
+    /// <summary>Event type the SWA workflow listens for. Default is
+    /// <c>stripe-price-updated</c>.</summary>
+    public string GitHubPriceUpdateEventType { get; set; } = "stripe-price-updated";
 }

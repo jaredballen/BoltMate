@@ -271,22 +271,36 @@ Status: **complete** (excluding site `/support` form — covered by Phase 6)
       (required) + email field (shown only if signed out). Assembles outer
       bundle (this-host + peer responses, 5 s timeout) and posts multipart
       to `/api/support`.
-- [ ] Site `/support` posts same endpoint without zip *(deferred to Phase 6)*
+- [x] Site `/support` posts same endpoint without zip (already shipped
+      ahead of Phase 6 — `SupportFunction.cs` handles both JSON + multipart)
 
 ### Phase 6 — Polish + ops
 
-Status: **not started**
+Status: **complete** (sans launch-day Stripe swap, runbook ready)
 
-- [ ] Stripe webhook on `price.updated` → GitHub `repository_dispatch` →
-      SWA rebuild (price changes propagate without manual deploy)
-- [ ] Resend email templates: purchase confirmation, trial T-3/T-1/expired,
-      support ticket received
-- [ ] Account deletion endpoint (`DELETE /api/entitlement`) for GDPR —
-      wipes license + refresh log rows
-- [ ] CLAUDE.md: add web portal section pointing at `web/` + this doc
-- [ ] New `doc/site-architecture.md`: site layout, auth flow, Stripe wiring
-- [ ] Update `doc/licensing_architecture.md` to reflect $14.99 + `sub`-based
-      trust ring + auto-trial provisioning
+- [x] Stripe webhook on `price.updated` → GitHub `repository_dispatch` →
+      SWA rebuild. `IGitHubDispatcher` + filter on `boltmate_lifetime`
+      lookup key so dashboard noise doesn't bounce the build.
+- [x] Resend email templates: purchase confirmation, trial T-3 / T-1 /
+      expired, support ticket received. Templates are inline HTML in
+      `ResendEmailNotifier`. Trial reminders driven by daily
+      `TrialReminderFunction` TimerTrigger with per-stage dedup flags.
+- [x] Account deletion endpoint (`DELETE /api/entitlement`) for GDPR —
+      wipes license + refresh log rows. Idempotent (204 either way) so
+      the endpoint never reveals whether an email existed. Site
+      `/account` gains a danger-zone delete button.
+- [x] CLAUDE.md gains a "Web portal" section pointing at `web/` + the
+      plan + architecture docs.
+- [x] `doc/site-architecture.md` covers layout, hosting + DNS, auth
+      flow, Stripe wiring, build/deploy triggers, and the
+      site→LicenseApi contract.
+- [x] `doc/licensing_architecture.md` rewritten — sections 1–4 reflect
+      the shipped stack (Boltmate not Pro, SyncKey peer crypto, daily
+      reminder timer, GDPR delete); the original Phase-0 proposal is
+      preserved as section 5 for history.
+- [ ] **Stripe live-mode swap** — runbook at
+      `doc/stripe-live-mode-runbook.md` captures the dashboard +
+      Azure App Configuration steps. Executed on launch day, not now.
 
 ## Deferred from Phase 0
 

@@ -60,5 +60,8 @@ builder.Services.AddSingleton<IRateLimiter, RateLimiter>();
 builder.Services.AddSingleton<IStripeWebhookHandler, StripeWebhookHandler>();
 builder.Services.AddSingleton<ISupportBundleStore, BlobSupportBundleStore>();
 builder.Services.AddSingleton<ISupportTicketSink, ResendSupportTicketSink>();
+builder.Services.AddSingleton<IEmailNotifier, ResendEmailNotifier>();
+builder.Services.AddSingleton<IGitHubDispatcher, GitHubDispatcher>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Build().Run();

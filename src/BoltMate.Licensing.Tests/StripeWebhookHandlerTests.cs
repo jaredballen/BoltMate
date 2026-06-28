@@ -127,6 +127,28 @@ public sealed class StripeWebhookHandlerTests
     }
 
     [Fact]
+    public async Task Price_updated_for_canonical_lookup_key_dispatches_github_rebuild()
+    {
+        var (handler, fakes) = Build();
+
+        await handler.DispatchAsync(PriceUpdatedEvent("price_1", "boltmate_lifetime", 1499, "usd"));
+
+        var dispatch = Assert.Single(fakes.GitHub.Dispatches);
+        Assert.Equal("stripe-price-updated", dispatch.EventType);
+        Assert.NotNull(dispatch.Payload);
+    }
+
+    [Fact]
+    public async Task Price_updated_for_other_lookup_key_does_not_dispatch()
+    {
+        var (handler, fakes) = Build();
+
+        await handler.DispatchAsync(PriceUpdatedEvent("price_2", "some_other_key", 999, "usd"));
+
+        Assert.Empty(fakes.GitHub.Dispatches);
+    }
+
+    [Fact]
     public async Task Refund_with_no_matching_license_is_noop()
     {
         var (handler, fakes) = Build();
@@ -140,8 +162,15 @@ public sealed class StripeWebhookHandlerTests
     {
         var fakes = new Fakes();
         var handler = new StripeWebhookHandler(
-            Options.Create(new LicenseApiOptions { StripeWebhookSecret = "whsec_test" }),
+            Options.Create(new LicenseApiOptions
+            {
+                StripeWebhookSecret = "whsec_test",
+                StripePriceLookupKey = "boltmate_lifetime",
+                GitHubPriceUpdateEventType = "stripe-price-updated",
+            }),
             fakes.Licenses,
+            fakes.Emails,
+            fakes.GitHub,
             NullLogger<StripeWebhookHandler>.Instance);
         return (handler, fakes);
     }
@@ -159,6 +188,24 @@ public sealed class StripeWebhookHandlerTests
                     PaymentIntentId = paymentIntentId,
                     CustomerEmail = email,
                     Metadata = new Dictionary<string, string>(),
+                }
+            }
+        };
+    }
+
+    private static Event PriceUpdatedEvent(string priceId, string lookupKey, long unitAmount, string currency)
+    {
+        return new Event
+        {
+            Type = "price.updated",
+            Data = new EventData
+            {
+                Object = new Price
+                {
+                    Id = priceId,
+                    LookupKey = lookupKey,
+                    UnitAmount = unitAmount,
+                    Currency = currency,
                 }
             }
         };
@@ -183,5 +230,7 @@ public sealed class StripeWebhookHandlerTests
     internal sealed class Fakes
     {
         public FakeLicenseRepository Licenses { get; } = new();
+        public FakeEmailNotifier Emails { get; } = new();
+        public FakeGitHubDispatcher GitHub { get; } = new();
     }
 }
