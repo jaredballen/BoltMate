@@ -209,6 +209,56 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Sign-out side: wipes the cached entitlement JWT from the
+    /// platform secure store, stops the cross-machine topology stack
+    /// so this machine drops off the LAN trust ring immediately, then
+    /// reopens the welcome wizard on the new <c>PageSignIn</c> page
+    /// so the user can re-auth or close.
+    /// </summary>
+    private async Task SignOutAndReopenSignInAsync(ILogger log)
+    {
+        try
+        {
+            if (_licenseGate is not null)
+                await _licenseGate.SignOutAsync().ConfigureAwait(false);
+            log.LogInformation("Sign-out complete; cached entitlement wiped.");
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Sign-out via LicenseGate failed (continuing teardown).");
+        }
+
+        // Drop us off the LAN trust ring while signed out so other
+        // machines on the same account stop expecting fan-out from
+        // this host. Network can be re-enabled after the next sign-in
+        // by ApplyTopologySettings.
+        try
+        {
+            _topology?.Stop();
+            _mdnsTcp?.Stop();
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Topology stop during sign-out threw.");
+        }
+
+        // Flip HasShownWelcome back so the wizard treats this like a
+        // first-run again (lands on PageSignIn).
+        _settings.HasShownWelcome = false;
+        try { _settings.Save(); } catch { /* best-effort */ }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_welcomeWindow is { IsVisible: true })
+            {
+                _welcomeWindow.Activate();
+                return;
+            }
+            ShowWelcomeAndDeferStartup(log);
+        });
+    }
+
     // ====================================================================
     // First-run welcome → bootstrap chain
     // ====================================================================
@@ -349,6 +399,7 @@ public partial class App : Application
                 OnAboutClicked = () => OpenSettings(SettingsWindow.TabGeneral),
                 OnLicenseClicked = () => OpenSettings(SettingsWindow.TabLicense),
                 OnFixPermissionsClicked = OpenWelcomeToFirstUngranted,
+                OnSignOutClicked = () => _ = SignOutAndReopenSignInAsync(log),
             };
             _disposables.Add(_trayController);
 
