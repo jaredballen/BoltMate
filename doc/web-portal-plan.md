@@ -124,18 +124,38 @@ Tooling changes:
 
 ### Phase 2 — Site MVP
 
-Status: **not started**
+Status: **complete**
 
-- [ ] New top-level `web/` dir, Astro project (TypeScript, no UI lib —
-      hand-rolled to match the prototype)
-- [ ] Pages: `/` (Landing), `/pricing`, `/support`, `/privacy`, `/terms`
-- [ ] Brand: green `#99FF55` on `#1C1C1E`, SF Pro Text + SF Mono, 1120 px
-      max-width container, ~80 px vertical rhythm. Logo `BoltMate_logo.svg`.
-- [ ] Build-time Stripe fetch: `astro.config.mjs` calls Stripe Prices API
-      during build, bakes price into HTML
-- [ ] `staticwebapp.config.json`: auth routes + B2C OIDC binding
-- [ ] `/support` form posts to `/api/support` (no zip from site, no Bearer)
-- [ ] GitHub Actions: build + deploy SWA on push to `main`
+- [x] Top-level `web/` Astro project (TypeScript, no UI lib —
+      hand-rolled). `astro build` produces a static `dist/` directory
+      served by SWA Free. `Base.astro` layout shared across all pages
+      (sticky nav, Logitech-trademark footer disclaimer, brand mark
+      lockup inline as SVG).
+- [x] Pages: `/` (Landing), `/pricing`, `/support`, `/privacy`,
+      `/terms`, branded `/404`.
+- [x] Brand tokens in `src/styles/tokens.css` mirror the desktop
+      `Theme/DesignTokens.axaml` (green `#99FF55` on `#1C1C1E`,
+      SF Pro Text + SF Mono, 1120 px max-width, ~80 px vertical
+      rhythm). Favicon is a squircle-framed bolt mark.
+- [x] Build-time Stripe fetch: `src/lib/pricing.ts` calls
+      `stripe.prices.list({ lookup_keys: ["boltmate_lifetime"] })` at
+      build time using `STRIPE_SECRET_KEY` from env. Falls back to a
+      hard-coded `$14.99` / current Price ID when no key is present
+      so local dev builds still render.
+- [x] `web/staticwebapp.config.json`: B2C OIDC provider `aad` wired
+      to `boltmateauth.ciamlogin.com`, `/api/*` rewrites to
+      `https://api.boltmate.app/api/*`, `/account/*` + `/checkout/*`
+      gated to the `authenticated` role, 401s redirect to
+      `/.auth/login/aad`. Default security headers
+      (HSTS, nosniff, strict referrer) applied globally.
+- [x] `/support` form posts JSON to `/api/support` (no zip from site,
+      no Bearer) — Phase 1 SupportFunction accepts this content type
+      already.
+- [x] GitHub Actions `.github/workflows/swa-deploy.yml`:
+      pushes to `main` that touch `web/` deploy to the Static Web
+      App; pull requests get a per-PR staging environment from the
+      SWA action. `AZURE_STATIC_WEB_APPS_API_TOKEN` and
+      `STRIPE_SECRET_KEY` seeded as GH repo secrets.
 
 ### Phase 3 — Checkout + Account
 
