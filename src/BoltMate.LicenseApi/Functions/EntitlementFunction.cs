@@ -1,8 +1,10 @@
 using System;
 using System.Net;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using BoltMate.LicenseApi.Configuration;
+using BoltMate.LicenseApi.Models;
 using BoltMate.LicenseApi.Services;
 using BoltMate.Licensing.Contracts;
 using Microsoft.AspNetCore.Http;
@@ -15,6 +17,8 @@ namespace BoltMate.LicenseApi.Functions;
 
 public sealed class EntitlementFunction
 {
+    private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
+
     private readonly IIdTokenValidator _idTokens;
     private readonly ILicenseRepository _licenses;
     private readonly IRefreshLogRepository _refreshLog;
@@ -55,12 +59,42 @@ public sealed class EntitlementFunction
         if (validated is null)
             return Error(HttpStatusCode.Unauthorized, EntitlementErrorCodes.InvalidIdToken, "id token invalid");
 
-        var license = await _licenses.GetByEmailAsync(validated.Email, ct).ConfigureAwait(false);
-        if (license is null)
-            return Error(HttpStatusCode.NotFound, EntitlementErrorCodes.LicenseNotFound, "no active license for this account");
+        var body = await TryReadBodyAsync(req, ct).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
 
-        if (license.Status == "revoked")
+        var license = await _licenses.GetByEmailAsync(validated.Email, ct).ConfigureAwait(false);
+
+        // No license for this email → auto-provision a Trial subject to
+        // the hardware-reuse block. We only enforce the block when the
+        // client supplied a HardwareIdHash; a missing hash means we
+        // can't tell if it's the same machine, so we err on the side of
+        // letting them in (real users may legitimately not send one;
+        // attackers would have to actively strip the field, and there's
+        // still the rate limiter + paid-conversion check upstream).
+        if (license is null)
+        {
+            if (!string.IsNullOrWhiteSpace(body?.HardwareIdHash))
+            {
+                var cutoff = now.AddDays(-_options.TrialReuseBlockDays);
+                var reused = await _licenses
+                    .HasRecentTrialForHardwareAsync(body.HardwareIdHash, cutoff, ct)
+                    .ConfigureAwait(false);
+                if (reused)
+                {
+                    _log.LogInformation("Trial reused for hw={HardwareIdHash}, email={Email}.",
+                        body.HardwareIdHash, validated.Email);
+                    return Error(HttpStatusCode.Forbidden, EntitlementErrorCodes.TrialReused,
+                        "this hardware already used its trial — purchase a license to continue");
+                }
+            }
+
+            license = await ProvisionTrialAsync(validated.Email, validated.Subject, body?.HardwareIdHash, now, ct).ConfigureAwait(false);
+            _log.LogInformation("Provisioned Trial {LicenseId} for {Email}.", license.Id, license.Email);
+        }
+        else if (license.Status == "revoked")
+        {
             return Error(HttpStatusCode.Forbidden, EntitlementErrorCodes.LicenseRevoked, "license revoked");
+        }
 
         var limit = await _rateLimiter.CheckAsync(license.Id, ct).ConfigureAwait(false);
         if (!limit.Allowed)
@@ -68,7 +102,12 @@ public sealed class EntitlementFunction
 
         await _licenses.BindOAuthSubjectAsync(license.Id, license.Email, validated.Subject, ct).ConfigureAwait(false);
 
-        var now = DateTimeOffset.UtcNow;
+        // JWT lifetime: capped by the license's own ExpiresAt (Trial)
+        // so we never hand out a 30-day token to a 14-day Trial.
+        var jwtExpiry = now.AddDays(_options.RefreshTokenLifetimeDays);
+        if (license.ExpiresAt is { } licExpires && licExpires < jwtExpiry)
+            jwtExpiry = licExpires;
+
         var claims = new LicenseClaims(
             Subject: validated.Subject,
             Email: license.Email,
@@ -77,12 +116,45 @@ public sealed class EntitlementFunction
             Tier: license.Tier,
             Issuer: _options.Issuer,
             IssuedAt: now,
-            ExpiresAt: now.AddDays(_options.RefreshTokenLifetimeDays));
+            ExpiresAt: jwtExpiry);
 
         var jwt = await _signer.SignAsync(claims, ct).ConfigureAwait(false);
         await _refreshLog.RecordAsync(license.Id, validated.Subject, now, ct).ConfigureAwait(false);
 
         return new OkObjectResult(new EntitlementResponse(jwt, claims.ExpiresAt.AddDays(-3).ToUnixTimeSeconds()));
+    }
+
+    private async Task<LicenseRecord> ProvisionTrialAsync(
+        string email, string oauthSubject, string? hardwareIdHash, DateTimeOffset now, CancellationToken ct)
+    {
+        var record = new LicenseRecord
+        {
+            Id = $"lic_{Guid.NewGuid():N}",
+            Email = email,
+            OAuthSubject = oauthSubject,
+            Sku = LicenseSkus.Boltmate,
+            Tier = LicenseTier.Trial,
+            Status = "active",
+            IssuedAt = now,
+            ExpiresAt = now.AddDays(_options.TrialLengthDays),
+            HardwareIdHash = hardwareIdHash,
+            TrialOriginAt = now,
+        };
+        await _licenses.UpsertAsync(record, ct).ConfigureAwait(false);
+        return record;
+    }
+
+    private static async Task<EntitlementRequest?> TryReadBodyAsync(HttpRequest req, CancellationToken ct)
+    {
+        if (req.ContentLength is null or 0) return null;
+        try
+        {
+            return await JsonSerializer.DeserializeAsync<EntitlementRequest>(req.Body, JsonOpts, ct).ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static IActionResult Error(HttpStatusCode status, string code, string? message, int? retryAfterSeconds = null)

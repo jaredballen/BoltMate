@@ -82,7 +82,7 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
         {
             await _store.DeleteAsync(_options.SecureStoreKey, ct).ConfigureAwait(false);
             _log.LogWarning("License revoked during activation.");
-            return Publish(new LicenseStatus(LicenseState.Revoked, LicenseTier.Free, null, null, null, null, _clock.UtcNow));
+            return Publish(new LicenseStatus(LicenseState.Revoked, null, null, null, null, null, _clock.UtcNow));
         }
         finally
         {
@@ -121,7 +121,7 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
             {
                 await _store.DeleteAsync(_options.SecureStoreKey, ct).ConfigureAwait(false);
                 _log.LogWarning("License revoked on refresh.");
-                return Publish(new LicenseStatus(LicenseState.Revoked, LicenseTier.Free, current.Email, current.LicenseId, current.IssuedAt, current.ExpiresAt, now));
+                return Publish(new LicenseStatus(LicenseState.Revoked, null, current.Email, current.LicenseId, current.IssuedAt, current.ExpiresAt, now));
             }
             catch (EntitlementRequestException ex) when (ex.IsRateLimited)
             {
@@ -162,7 +162,7 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
         if (!result.IsValid && !result.IsExpired)
         {
             _log.LogWarning("License JWT failed verification: {Reason}", result.Reason);
-            return new LicenseStatus(LicenseState.SignatureInvalid, LicenseTier.Free, null, null, null, null, null);
+            return new LicenseStatus(LicenseState.SignatureInvalid, null, null, null, null, null, null);
         }
 
         var claims = result.Claims!;

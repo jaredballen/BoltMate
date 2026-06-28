@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Threading;
@@ -60,5 +61,43 @@ internal sealed class CosmosLicenseRepository : ILicenseRepository
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
         }
+    }
+
+    public async Task<bool> HasRecentTrialForHardwareAsync(string hardwareIdHash, DateTimeOffset cutoffUtc, CancellationToken ct = default)
+    {
+        // Cross-partition query — required because trial farming would
+        // use different emails (= different partitions). Small index
+        // footprint: only Trial records carry hardwareIdHash, and the
+        // cutoff prunes anything older than the reuse window.
+        var query = new QueryDefinition(
+            "SELECT TOP 1 c.id FROM c WHERE c.hardwareIdHash = @h AND c.trialOriginAt >= @cutoff")
+            .WithParameter("@h", hardwareIdHash)
+            .WithParameter("@cutoff", cutoffUtc);
+
+        var iterator = _container.GetItemQueryIterator<dynamic>(query);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync(ct).ConfigureAwait(false);
+            if (page.Count > 0) return true;
+        }
+        return false;
+    }
+
+    public async Task<LicenseRecord?> GetByStripePaymentIntentIdAsync(string paymentIntentId, CancellationToken ct = default)
+    {
+        // Cross-partition lookup keyed on Stripe's PaymentIntent ID.
+        // Set on every checkout-completed upsert; refund webhook uses
+        // this to find which license to revoke.
+        var query = new QueryDefinition(
+            "SELECT TOP 1 * FROM c WHERE c.stripePaymentIntentId = @pi")
+            .WithParameter("@pi", paymentIntentId);
+
+        var iterator = _container.GetItemQueryIterator<LicenseRecord>(query);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync(ct).ConfigureAwait(false);
+            foreach (var hit in page) return hit;
+        }
+        return null;
     }
 }

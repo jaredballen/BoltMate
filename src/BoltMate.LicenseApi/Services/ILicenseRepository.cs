@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,4 +12,20 @@ public interface ILicenseRepository
     Task<IReadOnlyList<LicenseRecord>> ListByEmailAsync(string email, CancellationToken ct = default);
     Task UpsertAsync(LicenseRecord record, CancellationToken ct = default);
     Task BindOAuthSubjectAsync(string licenseId, string email, string oauthSubject, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns true if any license record exists with the given hardware
+    /// ID hash whose <c>TrialOriginAt</c> is on or after the supplied
+    /// cutoff. Used by EntitlementFunction to block re-trial farming
+    /// (same hardware, different email).
+    /// </summary>
+    Task<bool> HasRecentTrialForHardwareAsync(string hardwareIdHash, DateTimeOffset cutoffUtc, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the license bound to a Stripe payment intent, or null if
+    /// none. Used by the refund webhook handler — Stripe sends us the
+    /// PaymentIntent ID on <c>charge.refunded</c>; we reverse-lookup the
+    /// license that was issued for it. Cross-partition query (any email).
+    /// </summary>
+    Task<LicenseRecord?> GetByStripePaymentIntentIdAsync(string paymentIntentId, CancellationToken ct = default);
 }

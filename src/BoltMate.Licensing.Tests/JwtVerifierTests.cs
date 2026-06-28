@@ -24,7 +24,7 @@ public sealed class JwtVerifierTests
         Assert.NotNull(result.Claims);
         Assert.Equal("user@example.com", result.Claims!.Email);
         Assert.Equal("lic-123", result.Claims.LicenseId);
-        Assert.Equal(LicenseTier.Pro, result.Claims.Tier);
+        Assert.Equal(LicenseTier.Boltmate, result.Claims.Tier);
     }
 
     [Fact]
@@ -99,8 +99,8 @@ public sealed class JwtVerifierTests
                 sub = "oauth-sub-123",
                 email = "user@example.com",
                 lic = "lic-123",
-                sku = "boltmate-pro",
-                tier = "Pro",
+                sku = "boltmate",
+                tier = "Boltmate",
                 iss = Issuer,
                 iat = iat.ToUnixTimeSeconds(),
                 exp = exp.ToUnixTimeSeconds()

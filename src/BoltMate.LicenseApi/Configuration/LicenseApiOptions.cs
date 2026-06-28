@@ -11,8 +11,8 @@ public sealed class LicenseApiOptions
 
     public string CosmosEndpoint { get; set; } = string.Empty;
     public string CosmosDatabase { get; set; } = "boltmate";
-    public string LicensesContainer { get; set; } = "licenses";
-    public string RefreshLogContainer { get; set; } = "refresh_log";
+    public string LicensesContainer { get; set; } = "Licenses";
+    public string RefreshLogContainer { get; set; } = "RefreshLog";
 
     public string EntraTenantId { get; set; } = string.Empty;
     public string EntraClientId { get; set; } = string.Empty;
@@ -27,4 +27,12 @@ public sealed class LicenseApiOptions
     public int RefreshTokenLifetimeDays { get; set; } = 30;
     public int Refresh24hCap { get; set; } = 5;
     public int Refresh30dCap { get; set; } = 20;
+
+    /// <summary>How many days a new Trial license stays valid from issue.</summary>
+    public int TrialLengthDays { get; set; } = 14;
+
+    /// <summary>How many days after a trial was first issued we refuse to
+    /// re-issue another trial to the same hardware. Prevents users from
+    /// looping email accounts to get unlimited trials. 365 days = 12 mo.</summary>
+    public int TrialReuseBlockDays { get; set; } = 365;
 }

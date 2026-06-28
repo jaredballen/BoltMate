@@ -81,12 +81,17 @@ public sealed class JwtVerifier : IDisposable
         var email = root.GetProperty("email").GetString() ?? throw new FormatException("email missing");
         var licenseId = root.GetProperty("lic").GetString() ?? throw new FormatException("lic missing");
         var sku = root.GetProperty("sku").GetString() ?? throw new FormatException("sku missing");
-        var tierStr = root.GetProperty("tier").GetString() ?? "Free";
+        var tierStr = root.GetProperty("tier").GetString() ?? throw new FormatException("tier missing");
         var iss = root.GetProperty("iss").GetString() ?? throw new FormatException("iss missing");
         var iat = DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("iat").GetInt64());
         var exp = DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64());
 
-        var tier = Enum.TryParse<LicenseTier>(tierStr, ignoreCase: true, out var parsed) ? parsed : LicenseTier.Free;
+        // Tier MUST parse — issuer only mints JWTs with valid tier values
+        // (Trial / Boltmate). An unknown tier means the JWT was minted
+        // before a schema migration or tampered with — fail rather than
+        // silently downgrade.
+        if (!Enum.TryParse<LicenseTier>(tierStr, ignoreCase: true, out var tier))
+            throw new FormatException($"tier '{tierStr}' is not a known LicenseTier");
 
         return new LicenseClaims(sub, email, licenseId, sku, tier, iss, iat, exp);
     }
