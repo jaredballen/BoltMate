@@ -3,19 +3,19 @@ import Base from "../layouts/Base.astro";
 ---
 
 <Base title="Support — BoltMate" pathname="/support">
-  <section class="section support-hero">
+  <section class="support-hero">
     <div class="container">
-      <p class="eyebrow">Support</p>
+      <p class="eyebrow">SUPPORT</p>
       <h1>Tell us what broke.</h1>
       <p class="lede">
         Anything from "device didn't follow" to "I bought it but the
-        download won't run". We read every message — replies come from
+        download won't run." We read every message — replies come from
         a human, not a queue bot.
       </p>
     </div>
   </section>
 
-  <section class="section support-form-section">
+  <section class="support-form-section">
     <div class="container support-grid">
       <form id="support-form" novalidate>
         <div class="row">
@@ -23,7 +23,7 @@ import Base from "../layouts/Base.astro";
           <input id="email" name="email" type="email" required autocomplete="email" />
         </div>
         <div class="row">
-          <label for="name">Your name <span>optional</span></label>
+          <label for="name">Your name <span class="optional">optional</span></label>
           <input id="name" name="name" type="text" autocomplete="name" />
         </div>
         <div class="row">
@@ -36,8 +36,8 @@ import Base from "../layouts/Base.astro";
           <p class="row-hint">
             Include the OS + machine, what you were doing, and what
             actually happened. If you can grab the BoltMate logs from
-            the app's Settings &rarr; Support tab, drop the bundle URL
-            in here too.
+            the app's Settings → General → Diagnostics, click "Send logs"
+            there — it bundles + uploads them for us.
           </p>
         </div>
 
@@ -48,6 +48,7 @@ import Base from "../layouts/Base.astro";
       </form>
 
       <aside class="support-tips">
+        <p class="eyebrow">FIRST AID</p>
         <h2>Faster ways to get unstuck</h2>
         <p>
           Most BoltMate issues are HID permissions, firewall rules, or
@@ -55,7 +56,7 @@ import Base from "../layouts/Base.astro";
           ticket, try:
         </p>
         <ul>
-          <li>Check macOS Settings &rarr; Privacy &amp; Security &rarr; Input Monitoring includes BoltMate.</li>
+          <li>Check macOS Settings → Privacy &amp; Security → Input Monitoring includes BoltMate.</li>
           <li>Check Windows Defender Firewall allows BoltMate on private networks.</li>
           <li>Confirm all machines are on the same network — VPNs and guest networks usually block multicast.</li>
         </ul>
@@ -68,10 +69,10 @@ import Base from "../layouts/Base.astro";
   </section>
 </Base>
 
-<script>
-  const form = document.getElementById("support-form") as HTMLFormElement | null;
-  const status = document.getElementById("status") as HTMLParagraphElement | null;
-  const submitBtn = document.getElementById("submit-btn") as HTMLButtonElement | null;
+<script is:inline>
+  const form = document.getElementById("support-form");
+  const status = document.getElementById("status");
+  const submitBtn = document.getElementById("submit-btn");
 
   if (form && status && submitBtn) {
     form.addEventListener("submit", async (e) => {
@@ -84,7 +85,7 @@ import Base from "../layouts/Base.astro";
       const message = (data.get("message") || "").toString().trim();
       if (!email || !message) {
         status.textContent = "Email and message are required.";
-        status.classList.add("error");
+        status.classList.add("err");
         return;
       }
 
@@ -112,11 +113,11 @@ import Base from "../layouts/Base.astro";
         } else {
           const body = await resp.text().catch(() => "");
           status.textContent = "Couldn't send: " + (body || resp.statusText);
-          status.classList.add("error");
+          status.classList.add("err");
         }
       } catch (err) {
         status.textContent = "Network error — try again in a minute.";
-        status.classList.add("error");
+        status.classList.add("err");
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = "Send to support";
@@ -126,14 +127,35 @@ import Base from "../layouts/Base.astro";
 </script>
 
 <style>
-  .support-hero { padding-block: 72px 16px; }
-  .support-hero h1 { max-width: 18ch; }
-  .lede { font-size: 1.125rem; color: var(--bm-fg-secondary); max-width: 56ch; }
+  .support-hero {
+    padding: 72px 0 16px;
+    text-align: left;
+  }
+  .support-hero h1 {
+    margin: 14px 0 0;
+    font-weight: 700;
+    font-size: clamp(36px, 5vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: #161616;
+    max-width: 18ch;
+  }
+  .support-hero .lede {
+    margin: 18px 0 0;
+    max-width: 56ch;
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--bm-fg-secondary);
+  }
 
+  .support-form-section {
+    padding: 48px 0 96px;
+  }
   .support-grid {
     display: grid;
-    gap: 36px;
     grid-template-columns: 1.4fr 1fr;
+    gap: 36px;
+    align-items: start;
   }
   @media (max-width: 880px) {
     .support-grid { grid-template-columns: 1fr; }
@@ -141,36 +163,13 @@ import Base from "../layouts/Base.astro";
 
   form { display: grid; gap: 18px; }
   .row { display: grid; gap: 6px; }
-  label {
-    font-size: 0.9rem;
-    color: var(--bm-fg-secondary);
-  }
-  label span {
-    margin-left: 6px;
-    color: var(--bm-fg-tertiary);
-    font-weight: 400;
-  }
-  input, textarea {
-    background: var(--bm-bg-elev);
-    color: var(--bm-fg);
-    border: 1px solid var(--bm-stroke-strong);
-    border-radius: var(--bm-radius-sm);
-    padding: 12px 14px;
-    font: inherit;
-    font-family: var(--bm-font-text);
-    resize: vertical;
-  }
-  input:focus, textarea:focus {
-    outline: none;
-    border-color: var(--bm-green);
-    box-shadow: 0 0 0 3px var(--bm-green-tint-20);
-  }
-  textarea { min-height: 140px; }
   .row-hint {
     margin: 6px 0 0;
-    font-size: 0.82rem;
+    font-size: 12.5px;
+    line-height: 1.5;
     color: var(--bm-fg-tertiary);
   }
+  textarea { min-height: 140px; }
 
   .actions {
     display: flex;
@@ -178,24 +177,45 @@ import Base from "../layouts/Base.astro";
     gap: 16px;
     flex-wrap: wrap;
   }
-  .status { margin: 0; font-size: 0.92rem; color: var(--bm-fg-secondary); }
-  .status.ok { color: var(--bm-green); }
-  .status.error { color: #ff7a6a; }
+  .status {
+    margin: 0;
+    font-size: 13px;
+    color: var(--bm-fg-secondary);
+  }
+  .status.ok { color: #42701a; }
+  .status.err { color: #a93232; }
 
   .support-tips {
-    background: var(--bm-bg-elev);
+    background: var(--bm-bg-soft);
     border: 1px solid var(--bm-stroke);
-    border-radius: var(--bm-radius-md);
-    padding: 22px 24px;
-    align-self: start;
+    border-radius: 18px;
+    padding: 26px 28px;
   }
-  .support-tips h2 { font-size: 1.05rem; }
+  .support-tips .eyebrow {
+    margin-bottom: 10px;
+    color: var(--bm-fg-tertiary);
+  }
+  .support-tips h2 {
+    margin: 0;
+    font-weight: 660;
+    font-size: 20px;
+    color: #161616;
+    letter-spacing: -0.015em;
+  }
+  .support-tips p {
+    margin: 12px 0 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--bm-fg-secondary);
+  }
   .support-tips ul {
     list-style: none;
     padding: 0;
     margin: 14px 0;
     display: grid;
     gap: 10px;
+    font-size: 13.5px;
+    line-height: 1.45;
   }
   .support-tips ul li {
     padding-left: 18px;
@@ -206,11 +226,11 @@ import Base from "../layouts/Base.astro";
     content: "→";
     position: absolute;
     left: 0;
-    color: var(--bm-green);
+    color: var(--bm-green-mid);
   }
   .aside-fineprint {
     margin: 0;
-    font-size: 0.82rem;
+    font-size: 12.5px;
     color: var(--bm-fg-tertiary);
   }
 </style>

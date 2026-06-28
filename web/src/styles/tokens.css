@@ -1,35 +1,71 @@
 /*
-  Brand tokens — single source of truth shared with the desktop app's
-  DesignTokens.axaml. Hex values match.
+  BoltMate site tokens — light-theme defaults (per design handoff
+  `BoltMate Site.dc.html` / handoff README §"Site-specific tokens").
+  Brand green + near-black surfaces are inherited from the desktop app's
+  DesignTokens.axaml; light palette is site-only.
 */
 :root {
-  --bm-bg:               #1c1c1e;
-  --bm-bg-elev:          #232325;
-  --bm-bg-band:          #15161a;
-  --bm-fg:               #f5f5f7;
-  --bm-fg-secondary:     #c2c2c8;
-  --bm-fg-tertiary:      #8e8e93;
-
+  /* --- Brand ---------------------------------------------------------- */
   --bm-green:            #99ff55;
-  --bm-green-tint-08:    #99ff5514;
-  --bm-green-tint-20:    #99ff5533;
-  --bm-green-tint-40:    #99ff5566;
+  --bm-green-on-dark:    #15240c;
+  --bm-green-deep:       #5a8a2a;
+  --bm-green-mid:        #7fbf3f;
+  --bm-green-soft:       #cdeeab;
+  --bm-green-tile-bg:    #f3fbe9;
+  --bm-green-tint-08:    rgba(153, 255, 85, 0.08);
+  --bm-green-tint-12:    rgba(153, 255, 85, 0.12);
+  --bm-green-tint-14:    rgba(153, 255, 85, 0.14);
+  --bm-green-tint-20:    rgba(153, 255, 85, 0.20);
 
-  --bm-stroke:           #2c2c2e;
-  --bm-stroke-strong:    #3a3a3c;
+  --bm-dark:             #1c1c1e;
+  --bm-dark-elev:        #26272a;
+  --bm-dark-stroke:      #34353a;
 
-  --bm-radius-sm: 8px;
-  --bm-radius-md: 12px;
-  --bm-radius-lg: 18px;
+  /* --- Light surfaces (page-default) --------------------------------- */
+  --bm-bg:               #ffffff;
+  --bm-bg-soft:          #fbfbfd;
+  --bm-bg-band:          #f4f5f7;
+  --bm-bg-elev:          #fbfbfd;
+  --bm-stroke:           #ededf0;
+  --bm-stroke-strong:    #d9d9de;
+
+  --bm-fg:               #161616;
+  --bm-fg-secondary:     #5a5a5f;
+  --bm-fg-tertiary:      #9a9aa0;
+  --bm-fg-quaternary:    #b0b0b6;
+
+  /* --- Buttons ------------------------------------------------------- */
+  --bm-btn-bg:           #1c1c1e;
+  --bm-btn-fg:           #99ff55;
+  --bm-btn-secondary-bg: #ffffff;
+  --bm-btn-secondary-fg: #1d1d1f;
+  --bm-btn-secondary-border: #d9d9de;
+
+  /* --- Status semantic ---------------------------------------------- */
+  --bm-status-healthy:   #34c759;
+  --bm-status-unknown:   #c2c2c8;
+  --bm-status-blocked:   #ff453a;
+  --bm-amber:            #f0a94e;
+  --bm-amber-bg:         #fff3da;
+  --bm-amber-fg:         #9a6a12;
+
+  /* --- Shape -------------------------------------------------------- */
+  --bm-radius-pill: 20px;
+  --bm-radius-sm:   8px;
+  --bm-radius-md:   12px;
+  --bm-radius-lg:   16px;
+  --bm-radius-xl:   20px;
+  --bm-radius-hero: 26px;
 
   --bm-container-max: 1120px;
-  --bm-gutter: 28px;
-  --bm-rhythm: 80px;
+  --bm-gutter:        28px;
+  --bm-rhythm:        80px;
 
-  --bm-font-text: "SF Pro Text", -apple-system, BlinkMacSystemFont,
-                  "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* --- Type --------------------------------------------------------- */
+  --bm-font-text: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui,
+                  BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;
   --bm-font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo,
-                  Consolas, "Liberation Mono", monospace;
+                  Consolas, monospace;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -38,4 +74,22 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* --- Animations referenced by site sections --------------------------- */
+@keyframes bm-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bm-travel {
+  0%   { left: 27%; opacity: 0; }
+  10%  { left: 27%; opacity: 1; }
+  46%  { left: 73%; opacity: 1; }
+  84%  { left: 73%; opacity: 1; }
+  95%  { left: 73%; opacity: 0; }
+  100% { left: 27%; opacity: 0; }
+}
+@keyframes bm-glow {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
 }
