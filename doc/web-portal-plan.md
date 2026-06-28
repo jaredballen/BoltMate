@@ -10,7 +10,7 @@ backend completion. Living document — update phase status as work lands.
 | Frontend stack | Astro on Azure Static Web Apps (Free tier) |
 | Pricing | $14.99 one-time, Stripe = source of truth, build-time fetch |
 | SKU | `boltmate` (rename `LicenseSkus.Pro` → `LicenseSkus.Boltmate`) |
-| Identity | Azure AD B2C, OAuth providers: Apple, Google, LinkedIn, GitHub, Facebook |
+| Identity | Azure AD B2C, OAuth providers: Apple, Google (LinkedIn + GitHub deferred; Facebook cut — Meta Business Verification not worth it for a solo project) |
 | Auth requirement | Required for **all** app use (single-machine use is not a goal) |
 | Trust ring | B2C `sub` claim match between peers, auto-respond |
 | Support — site | `/support` page with anonymous email field path |
@@ -30,14 +30,14 @@ backend completion. Living document — update phase status as work lands.
 
 ### Phase 0 — Infrastructure provisioning
 
-Status: **complete** — Apple/LinkedIn/Facebook/GitHub OAuth IdPs deferred to wire when those provider apps are ready.
+Status: **complete** — LinkedIn/GitHub OAuth IdPs deferred; Facebook cut.
 
 - [x] Azure subscription confirmed + renamed to `BoltMate`, resource group `boltmate-prod` created (eastus2, tagged)
 - [x] Entra External ID tenant `BoltMate` (`boltmateauth.onmicrosoft.com`),
       app registration `BoltMate` (one app, web + mobile/desktop redirect URIs),
-      user flow `B2C_1_signup_signin` linked. Google IdP wired + tested end-to-end
-      (real Gmail → Google consent → `boltmate.app/auth/callback?code=...`).
-      Apple/LinkedIn/Facebook/GitHub deferred.
+      user flow `B2C_1_signup_signin` linked. Google + Apple IdPs wired + tested end-to-end
+      (real provider → consent → `boltmate.app/auth/callback?code=...`).
+      LinkedIn/GitHub deferred; Facebook cut.
 - [x] Cosmos DB Free Tier (`boltmate-prod-cosmos`), database `boltmate`,
       containers `Licenses` (pk `/email`) + `RefreshLog` (pk `/licenseId`, TTL 30d)
 - [x] KeyVault provisioned (`boltmate-prod-kv`, RBAC mode), secrets seeded:
@@ -252,11 +252,14 @@ Status: **not started**
 
 ## Deferred from Phase 0
 
-- **Apple + Facebook OAuth IdPs**: original design called for 5 providers
-  (Apple, Google, LinkedIn, GitHub, Facebook). Phase 0 only wired Google.
-  Apple + Facebook step-by-steps in
-  `~/.claude/projects/.../memory/project_todo_oauth_providers.md`.
-  Wire before Phase 2 site launch — visible on `/checkout` sign-in surface.
+- **Apple OAuth IdP**: wired 2026-06-28 (Services ID `app.boltmate.web`,
+  .p8 Sign-In-with-Apple key uploaded to Entra Apple IdP blade, added to
+  `signup_signin` user flow, end-to-end tested through `jwt.ms` round-trip).
+- **Facebook OAuth IdP**: **cut**. Meta now requires Business Verification
+  (incorporation docs, utility bills) for Live-mode apps requesting even
+  basic `email` scope. Not viable for a sole-proprietor project with no
+  LLC; marginal conversion lift doesn't justify the paperwork. Revisit
+  only if BoltMate incorporates or user feedback explicitly demands it.
 - **LinkedIn + GitHub OAuth IdPs**: further deferred. LinkedIn's consumer
   use case is questionable; GitHub requires custom OIDC provider config
   (no built-in IdP in Entra External ID).
