@@ -1,0 +1,125 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Buying BoltMate — Checkout" pathname="/checkout">
+  <section class="section checkout-section">
+    <div class="container checkout-card">
+      <div id="checkout-loading" class="state">
+        <p class="eyebrow">Step 2 of 2</p>
+        <h1>Setting up checkout…</h1>
+        <p class="lede">
+          Sending you to Stripe to finish your $14.99 lifetime purchase.
+        </p>
+        <div class="spinner" aria-hidden="true"></div>
+      </div>
+
+      <div id="checkout-error" class="state" hidden>
+        <p class="eyebrow">Hmm</p>
+        <h1>Couldn't open checkout.</h1>
+        <p id="checkout-error-msg" class="lede"></p>
+        <div class="actions">
+          <button type="button" id="retry" class="btn btn-primary">Try again</button>
+          <a href="/support" class="btn btn-outline">Contact support</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<script is:inline>
+async function startCheckout() {
+  document.getElementById("checkout-error").hidden = true;
+  document.getElementById("checkout-loading").hidden = false;
+
+  let me;
+  try {
+    const r = await fetch("/.auth/me");
+    me = await r.json();
+  } catch (e) {
+    return showError("Couldn't load your session. Try refreshing.");
+  }
+
+  const principal = me?.clientPrincipal;
+  if (!principal) {
+    // SWA's allowedRoles rule should have caught this, but bounce
+    // the user to sign-in defensively just in case.
+    window.location.href = "/.auth/login/aad?post_login_redirect_uri=/checkout";
+    return;
+  }
+
+  const idToken = principal.accessToken || (me && me.id_token);
+  if (!idToken) return showError("Missing identity token — sign out and back in.");
+
+  let resp;
+  try {
+    resp = await fetch("/api/checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + idToken },
+      body: "{}",
+    });
+  } catch (e) {
+    return showError("Network error reaching checkout — try again in a minute.");
+  }
+
+  if (resp.status === 401) {
+    window.location.href = "/.auth/login/aad?post_login_redirect_uri=/checkout";
+    return;
+  }
+  if (!resp.ok) {
+    return showError("Checkout server returned " + resp.status + ".");
+  }
+
+  const body = await resp.json();
+  if (!body?.url) return showError("Checkout response was missing a URL.");
+  window.location.href = body.url;
+}
+
+function showError(msg) {
+  document.getElementById("checkout-loading").hidden = true;
+  document.getElementById("checkout-error-msg").textContent = msg;
+  document.getElementById("checkout-error").hidden = false;
+}
+
+document.getElementById("retry")?.addEventListener("click", startCheckout);
+startCheckout();
+</script>
+
+<style>
+  .checkout-section {
+    min-height: 60vh;
+    display: grid;
+    place-items: center;
+  }
+  .checkout-card {
+    background: var(--bm-bg-elev);
+    border: 1px solid var(--bm-stroke);
+    border-radius: var(--bm-radius-lg);
+    padding: 48px;
+    max-width: 520px;
+    width: 100%;
+  }
+  .state h1 {
+    font-size: clamp(1.4rem, 2.4vw, 1.8rem);
+    margin: 4px 0 12px;
+  }
+  .lede {
+    color: var(--bm-fg-secondary);
+    margin: 0 0 24px;
+  }
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 3px solid var(--bm-stroke);
+    border-top-color: var(--bm-green);
+    animation: spin 0.8s linear infinite;
+    margin: 6px 0 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+</style>
