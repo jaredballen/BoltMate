@@ -256,20 +256,22 @@ Status: **complete**
 
 ### Phase 5 — Log collection
 
-Status: **not started**
+Status: **complete** (excluding site `/support` form — covered by Phase 6)
 
-- [ ] `BoltMate.App/Services/Support/LogBundler.cs`: zips
+- [x] `BoltMate.App/Services/Support/LogBundler.cs`: zips
       `~/Library/Logs/BoltMate/boltmate-*.log` (or Win equivalent)
       + scrubbed `settings.json` + version + OS info
-- [ ] `MdnsTcpChannel` new message types: `LogBundleRequest { bearer }` /
-      `LogBundleResponse { zip bytes }`. Peer verifies token signature
-      offline via `JwtVerifier`, compares `sub` claim to cached own `sub`,
-      auto-responds.
-- [ ] Settings → General → "Send logs" button. Dialog: description textarea
-      (always required) + email field (shown only if not logged in).
-      Assembles outer bundle (this-host + peer responses, 5s timeout),
-      posts multipart to `/api/support`.
-- [ ] Site `/support` posts same endpoint without zip
+- [x] `MdnsTcpChannel` new message types: `LogBundleRequest` / `LogBundleResponse`
+      ride a discriminated `TcpFrame` envelope. Trust ring is **cryptographic**
+      via the per-account AES-GCM SyncKey shipped with the entitlement
+      (#101–#104) — a peer can only request or honour log bundles if it
+      decrypts our envelope. Cleaner than the original JWT-signature plan
+      and forward-compatible with the eventual ephemeral DH upgrade.
+- [x] Settings → General → "Send logs" section. Description textarea
+      (required) + email field (shown only if signed out). Assembles outer
+      bundle (this-host + peer responses, 5 s timeout) and posts multipart
+      to `/api/support`.
+- [ ] Site `/support` posts same endpoint without zip *(deferred to Phase 6)*
 
 ### Phase 6 — Polish + ops
 

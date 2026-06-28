@@ -445,6 +445,11 @@ public partial class App : Application
 
     private void StartPermissionWatchdog(ILogger log)
     {
+        // Eager-resolve so its IUdpTopologyService.Announcements
+        // subscription is live as soon as the topology stack starts.
+        var hostnameAdvisor = Services.GetRequiredService<HostnameAdvisoryService>();
+        _disposables.Add(hostnameAdvisor);
+
         // AppHealthService is now DI-resolved. Wire its observable to the
         // tray + OS notification side-effects from here so the service
         // itself stays pure.
@@ -611,7 +616,15 @@ public partial class App : Application
         // and are instant.
         if (_settingsWindow is null)
         {
-            _settingsWindow = new SettingsWindow(_manager, _settings, _permissions!, LocalNotifications.Service, _topology?.UdpHealth, _mdnsTcp?.SyncHealth)
+            _settingsWindow = new SettingsWindow(
+                _manager,
+                _settings,
+                _permissions!,
+                LocalNotifications.Service,
+                _topology?.UdpHealth,
+                _mdnsTcp?.SyncHealth,
+                support: Services.GetService<BoltMate.App.Services.Support.SupportSubmissionService>(),
+                licenseGate: _licenseGate)
             {
                 HostNamesChanged = () => _trayController?.RefreshHostLabels(),
                 TopologyChanged = ApplyTopologySettings,

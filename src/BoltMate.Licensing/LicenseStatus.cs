@@ -10,7 +10,8 @@ public sealed record LicenseStatus(
     string? LicenseId,
     DateTimeOffset? IssuedAt,
     DateTimeOffset? ExpiresAt,
-    DateTimeOffset? RefreshFailedSince)
+    DateTimeOffset? RefreshFailedSince,
+    byte[]? SyncKey = null)
 {
     public bool IsEntitled => State is LicenseState.Valid or LicenseState.GracePeriod;
 

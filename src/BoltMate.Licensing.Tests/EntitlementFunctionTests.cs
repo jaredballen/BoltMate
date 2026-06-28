@@ -33,6 +33,39 @@ public sealed class EntitlementFunctionTests
         Assert.NotNull(record.TrialOriginAt);
         Assert.NotNull(record.ExpiresAt);
         Assert.Single(fakes.Signer.Signed);
+
+        // SyncKey minted on trial provisioning + returned in the response.
+        Assert.False(string.IsNullOrEmpty(record.SyncKeyBase64));
+        var keyBytes = System.Convert.FromBase64String(record.SyncKeyBase64!);
+        Assert.Equal(32, keyBytes.Length);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var resp = Assert.IsType<EntitlementResponse>(ok.Value);
+        Assert.Equal(record.SyncKeyBase64, resp.SyncKeyBase64);
+    }
+
+    [Fact]
+    public async Task SyncKey_is_backfilled_for_legacy_records()
+    {
+        var (fn, fakes) = Build();
+        fakes.Licenses.ByEmail["jared@example.com"] = new BoltMate.LicenseApi.Models.LicenseRecord
+        {
+            Id = "lic_old",
+            Email = "jared@example.com",
+            Sku = LicenseSkus.Boltmate,
+            Tier = LicenseTier.Boltmate,
+            Status = "active",
+            IssuedAt = System.DateTimeOffset.UtcNow.AddDays(-90),
+            SyncKeyBase64 = null, // pre-SyncKey schema
+        };
+        var req = MakePostRequest(bearer: "valid");
+
+        var result = await fn.Run(req, default);
+
+        Assert.IsType<OkObjectResult>(result);
+        var record = fakes.Licenses.ByEmail["jared@example.com"];
+        Assert.False(string.IsNullOrEmpty(record.SyncKeyBase64));
+        Assert.Equal(32, System.Convert.FromBase64String(record.SyncKeyBase64!).Length);
     }
 
     [Fact]

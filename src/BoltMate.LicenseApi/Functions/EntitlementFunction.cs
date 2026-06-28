@@ -121,7 +121,20 @@ public sealed class EntitlementFunction
         var jwt = await _signer.SignAsync(claims, ct).ConfigureAwait(false);
         await _refreshLog.RecordAsync(license.Id, validated.Subject, now, ct).ConfigureAwait(false);
 
-        return new OkObjectResult(new EntitlementResponse(jwt, claims.ExpiresAt.AddDays(-3).ToUnixTimeSeconds()));
+        // Lazy-fill: if an account predates the SyncKey field, mint
+        // one on the next entitlement hit so existing users get peer
+        // crypto automatically. Cheap (32 random bytes + one upsert).
+        if (string.IsNullOrEmpty(license.SyncKeyBase64))
+        {
+            license.SyncKeyBase64 = NewSyncKey();
+            await _licenses.UpsertAsync(license, ct).ConfigureAwait(false);
+            _log.LogInformation("Backfilled SyncKey for {LicenseId}.", license.Id);
+        }
+
+        return new OkObjectResult(new EntitlementResponse(
+            jwt,
+            claims.ExpiresAt.AddDays(-3).ToUnixTimeSeconds(),
+            license.SyncKeyBase64));
     }
 
     private async Task<LicenseRecord> ProvisionTrialAsync(
@@ -139,9 +152,21 @@ public sealed class EntitlementFunction
             ExpiresAt = now.AddDays(_options.TrialLengthDays),
             HardwareIdHash = hardwareIdHash,
             TrialOriginAt = now,
+            SyncKeyBase64 = NewSyncKey(),
         };
         await _licenses.UpsertAsync(record, ct).ConfigureAwait(false);
         return record;
+    }
+
+    private static string NewSyncKey()
+    {
+        // AES-256 key for the peer-message envelope. 32 random bytes
+        // from a CSPRNG — never derived from anything user-controlled
+        // because compromised email-recovery wouldn't grant LAN trust
+        // that way.
+        var bytes = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(bytes);
+        return Convert.ToBase64String(bytes);
     }
 
     private static async Task<EntitlementRequest?> TryReadBodyAsync(HttpRequest req, CancellationToken ct)

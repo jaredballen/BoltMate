@@ -141,10 +141,18 @@ public static class ServiceRegistration
         // platform we're on).
         services.AddSingleton<IMachineIdProvider, HardwareMachineIdProvider>();
 
+        // Peer crypto — AES-GCM-wraps every cross-machine UDP + TCP
+        // frame. Key is resolved through IPeerCryptoKeySource (the
+        // LicenseGate). Signed out → no key → topology layer skips
+        // sends and drops receives.
+        services.AddSingleton<IPeerCryptoProvider>(sp => new AesGcmPeerCryptoProvider(
+            () => sp.GetRequiredService<BoltMate.Licensing.IPeerCryptoKeySource>().GetCurrentKey()));
+
         services.AddSingleton<IUdpTopologyService>(sp => new UdpTopologyService(
             sp.GetRequiredService<IReceiverManager>(),
             sp.GetRequiredService<AppSettings>(),
             sp.GetRequiredService<IMachineIdProvider>(),
+            peerCrypto: sp.GetRequiredService<IPeerCryptoProvider>(),
             networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
             networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
             logger: sp.GetRequiredService<ILogger<UdpTopologyService>>()));
@@ -152,6 +160,7 @@ public static class ServiceRegistration
         services.AddSingleton<IMdnsTcpChannel>(sp => new MdnsTcpChannel(
             sp.GetRequiredService<IUdpTopologyService>(),
             sp.GetRequiredService<AppSettings>(),
+            peerCrypto: sp.GetRequiredService<IPeerCryptoProvider>(),
             networkPermission: sp.GetRequiredService<IPermissionsService>().Network,
             networkAvailability: sp.GetRequiredService<INetworkAvailabilityWatcher>(),
             logger: sp.GetRequiredService<ILogger<MdnsTcpChannel>>()));
@@ -161,6 +170,36 @@ public static class ServiceRegistration
             sp.GetRequiredService<SwitcherService>(),
             sp.GetRequiredService<IUdpTopologyService>(),
             sp.GetRequiredService<ILogger<TopologyCorrelator>>()));
+
+        // Hostname-mismatch advisor — fires when a peer's announced
+        // hostname doesn't appear in any local device's HostBindings,
+        // i.e. the user has signed into BoltMate on another machine
+        // but hasn't paired the peripherals there yet. The peer-
+        // message crypto layer (#104) now owns the trust ring, so
+        // hostname mismatch is a UX hint rather than a security
+        // check.
+        services.AddSingleton<HostnameAdvisoryService>(sp => new HostnameAdvisoryService(
+            sp.GetRequiredService<IUdpTopologyService>(),
+            sp.GetRequiredService<IReceiverManager>(),
+            sp.GetRequiredService<ILogger<HostnameAdvisoryService>>()));
+
+        // Support submission — bundles local logs, fetches peers'
+        // bundles over the encrypted TCP backchannel, and POSTs the
+        // outer zip to /api/support. Auth model:
+        // - signed in: server validates the Bearer JWT and pulls email
+        //   from the token (TODO: gate currently doesn't expose JWT —
+        //   service falls back to the anonymous path)
+        // - signed out: user-supplied email is included in the form
+        services.AddSingleton<BoltMate.App.Services.Support.LogBundler>(sp =>
+            new BoltMate.App.Services.Support.LogBundler(
+                sp.GetRequiredService<ILogger<BoltMate.App.Services.Support.LogBundler>>()));
+
+        services.AddSingleton<BoltMate.App.Services.Support.SupportSubmissionService>(sp =>
+            new BoltMate.App.Services.Support.SupportSubmissionService(
+                sp.GetRequiredService<BoltMate.App.Services.Support.LogBundler>(),
+                sp.GetRequiredService<IMdnsTcpChannel>(),
+                sp.GetRequiredService<BoltMate.Licensing.ILicenseGate>(),
+                sp.GetRequiredService<ILogger<BoltMate.App.Services.Support.SupportSubmissionService>>()));
 
         // App health monitor. Pure observable surface — the App layer
         // subscribes to Health to wire tray badges + OS notifications.

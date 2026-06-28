@@ -55,4 +55,16 @@ public sealed class LicenseRecord
     public string? StripeCustomerId { get; set; }
     public string? StripeCheckoutSessionId { get; set; }
     public string? StripePaymentIntentId { get; set; }
+
+    /// <summary>
+    /// Base64-encoded AES-256 key shared by every machine signed in
+    /// under this account. Drives the AES-GCM envelope that wraps
+    /// every cross-machine UDP + TCP frame. Generated at Trial
+    /// provisioning, preserved across Stripe upgrade + refund flows
+    /// so a user's existing peer trust ring isn't broken by paying.
+    /// Rotating this value invalidates every cached peer key on the
+    /// next entitlement refresh — destructive operation, do not
+    /// regenerate casually.
+    /// </summary>
+    public string? SyncKeyBase64 { get; set; }
 }

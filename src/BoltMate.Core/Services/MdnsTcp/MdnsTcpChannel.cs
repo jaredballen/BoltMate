@@ -39,6 +39,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private readonly IUdpTopologyService _udp;
     private readonly TopologySettings _settings;
     private readonly string _machineId;
+    private readonly IPeerCryptoProvider? _peerCrypto;
     private readonly ILogger<MdnsTcpChannel> _logger;
     private readonly CompositeDisposable _disposables = new();
     private readonly ConcurrentDictionary<string, TcpClient> _peerClients = new(StringComparer.OrdinalIgnoreCase);
@@ -171,12 +172,13 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     public MdnsTcpChannel(
         IUdpTopologyService udp,
         AppSettings appSettings,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<MdnsTcpChannel>? logger = null,
         TimeProvider? timeProvider = null)
         : this(udp, appSettings.Topology, udp.MachineId,
-               networkPermission, networkAvailability, logger, timeProvider)
+               peerCrypto, networkPermission, networkAvailability, logger, timeProvider)
     {
     }
 
@@ -188,6 +190,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         IUdpTopologyService udp,
         TopologySettings settings,
         string machineId,
+        IPeerCryptoProvider? peerCrypto = null,
         IPermission? networkPermission = null,
         INetworkAvailabilityWatcher? networkAvailability = null,
         ILogger<MdnsTcpChannel>? logger = null,
@@ -196,6 +199,7 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
         _udp = udp;
         _settings = settings;
         _machineId = machineId;
+        _peerCrypto = peerCrypto;
         _networkPermission = networkPermission;
         _networkAvailability = networkAvailability;
         _permGranted = networkPermission?.IsGranted ?? true;
@@ -562,16 +566,37 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
                 var got = await ReadExactAsync(stream, lengthBuf, ct).ConfigureAwait(false);
                 if (!got) return;
                 var len = BitConverter.ToInt32(lengthBuf, 0);
-                if (len <= 0 || len > 64 * 1024) return; // sanity cap (64KB)
+                // Sanity cap. Plain ReceiverAnnouncement is tiny;
+                // log-bundle responses (#99) can run several MB. 12 MB
+                // is generous and still bounds memory for a single
+                // hostile frame.
+                if (len <= 0 || len > 12 * 1024 * 1024) return;
                 var payload = new byte[len];
                 if (!await ReadExactAsync(stream, payload, ct).ConfigureAwait(false)) return;
 
                 try
                 {
-                    var announcement = JsonSerializer.Deserialize(payload,
-                        ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
-                    if (announcement is not null)
-                        _udp.InjectInbound(announcement, "tcp");
+                    // Decrypt mirror of UdpTopologyService — successful
+                    // decrypt is the trust signal that the sender is on
+                    // the same account. Same fallback ladder: legacy
+                    // tests with no crypto wired accept plaintext;
+                    // crypto wired but signed-out drops every frame.
+                    byte[] plaintext;
+                    if (_peerCrypto is { HasKey: true })
+                    {
+                        if (!_peerCrypto.TryDecrypt(payload, out plaintext))
+                            continue;
+                    }
+                    else if (_peerCrypto is null)
+                    {
+                        plaintext = payload;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    DispatchFrame(plaintext, peer, ct);
                 }
                 catch (JsonException) { /* skip malformed */ }
             }
@@ -698,7 +723,35 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     private void BroadcastToPeers(ReceiverAnnouncement ann)
     {
         if (_peerClients.IsEmpty) return;
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(ann, ReceiverAnnouncementContext.Default.ReceiverAnnouncement);
+        var frame = new BoltMate.Core.Topology.Messages.TcpFrame
+        {
+            Kind = BoltMate.Core.Topology.Messages.TcpFrameKind.Announce,
+            Announcement = ann,
+        };
+        SendFrameToAllPeers(frame);
+    }
+
+    private void SendFrameToAllPeers(BoltMate.Core.Topology.Messages.TcpFrame frame)
+    {
+        if (_peerClients.IsEmpty) return;
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(frame,
+            BoltMate.Core.Topology.Messages.TcpFrameContext.Default.TcpFrame);
+
+        byte[] bytes;
+        if (_peerCrypto is { HasKey: true })
+        {
+            if (!_peerCrypto.TryEncrypt(plaintext, out bytes))
+                return; // race: key wiped between HasKey + TryEncrypt
+        }
+        else if (_peerCrypto is null)
+        {
+            bytes = plaintext;
+        }
+        else
+        {
+            return; // crypto wired but signed out — drop fan-out
+        }
+
         var prefix = BitConverter.GetBytes(bytes.Length);
 
         foreach (var (peerId, client) in _peerClients)
@@ -728,5 +781,162 @@ public sealed class MdnsTcpChannel : IMdnsTcpChannel
     {
         // Makaretu.Dns accepts either form; strip trailing dot for safety.
         return s.TrimEnd('.');
+    }
+
+    // -----------------------------------------------------------------
+    // TcpFrame dispatch (announce / logbundle/request / logbundle/response)
+    // -----------------------------------------------------------------
+
+    public Func<CancellationToken, Task<byte[]?>>? LogBundleProvider { get; set; }
+
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<BoltMate.Core.Topology.Messages.LogBundleResponse>> _pendingLogRequests = new();
+
+    public async Task<IReadOnlyList<BoltMate.Core.Topology.Messages.LogBundleResponse>> RequestPeerLogsAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        if (_peerClients.IsEmpty) return Array.Empty<BoltMate.Core.Topology.Messages.LogBundleResponse>();
+
+        var connected = new List<string>();
+        foreach (var (peerId, client) in _peerClients)
+            if (client.Connected) connected.Add(peerId);
+        if (connected.Count == 0) return Array.Empty<BoltMate.Core.Topology.Messages.LogBundleResponse>();
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var tcs = new TaskCompletionSource<BoltMate.Core.Topology.Messages.LogBundleResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingLogRequests[requestId] = tcs;
+
+        try
+        {
+            var request = new BoltMate.Core.Topology.Messages.TcpFrame
+            {
+                Kind = BoltMate.Core.Topology.Messages.TcpFrameKind.LogBundleRequest,
+                LogBundleRequest = new BoltMate.Core.Topology.Messages.LogBundleRequest
+                {
+                    RequestId = requestId,
+                    FromMachineId = _machineId,
+                },
+            };
+            SendFrameToAllPeers(request);
+
+            // Collect any response that lands with our RequestId until
+            // the timeout. Multiple peers may answer — re-arm the TCS
+            // each time so we keep listening rather than completing on
+            // the first reply.
+            var collected = new List<BoltMate.Core.Topology.Messages.LogBundleResponse>();
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
+            try
+            {
+                while (!timeoutCts.IsCancellationRequested && collected.Count < connected.Count)
+                {
+                    var winner = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token)).ConfigureAwait(false);
+                    if (winner != tcs.Task) break;
+                    var resp = await tcs.Task.ConfigureAwait(false);
+                    collected.Add(resp);
+                    tcs = new TaskCompletionSource<BoltMate.Core.Topology.Messages.LogBundleResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _pendingLogRequests[requestId] = tcs;
+                }
+            }
+            catch (OperationCanceledException) { /* timeout */ }
+
+            return collected;
+        }
+        finally
+        {
+            _pendingLogRequests.TryRemove(requestId, out _);
+        }
+    }
+
+    private void DispatchFrame(byte[] plaintext, TcpClient peer, CancellationToken ct)
+    {
+        var frame = JsonSerializer.Deserialize(plaintext,
+            BoltMate.Core.Topology.Messages.TcpFrameContext.Default.TcpFrame);
+        if (frame is null) return;
+
+        switch (frame.Kind)
+        {
+            case BoltMate.Core.Topology.Messages.TcpFrameKind.Announce:
+                if (frame.Announcement is not null)
+                    _udp.InjectInbound(frame.Announcement, "tcp");
+                break;
+
+            case BoltMate.Core.Topology.Messages.TcpFrameKind.LogBundleRequest:
+                if (frame.LogBundleRequest is not null)
+                    _backgroundTasks.Add(Task.Run(() => HandleLogBundleRequestAsync(frame.LogBundleRequest, peer, ct), ct));
+                break;
+
+            case BoltMate.Core.Topology.Messages.TcpFrameKind.LogBundleResponse:
+                if (frame.LogBundleResponse is { } resp
+                    && _pendingLogRequests.TryGetValue(resp.RequestId, out var tcs))
+                {
+                    tcs.TrySetResult(resp);
+                }
+                break;
+        }
+    }
+
+    private async Task HandleLogBundleRequestAsync(
+        BoltMate.Core.Topology.Messages.LogBundleRequest req,
+        TcpClient peer,
+        CancellationToken ct)
+    {
+        var resp = new BoltMate.Core.Topology.Messages.LogBundleResponse
+        {
+            RequestId = req.RequestId,
+            FromMachineId = _machineId,
+            FromHostname = System.Net.Dns.GetHostName(),
+        };
+
+        try
+        {
+            var provider = LogBundleProvider;
+            if (provider is null)
+            {
+                resp.Error = "no log bundle provider configured";
+            }
+            else
+            {
+                var zip = await provider(ct).ConfigureAwait(false);
+                resp.ZipBase64 = zip is null ? null : Convert.ToBase64String(zip);
+                if (zip is null) resp.Error = "responder declined";
+            }
+        }
+        catch (Exception ex)
+        {
+            resp.Error = ex.Message;
+            _logger.LogWarning(ex, "MdnsTcp: log bundle provider threw for request {RequestId}", req.RequestId);
+        }
+
+        // Reply on the same inbound socket the request arrived on.
+        var frame = new BoltMate.Core.Topology.Messages.TcpFrame
+        {
+            Kind = BoltMate.Core.Topology.Messages.TcpFrameKind.LogBundleResponse,
+            LogBundleResponse = resp,
+        };
+        try
+        {
+            var plaintext = JsonSerializer.SerializeToUtf8Bytes(frame,
+                BoltMate.Core.Topology.Messages.TcpFrameContext.Default.TcpFrame);
+            byte[] bytes;
+            if (_peerCrypto is { HasKey: true })
+            {
+                if (!_peerCrypto.TryEncrypt(plaintext, out bytes)) return;
+            }
+            else if (_peerCrypto is null)
+            {
+                bytes = plaintext;
+            }
+            else
+            {
+                return;
+            }
+            var prefix = BitConverter.GetBytes(bytes.Length);
+            var s = peer.GetStream();
+            await s.WriteAsync(prefix.AsMemory(0, 4), ct).ConfigureAwait(false);
+            await s.WriteAsync(bytes.AsMemory(0, bytes.Length), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "MdnsTcp: failed to write LogBundleResponse for {RequestId}", req.RequestId);
+        }
     }
 }

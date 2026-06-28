@@ -15,7 +15,8 @@ public sealed record EntitlementRequest(
 
 public sealed record EntitlementResponse(
     [property: JsonPropertyName("jwt")] string Jwt,
-    [property: JsonPropertyName("next_refresh_after")] long? NextRefreshAfterUnix);
+    [property: JsonPropertyName("next_refresh_after")] long? NextRefreshAfterUnix,
+    [property: JsonPropertyName("sync_key")] string? SyncKeyBase64 = null);
 
 public sealed record EntitlementErrorResponse(
     [property: JsonPropertyName("error")] string Error,

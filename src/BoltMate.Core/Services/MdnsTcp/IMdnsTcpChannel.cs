@@ -1,4 +1,9 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using BoltMate.Core.Topology;
+using BoltMate.Core.Topology.Messages;
 
 namespace BoltMate.Core.Services;
 
@@ -27,4 +32,20 @@ public interface IMdnsTcpChannel : IAsyncDisposable, IDisposable
     /// <see cref="Start"/> rebinds cleanly.
     /// </summary>
     void Stop();
+
+    /// <summary>
+    /// Callback invoked when an inbound <see cref="LogBundleRequest"/>
+    /// arrives. The App layer wires this to its <c>LogBundler</c>; the
+    /// returned bytes become the <see cref="LogBundleResponse.ZipBase64"/>
+    /// payload. Null = decline (responder will reply with an Error).
+    /// </summary>
+    Func<CancellationToken, Task<byte[]?>>? LogBundleProvider { get; set; }
+
+    /// <summary>
+    /// Broadcasts a <see cref="LogBundleRequest"/> to every currently-
+    /// connected peer and collects responses up to <paramref name="timeout"/>.
+    /// Returns the responses that arrived before the timeout; peers that
+    /// don't reply are simply omitted (no entry in the result list).
+    /// </summary>
+    Task<IReadOnlyList<LogBundleResponse>> RequestPeerLogsAsync(TimeSpan timeout, CancellationToken ct = default);
 }
