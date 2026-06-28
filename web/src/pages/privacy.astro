@@ -1,0 +1,143 @@
+---
+import Base from "../layouts/Base.astro";
+
+const updated = "2026-06-28";
+---
+
+<Base title="Privacy — BoltMate" pathname="/privacy">
+  <section class="section legal-section">
+    <div class="container legal">
+      <p class="eyebrow">Privacy</p>
+      <h1>Privacy policy</h1>
+      <p class="updated">Last updated {updated}</p>
+
+      <h2>Short version</h2>
+      <p>
+        BoltMate is a desktop utility that fans Logitech Bolt host-switch
+        events across your devices and machines. The cross-machine sync
+        is LAN-only — no host-switch event ever leaves your local
+        network. We collect the minimum data needed to issue you a
+        license and reply to your support requests.
+      </p>
+
+      <h2>What we collect</h2>
+      <ul>
+        <li>
+          <strong>Email + account profile.</strong> When you sign in via
+          Google, Apple, Facebook, LinkedIn, GitHub, or a one-time email
+          code, your identity provider gives us your verified email
+          address and (optionally) your display name. We bind your
+          BoltMate license to that email.
+        </li>
+        <li>
+          <strong>License + entitlement state.</strong> Each license row
+          stores the email, OAuth subject identifier, tier (Trial /
+          Boltmate), Stripe customer + checkout-session IDs once you
+          purchase, issue and refund timestamps, and a salted SHA-256
+          hash of a stable hardware identifier from the desktop app —
+          which we use only to prevent the same machine from running
+          multiple back-to-back free trials.
+        </li>
+        <li>
+          <strong>Support submissions.</strong> When you write to
+          <a href="mailto:support@boltmate.app">support@boltmate.app</a>
+          or use the in-app "Send logs" button, the email address you
+          provided, your message, optional name, and any log bundle you
+          attached are stored long enough to reply and resolve the
+          issue.
+        </li>
+        <li>
+          <strong>Payment metadata.</strong> Card details never touch
+          our servers. Stripe handles checkout end-to-end; we receive
+          customer ID + payment intent ID, plus webhook events for
+          completion and refunds.
+        </li>
+      </ul>
+
+      <h2>What we do NOT collect</h2>
+      <ul>
+        <li>
+          <strong>Keystrokes, mouse movement, scroll, clicks.</strong>
+          macOS calls the permission BoltMate needs "Input Monitoring,"
+          but we use it solely to read HID++ host-switch frames from the
+          Bolt receiver. The app never sees what you type.
+        </li>
+        <li>
+          <strong>Usage telemetry, analytics, third-party trackers.</strong>
+          No Google Analytics, Plausible, Mixpanel, etc. on this site or
+          in the app. No anonymous "feature usage" reports.
+        </li>
+        <li>
+          <strong>Host-switch event content.</strong> The cross-machine
+          sync is LAN-only — UDP multicast + Bonjour-discovered TCP. No
+          host-switch event is ever sent off your local network.
+        </li>
+      </ul>
+
+      <h2>Where data lives</h2>
+      <p>
+        Account, license, and refresh-audit data live in Microsoft Azure
+        Cosmos DB in the East US 2 region. Support log bundles you
+        upload land in Azure Blob Storage in the same region with an
+        automatic 30-day delete lifecycle. Email is sent via
+        <a href="https://resend.com/" rel="nofollow">Resend</a>.
+        Authentication is brokered by Microsoft Entra External ID; your
+        identity-provider credentials never touch us directly.
+      </p>
+
+      <h2>Sharing</h2>
+      <p>
+        We never sell, rent, or syndicate your data. The processors that
+        see narrow slices of it are listed above (Microsoft Azure for
+        storage + auth, Stripe for payments, Resend for email,
+        Cloudflare for DNS + email routing). Each is bound by their own
+        data-protection terms.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>
+        You can request a copy of your license + account data or delete
+        your account entirely by emailing
+        <a href="mailto:support@boltmate.app">support@boltmate.app</a>
+        from the address on your account. We complete deletion requests
+        within 30 days; the only data that survives is what we're
+        required to keep for tax + accounting reasons (Stripe transaction
+        records).
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        BoltMate is run by Jared Allen. Reach us at
+        <a href="mailto:support@boltmate.app">support@boltmate.app</a>.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .legal-section { padding-block: 64px 96px; }
+  .legal { max-width: 760px; }
+  .legal h1 { font-size: clamp(1.8rem, 3vw, 2.4rem); margin-bottom: 4px; }
+  .legal h2 {
+    font-size: 1.2rem;
+    margin-top: 36px;
+    margin-bottom: 8px;
+  }
+  .legal p, .legal li {
+    color: var(--bm-fg-secondary);
+    line-height: 1.6;
+  }
+  .legal ul {
+    padding-left: 22px;
+    margin: 0 0 16px;
+    display: grid;
+    gap: 10px;
+  }
+  .legal strong { color: var(--bm-fg); font-weight: 600; }
+  .updated {
+    font-family: var(--bm-font-mono);
+    font-size: 0.8rem;
+    color: var(--bm-fg-tertiary);
+    margin: 0 0 28px;
+  }
+</style>

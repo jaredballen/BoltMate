@@ -1,0 +1,137 @@
+---
+import Base from "../layouts/Base.astro";
+
+const updated = "2026-06-28";
+---
+
+<Base title="Terms — BoltMate" pathname="/terms">
+  <section class="section legal-section">
+    <div class="container legal">
+      <p class="eyebrow">Terms</p>
+      <h1>Terms of service</h1>
+      <p class="updated">Last updated {updated}</p>
+
+      <h2>The deal</h2>
+      <p>
+        BoltMate is a desktop app that you install on your own machines
+        and a small backend service that issues your license. By
+        signing in and using BoltMate, you agree to these terms.
+      </p>
+
+      <h2>Your license</h2>
+      <ul>
+        <li>
+          The free trial lasts 14 days from the moment we first
+          provision it for your account. It's the same software as the
+          paid version, just time-limited.
+        </li>
+        <li>
+          The paid license is a one-time payment of US $14.99 (subject
+          to the live price displayed at checkout) and is bound to your
+          email address. You can install and sign in on any number of
+          machines you personally use.
+        </li>
+        <li>
+          You may not resell, sublicense, or transfer your license. You
+          may not redistribute the BoltMate binaries on a paid platform
+          or pretend you're the publisher.
+        </li>
+      </ul>
+
+      <h2>Refunds</h2>
+      <p>
+        We refund any purchase within 14 days of the original charge —
+        email <a href="mailto:support@boltmate.app">support@boltmate.app</a>
+        from the address on the account, no questions asked. After a
+        refund, your license is revoked and the app stops gating paid
+        functionality.
+      </p>
+
+      <h2>Logitech, Bolt, and Logi Options+</h2>
+      <p>
+        BoltMate is not affiliated with, endorsed by, or sponsored by
+        Logitech Inc. Logitech, Logi, Bolt, Logi Options+, and Flow are
+        trademarks of Logitech Inc. BoltMate works with the Logitech
+        Bolt receiver via the same publicly-documented HID++ protocol
+        that Logi Options+ uses, and is built to coexist with Logi
+        Options+ — not replace it.
+      </p>
+
+      <h2>What BoltMate is not responsible for</h2>
+      <ul>
+        <li>
+          Any damage to your Logitech hardware that pre-existed or that
+          occurs during normal use. BoltMate sends documented HID++
+          commands; it does not flash firmware, modify pairings, or
+          touch device storage.
+        </li>
+        <li>
+          Data loss caused by another process running on your machine
+          (including but not limited to your operating system, antivirus
+          software, or other peripheral utilities).
+        </li>
+        <li>
+          Network outages, ISP failures, or LAN misconfiguration that
+          prevent cross-machine sync from working.
+        </li>
+      </ul>
+
+      <h2>Warranty disclaimer</h2>
+      <p>
+        BoltMate is provided "as is" without warranty of any kind,
+        express or implied, including but not limited to merchantability
+        and fitness for a particular purpose. To the maximum extent
+        permitted by law, our total liability for any claim arising
+        from BoltMate is capped at the amount you paid us in the 12
+        months preceding the claim.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        We may change these terms when the product or its hosting model
+        changes. Material changes will be announced in the app or by
+        email to your license address. Continued use after notification
+        is acceptance of the change.
+      </p>
+
+      <h2>Governing law</h2>
+      <p>
+        These terms are governed by the laws of the State of Indiana,
+        United States, without regard to its conflict-of-law principles.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Run by Jared Allen. Reach us at
+        <a href="mailto:support@boltmate.app">support@boltmate.app</a>.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .legal-section { padding-block: 64px 96px; }
+  .legal { max-width: 760px; }
+  .legal h1 { font-size: clamp(1.8rem, 3vw, 2.4rem); margin-bottom: 4px; }
+  .legal h2 {
+    font-size: 1.2rem;
+    margin-top: 36px;
+    margin-bottom: 8px;
+  }
+  .legal p, .legal li {
+    color: var(--bm-fg-secondary);
+    line-height: 1.6;
+  }
+  .legal ul {
+    padding-left: 22px;
+    margin: 0 0 16px;
+    display: grid;
+    gap: 10px;
+  }
+  .updated {
+    font-family: var(--bm-font-mono);
+    font-size: 0.8rem;
+    color: var(--bm-fg-tertiary);
+    margin: 0 0 28px;
+  }
+</style>
