@@ -15,11 +15,24 @@ import Base from "../layouts/Base.astro";
 
 <style>
   .nf {
-    min-height: 50vh;
+    min-height: 60vh;
     display: grid;
     place-items: center;
     text-align: center;
+    padding: 64px 0;
   }
   .nf-inner { max-width: 520px; }
-  .nf p { font-size: 1.05rem; color: var(--bm-fg-secondary); margin: 12px 0 20px; }
+  .nf h1 {
+    margin: 14px 0 0;
+    font-weight: 700;
+    font-size: clamp(28px, 4.5vw, 40px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    color: #161616;
+  }
+  .nf p {
+    font-size: 17px;
+    color: var(--bm-fg-secondary);
+    margin: 16px 0 28px;
+  }
 </style>

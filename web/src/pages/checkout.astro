@@ -1,125 +1,435 @@
 ---
 import Base from "../layouts/Base.astro";
+import { loadPricing } from "../lib/pricing.ts";
+
+const pricing = await loadPricing();
+const TRIAL_DAYS = 14;
 ---
 
-<Base title="Buying BoltMate — Checkout" pathname="/checkout">
-  <section class="section checkout-section">
-    <div class="container checkout-card">
-      <div id="checkout-loading" class="state">
-        <p class="eyebrow">Step 2 of 2</p>
-        <h1>Setting up checkout…</h1>
-        <p class="lede">
-          Sending you to Stripe to finish your $14.99 lifetime purchase.
-        </p>
-        <div class="spinner" aria-hidden="true"></div>
-      </div>
+<Base title="Checkout — BoltMate" pathname="/checkout">
+  <section class="checkout-section">
+    <div class="container checkout-grid">
 
-      <div id="checkout-error" class="state" hidden>
-        <p class="eyebrow">Hmm</p>
-        <h1>Couldn't open checkout.</h1>
-        <p id="checkout-error-msg" class="lede"></p>
-        <div class="actions">
-          <button type="button" id="retry" class="btn btn-primary">Try again</button>
-          <a href="/support" class="btn btn-outline">Contact support</a>
+      <!-- ===== Left column: step content ===== -->
+      <div class="checkout-main">
+        <!-- 2-step indicator -->
+        <div class="step-indicator" id="step-indicator">
+          <div class="step" id="step-1">
+            <div class="step-num">1</div>
+            <div class="step-label">Account</div>
+          </div>
+          <div class="step-line" id="step-line"></div>
+          <div class="step step-pending" id="step-2">
+            <div class="step-num">2</div>
+            <div class="step-label">Payment</div>
+          </div>
+        </div>
+
+        <!-- ===== State: loading (figuring out auth) ===== -->
+        <div id="state-loading" class="checkout-card">
+          <h1 class="checkout-h">One moment…</h1>
+          <p class="checkout-p">Looking up your account.</p>
+          <div class="spinner" aria-hidden="true"></div>
+        </div>
+
+        <!-- ===== State: signed-out (Step 1) ===== -->
+        <div id="state-signed-out" class="checkout-card" hidden>
+          <h1 class="checkout-h">Sign in to continue</h1>
+          <p class="checkout-p">
+            Your BoltMate license binds to your account — no keys, no
+            per-machine activations. Use Apple or Google.
+          </p>
+          <div class="oauth-list">
+            <a id="signin-apple" href="/.auth/login/aad?post_login_redirect_uri=/checkout" class="oauth-btn">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M16.365 1.43c.005.114.015.226.015.341 0 1.156-.42 2.318-1.272 3.171-.852.852-2.005 1.327-3.161 1.317-.005-.114-.015-.226-.015-.341 0-1.156.42-2.318 1.272-3.171.852-.852 2.005-1.327 3.161-1.317zM20.4 17.79c-.484 1.121-.726 1.62-1.358 2.61-.88 1.388-2.12 3.118-3.66 3.132-1.367.013-1.72-.892-3.575-.882-1.856.011-2.244.898-3.612.886-1.539-.013-2.715-1.575-3.595-2.963-2.462-3.882-2.72-8.434-1.2-10.853 1.082-1.72 2.79-2.726 4.396-2.726 1.633 0 2.66.896 4.012.896 1.312 0 2.11-.898 4-.898 1.432 0 2.95.78 4.034 2.13-3.546 1.944-2.972 7.014.558 8.668z" fill="#1d1d1f"/>
+              </svg>
+              <span>Continue with Apple</span>
+            </a>
+            <a id="signin-google" href="/.auth/login/aad?post_login_redirect_uri=/checkout" class="oauth-btn">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                <path d="M21.6 12.227c0-.708-.064-1.39-.182-2.045H12v3.868h5.382a4.604 4.604 0 0 1-1.995 3.018v2.51h3.227c1.889-1.74 2.986-4.302 2.986-7.351z" fill="#4285F4"/>
+                <path d="M12 22c2.7 0 4.964-.895 6.618-2.422l-3.227-2.51c-.895.6-2.04.955-3.391.955-2.608 0-4.815-1.76-5.605-4.127H3.064v2.59A9.998 9.998 0 0 0 12 22z" fill="#34A853"/>
+                <path d="M6.395 13.896A6.014 6.014 0 0 1 6.077 12c0-.66.114-1.3.318-1.896V7.514H3.064A9.998 9.998 0 0 0 2 12c0 1.614.387 3.142 1.064 4.486l3.331-2.59z" fill="#FBBC05"/>
+                <path d="M12 5.977c1.468 0 2.786.505 3.823 1.495l2.866-2.866C16.96 2.99 14.696 2 12 2A9.998 9.998 0 0 0 3.064 7.514l3.331 2.59C7.185 7.736 9.392 5.977 12 5.977z" fill="#EA4335"/>
+              </svg>
+              <span>Continue with Google</span>
+            </a>
+          </div>
+          <p class="oauth-note">
+            Both options route through the same secure sign-in. We never
+            see your password.
+          </p>
+        </div>
+
+        <!-- ===== State: signed-in, sending to Stripe (Step 2) ===== -->
+        <div id="state-redirecting" class="checkout-card" hidden>
+          <h1 class="checkout-h">Sending you to Stripe…</h1>
+          <p class="checkout-p" id="redirecting-msg">
+            Signed in. Opening a secure checkout for your {pricing.amount} lifetime purchase.
+          </p>
+          <div class="spinner" aria-hidden="true"></div>
+        </div>
+
+        <!-- ===== State: error ===== -->
+        <div id="state-error" class="checkout-card error" hidden>
+          <h1 class="checkout-h">Couldn't open checkout.</h1>
+          <p class="checkout-p" id="error-msg"></p>
+          <div class="checkout-actions">
+            <button type="button" id="retry" class="btn btn-primary">Try again</button>
+            <a href="/support" class="btn btn-secondary">Contact support</a>
+          </div>
         </div>
       </div>
+
+      <!-- ===== Right column: order summary ===== -->
+      <aside class="order-summary">
+        <p class="eyebrow">ORDER</p>
+        <h2 class="order-title">Lifetime license</h2>
+        <p class="order-blurb">One purchase. Every machine you sign into. Every future update included.</p>
+
+        <dl class="order-lines">
+          <div>
+            <dt>BoltMate Lifetime</dt>
+            <dd>{pricing.amount}</dd>
+          </div>
+          <div>
+            <dt>Tax</dt>
+            <dd>Calculated at checkout</dd>
+          </div>
+        </dl>
+
+        <div class="order-total">
+          <dt>Total</dt>
+          <dd>{pricing.amount}</dd>
+        </div>
+
+        <ul class="order-perks">
+          <li><svg viewBox="0 0 16 16" width="13" height="13"><path d="M3.4 8.4l3 3 6.2-7" fill="none" stroke="#7fbf3f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>Refundable for {TRIAL_DAYS} days, no questions</li>
+          <li><svg viewBox="0 0 16 16" width="13" height="13"><path d="M3.4 8.4l3 3 6.2-7" fill="none" stroke="#7fbf3f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>Card processed by Stripe — we never see it</li>
+          <li><svg viewBox="0 0 16 16" width="13" height="13"><path d="M3.4 8.4l3 3 6.2-7" fill="none" stroke="#7fbf3f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg>Email receipt sent automatically</li>
+        </ul>
+      </aside>
     </div>
   </section>
 </Base>
 
 <script is:inline>
-async function startCheckout() {
-  document.getElementById("checkout-error").hidden = true;
-  document.getElementById("checkout-loading").hidden = false;
-
-  let me;
-  try {
-    const r = await fetch("/.auth/me");
-    me = await r.json();
-  } catch (e) {
-    return showError("Couldn't load your session. Try refreshing.");
+  function setState(id) {
+    ["state-loading", "state-signed-out", "state-redirecting", "state-error"]
+      .forEach((k) => {
+        const el = document.getElementById(k);
+        if (el) el.hidden = (k !== id);
+      });
   }
 
-  const principal = me?.clientPrincipal;
-  if (!principal) {
-    // SWA's allowedRoles rule should have caught this, but bounce
-    // the user to sign-in defensively just in case.
-    window.location.href = "/.auth/login/aad?post_login_redirect_uri=/checkout";
-    return;
+  function setStep(step) {
+    const s1 = document.getElementById("step-1");
+    const s2 = document.getElementById("step-2");
+    const line = document.getElementById("step-line");
+    if (!s1 || !s2 || !line) return;
+    if (step === 1) {
+      s1.classList.remove("step-pending"); s1.classList.add("step-active");
+      s2.classList.remove("step-active"); s2.classList.add("step-pending");
+      line.classList.remove("step-line-filled");
+    } else {
+      s1.classList.remove("step-active", "step-pending"); s1.classList.add("step-done");
+      s2.classList.remove("step-pending"); s2.classList.add("step-active");
+      line.classList.add("step-line-filled");
+    }
   }
 
-  const idToken = principal.accessToken || (me && me.id_token);
-  if (!idToken) return showError("Missing identity token — sign out and back in.");
-
-  let resp;
-  try {
-    resp = await fetch("/api/checkout", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer " + idToken },
-      body: "{}",
-    });
-  } catch (e) {
-    return showError("Network error reaching checkout — try again in a minute.");
+  function showError(msg) {
+    setState("state-error");
+    document.getElementById("error-msg").textContent = msg;
   }
 
-  if (resp.status === 401) {
-    window.location.href = "/.auth/login/aad?post_login_redirect_uri=/checkout";
-    return;
+  async function start() {
+    setState("state-loading");
+
+    let me = null;
+    try {
+      const r = await fetch("/.auth/me");
+      me = await r.json();
+    } catch (e) {
+      // /.auth/me only exists in production SWA — local dev returns 404.
+      me = null;
+    }
+
+    const principal = me?.clientPrincipal;
+    if (!principal) {
+      setStep(1);
+      setState("state-signed-out");
+      return;
+    }
+
+    setStep(2);
+    setState("state-redirecting");
+
+    const idToken = principal.accessToken || me?.id_token;
+    if (!idToken) {
+      return showError("Missing identity token. Sign out and back in.");
+    }
+
+    let resp;
+    try {
+      resp = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + idToken },
+        body: "{}",
+      });
+    } catch (e) {
+      return showError("Network error reaching checkout. Try again.");
+    }
+
+    if (resp.status === 401) {
+      window.location.href = "/.auth/login/aad?post_login_redirect_uri=/checkout";
+      return;
+    }
+    if (!resp.ok) {
+      return showError("Checkout server returned " + resp.status + ".");
+    }
+
+    const body = await resp.json();
+    if (!body?.url) return showError("Checkout response missing redirect URL.");
+    window.location.href = body.url;
   }
-  if (!resp.ok) {
-    return showError("Checkout server returned " + resp.status + ".");
-  }
 
-  const body = await resp.json();
-  if (!body?.url) return showError("Checkout response was missing a URL.");
-  window.location.href = body.url;
-}
-
-function showError(msg) {
-  document.getElementById("checkout-loading").hidden = true;
-  document.getElementById("checkout-error-msg").textContent = msg;
-  document.getElementById("checkout-error").hidden = false;
-}
-
-document.getElementById("retry")?.addEventListener("click", startCheckout);
-startCheckout();
+  document.getElementById("retry")?.addEventListener("click", start);
+  start();
 </script>
 
 <style>
   .checkout-section {
+    padding: 64px 0 96px;
     min-height: 60vh;
+  }
+  .checkout-grid {
     display: grid;
-    place-items: center;
+    grid-template-columns: 1.45fr 0.95fr;
+    gap: 40px;
+    align-items: start;
   }
+  @media (max-width: 880px) {
+    .checkout-grid { grid-template-columns: 1fr; gap: 28px; }
+  }
+
+  /* ============================================================
+     Step indicator
+     ============================================================ */
+  .step-indicator {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 28px;
+    padding: 0 4px;
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .step-num {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--bm-font-mono);
+    font-weight: 700;
+    font-size: 12px;
+    line-height: 1;
+    flex: none;
+  }
+  .step-label {
+    font-family: var(--bm-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .step-pending .step-num {
+    background: #ededf0;
+    color: var(--bm-fg-tertiary);
+  }
+  .step-pending .step-label { color: var(--bm-fg-tertiary); }
+  .step-active .step-num {
+    background: #1c1c1e;
+    color: var(--bm-green);
+  }
+  .step-active .step-label { color: #161616; }
+  .step-done .step-num {
+    background: var(--bm-green);
+    color: var(--bm-green-on-dark);
+  }
+  .step-done .step-label { color: var(--bm-fg-secondary); }
+  .step-line {
+    flex: 1;
+    max-width: 80px;
+    height: 2px;
+    border-radius: 2px;
+    background: #ededf0;
+    transition: background 200ms ease;
+  }
+  .step-line-filled { background: var(--bm-green); }
+
+  /* ============================================================
+     Cards
+     ============================================================ */
   .checkout-card {
-    background: var(--bm-bg-elev);
+    background: #fff;
     border: 1px solid var(--bm-stroke);
-    border-radius: var(--bm-radius-lg);
-    padding: 48px;
-    max-width: 520px;
-    width: 100%;
+    border-radius: 18px;
+    padding: 32px 32px 28px;
+    box-shadow: 0 14px 40px -20px rgba(0, 0, 0, 0.18);
   }
-  .state h1 {
-    font-size: clamp(1.4rem, 2.4vw, 1.8rem);
-    margin: 4px 0 12px;
+  .checkout-card.error { border-color: #ffd2cc; }
+  .checkout-h {
+    font-weight: 660;
+    font-size: 24px;
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+    color: #161616;
+    margin: 0;
   }
-  .lede {
+  .checkout-p {
+    margin: 10px 0 22px;
+    font-size: 14.5px;
+    line-height: 1.55;
     color: var(--bm-fg-secondary);
-    margin: 0 0 24px;
+    max-width: 48ch;
   }
+
   .spinner {
     width: 32px;
     height: 32px;
     border-radius: 50%;
     border: 3px solid var(--bm-stroke);
-    border-top-color: var(--bm-green);
+    border-top-color: var(--bm-green-mid);
     animation: spin 0.8s linear infinite;
-    margin: 6px 0 0;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .actions {
+
+  .checkout-actions {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
   }
+
+  /* ============================================================
+     OAuth list
+     ============================================================ */
+  .oauth-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 22px 0 12px;
+  }
+  .oauth-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border: 1px solid #d9d9de;
+    border-radius: 10px;
+    background: #fff;
+    color: #1d1d1f;
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 1;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .oauth-btn:hover {
+    background: #f5f5f7;
+    border-color: #c5c5cb;
+  }
+  .oauth-note {
+    margin: 14px 0 0;
+    font-size: 12.5px;
+    color: var(--bm-fg-tertiary);
+    line-height: 1.5;
+  }
+
+  /* ============================================================
+     Order summary rail
+     ============================================================ */
+  .order-summary {
+    background: var(--bm-bg-soft);
+    border: 1px solid var(--bm-stroke);
+    border-radius: 18px;
+    padding: 28px;
+  }
+  .order-summary .eyebrow {
+    color: var(--bm-fg-tertiary);
+    margin-bottom: 8px;
+  }
+  .order-title {
+    margin: 0;
+    font-weight: 620;
+    font-size: 19px;
+    color: #161616;
+  }
+  .order-blurb {
+    margin: 6px 0 22px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--bm-fg-secondary);
+  }
+  .order-lines {
+    margin: 0 0 18px;
+    padding: 0 0 14px;
+    border-bottom: 1px solid var(--bm-stroke);
+    display: grid;
+    gap: 10px;
+  }
+  .order-lines div {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+  }
+  .order-lines dt {
+    font-size: 13.5px;
+    color: var(--bm-fg-secondary);
+  }
+  .order-lines dd {
+    margin: 0;
+    font-size: 13.5px;
+    color: #3a3a3c;
+    text-align: right;
+  }
+  .order-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .order-total dt {
+    font-weight: 620;
+    font-size: 14px;
+    color: #161616;
+  }
+  .order-total dd {
+    margin: 0;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+    color: #161616;
+  }
+  .order-perks {
+    list-style: none;
+    padding: 22px 0 0;
+    margin: 18px 0 0;
+    border-top: 1px solid var(--bm-stroke);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .order-perks li {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--bm-fg-secondary);
+  }
+  .order-perks svg { margin-top: 2px; flex: none; }
 </style>
