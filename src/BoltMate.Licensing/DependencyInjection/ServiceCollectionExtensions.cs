@@ -67,7 +67,7 @@ public static class ServiceCollectionExtensions
             return new LoopbackAuthFlow(factory.CreateClient(AuthFlowHttpClient), authOptions);
         });
 
-        services.TryAddSingleton<ILicenseGate>(sp => new LicenseGate(
+        services.TryAddSingleton<LicenseGate>(sp => new LicenseGate(
             sp.GetRequiredService<ISecureStore>(),
             sp.GetRequiredService<JwtVerifier>(),
             sp.GetRequiredService<IBrowserAuthFlow>(),
@@ -75,6 +75,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IClock>(),
             sp.GetRequiredService<IOptions<LicensingOptions>>().Value,
             sp.GetService<ILogger<LicenseGate>>()));
+        services.TryAddSingleton<ILicenseGate>(sp => sp.GetRequiredService<LicenseGate>());
+        services.TryAddSingleton<IPeerCryptoKeySource>(sp => sp.GetRequiredService<LicenseGate>());
 
         return services;
     }

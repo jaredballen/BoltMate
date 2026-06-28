@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoltMate.Licensing;
 
-public sealed class LicenseGate : ILicenseGate, IDisposable
+public sealed partial class LicenseGate : ILicenseGate, IPeerCryptoKeySource, IDisposable
 {
     private readonly ISecureStore _store;
     private readonly JwtVerifier _verifier;
@@ -73,8 +73,9 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
             _log.LogInformation("Activation flow started.");
             var auth = await _authFlow.AuthenticateAsync(ct).ConfigureAwait(false);
             var response = await _entitlements.RequestEntitlementAsync(auth.IdToken, ct).ConfigureAwait(false);
-            await _store.SetAsync(_options.SecureStoreKey, response.Jwt, ct).ConfigureAwait(false);
-            var status = EvaluateStored(response.Jwt);
+            var envelope = SerializeEnvelope(response.Jwt, response.SyncKeyBase64);
+            await _store.SetAsync(_options.SecureStoreKey, envelope, ct).ConfigureAwait(false);
+            var status = EvaluateStored(envelope);
             _log.LogInformation("Activation succeeded: {State} tier={Tier} exp={Expiry}", status.State, status.Tier, status.ExpiresAt);
             return Publish(status);
         }
@@ -114,8 +115,9 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
             {
                 var auth = await _authFlow.AuthenticateAsync(ct).ConfigureAwait(false);
                 var response = await _entitlements.RequestEntitlementAsync(auth.IdToken, ct).ConfigureAwait(false);
-                await _store.SetAsync(_options.SecureStoreKey, response.Jwt, ct).ConfigureAwait(false);
-                return Publish(EvaluateStored(response.Jwt));
+                var envelope = SerializeEnvelope(response.Jwt, response.SyncKeyBase64);
+                await _store.SetAsync(_options.SecureStoreKey, envelope, ct).ConfigureAwait(false);
+                return Publish(EvaluateStored(envelope));
             }
             catch (EntitlementRequestException ex) when (ex.IsRevoked)
             {
@@ -154,8 +156,9 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
         }
     }
 
-    private LicenseStatus EvaluateStored(string jwt)
+    private LicenseStatus EvaluateStored(string stored)
     {
+        var (jwt, syncKey) = ParseStoredEnvelope(stored);
         var now = _clock.UtcNow;
         var result = _verifier.Verify(jwt, now);
 
@@ -167,8 +170,52 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
 
         var claims = result.Claims!;
         var state = ClassifyState(claims, now);
-        return new LicenseStatus(state, claims.Tier, claims.Email, claims.LicenseId, claims.IssuedAt, claims.ExpiresAt, null);
+        return new LicenseStatus(state, claims.Tier, claims.Email, claims.LicenseId, claims.IssuedAt, claims.ExpiresAt, null, syncKey);
     }
+
+    private static string SerializeEnvelope(string jwt, string? syncKeyBase64)
+    {
+        // Serialized shape: a single-line JSON object so the underlying
+        // secure store (Keychain attribute / DPAPI blob) sees one value
+        // and atomic save/load semantics still hold.
+        var envelope = new StoredEnvelope { Jwt = jwt, SyncKey = syncKeyBase64 };
+        return System.Text.Json.JsonSerializer.Serialize(envelope, StoredEnvelopeContext.Default.StoredEnvelope);
+    }
+
+    private static (string Jwt, byte[]? SyncKey) ParseStoredEnvelope(string stored)
+    {
+        // Pre-envelope versions wrote the raw JWT directly. Detect by
+        // the leading character — JWTs are base64url with a header
+        // segment that never starts with '{'. Belt-and-braces fallback
+        // if the JSON parser explodes on something we wrote.
+        if (string.IsNullOrEmpty(stored) || stored[0] != '{') return (stored, null);
+        try
+        {
+            var env = System.Text.Json.JsonSerializer.Deserialize(stored, StoredEnvelopeContext.Default.StoredEnvelope);
+            if (env is null || string.IsNullOrEmpty(env.Jwt)) return (stored, null);
+            byte[]? key = null;
+            if (!string.IsNullOrEmpty(env.SyncKey))
+            {
+                try { key = Convert.FromBase64String(env.SyncKey); }
+                catch { /* drop malformed key, keep JWT */ }
+            }
+            return (env.Jwt, key);
+        }
+        catch
+        {
+            return (stored, null);
+        }
+    }
+
+    private sealed class StoredEnvelope
+    {
+        public string Jwt { get; set; } = string.Empty;
+        public string? SyncKey { get; set; }
+    }
+
+    [System.Text.Json.Serialization.JsonSourceGenerationOptions(GenerationMode = System.Text.Json.Serialization.JsonSourceGenerationMode.Default)]
+    [System.Text.Json.Serialization.JsonSerializable(typeof(StoredEnvelope))]
+    private partial class StoredEnvelopeContext : System.Text.Json.Serialization.JsonSerializerContext { }
 
     private LicenseState ClassifyState(LicenseClaims claims, DateTimeOffset now)
     {
@@ -185,6 +232,8 @@ public sealed class LicenseGate : ILicenseGate, IDisposable
             _statusSubject.OnNext(status);
         return status;
     }
+
+    public byte[]? GetCurrentKey() => Current.SyncKey;
 
     public void Dispose()
     {
