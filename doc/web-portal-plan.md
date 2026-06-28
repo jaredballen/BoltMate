@@ -196,27 +196,63 @@ Status: **complete**
 
 ### Phase 4 — App auth integration
 
-Status: **not started**
+Status: **complete**
 
-- [ ] Welcome wizard new page 1: "Sign in to continue" using
-      `LoopbackAuthFlow` (already scaffolded). Skips topology + HID prompts
-      until signed in.
-- [ ] `LicenseGate` (already scaffolded) wired into `App.OnFrameworkInitializationCompleted`
-      — block bootstrap until cached entitlement valid OR fresh OAuth completes
-- [ ] Sign-out: tray menu item "Sign out". Wipes Keychain entry, stops topology,
-      drops mDNS advert, reopens welcome at sign-in step.
-- [ ] `AppSettings.json` cleanup:
-  - Drop `HostNames`, `Receivers` dict, `ReceiverSettings` class
-  - Drop all `Topology.*` constants except `Enabled`. Move port,
-    multicast group, intervals, broadcast cadence, mDNS service type
-    to `TopologyConstants` static class in Core.
-  - Drop `Topology.MachineId`
-  - `LastUpdateCheckUtc` moves to separate `state.json`
-- [ ] New `IMachineIdProvider`: derive from OS hardware ID.
-  - Mac: `ioreg -d2 -c IOPlatformExpertDevice` parsed for IOPlatformUUID
-  - Win: `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` read
-  - Linux: `/etc/machine-id`
-- [ ] Stale CLAUDE.md `CachedHostBindings` line removed
+- [x] `BoltMate.App` now references `BoltMate.Licensing` +
+      `BoltMate.Licensing.Contracts`. `ServiceRegistration` calls
+      `AddBoltMateLicensing(...)` with production wiring: `Issuer` +
+      `EntitlementEndpoint` = `https://api.boltmate.app`, OAuth
+      authorize/token endpoints on the BoltMate Entra External ID
+      tenant (`boltmateauth.ciamlogin.com`/`<tenant-guid>`),
+      `OAuthClientId` = the BoltMate app registration's GUID, scopes
+      `openid email profile offline_access`. `PublicKeyPem` left empty
+      for now — `LicenseGate.EvaluateStored` returns `SignatureInvalid`
+      until Phase 6 ships a stable verify key, which is fine because
+      the wizard's sign-in step forces a fresh OAuth round-trip.
+- [x] `App.OnFrameworkInitializationCompletedCore` resolves
+      `ILicenseGate` from DI, seeds `_licenseStatus` from `.Current`,
+      subscribes to `.StatusChanges` for the App layer to observe, and
+      fires `LoadAsync` fire-and-forget.
+- [x] `WelcomeViewModel` + `WelcomeWindow.axaml` gain a new
+      `PageSignIn` (default first page). Skipped automatically when
+      `LicenseGate.Current.IsEntitled` already holds. New
+      `SignInCommand` awaits `LicenseGate.ActivateAsync()` →
+      `LoopbackAuthFlow` opens the system browser, swaps the loopback
+      auth code for tokens, hits `/api/entitlement`. On
+      `Valid`/`GracePeriod` we advance to `PageWelcome`. `SignInStatus`
+      + `SignInBusy` drive the UI feedback.
+- [x] Tray menu gains a `Sign out` item. App-side
+      `SignOutAndReopenSignInAsync` awaits `LicenseGate.SignOutAsync()`
+      (wipes Keychain / DPAPI entry), stops the UDP + mDNS+TCP
+      topology stack so the machine drops off the LAN trust ring,
+      flips `HasShownWelcome=false` + saves, and reopens the welcome
+      wizard at `PageSignIn`.
+- [x] `AppSettings.json` slimmed down:
+      - `HostNames`, `Receivers` dict, `ReceiverSettings` class — gone
+        (no production callers; only Logi+ -overlapping renaming UX
+        that was already out of scope per CLAUDE.md).
+      - `Topology.MachineId` — gone. UDP topology now consumes
+        `IMachineIdProvider.GetMachineId()` instead of reading from
+        settings.
+      - Topology constants (`Port`, `MulticastGroup`, intervals,
+        cadence, mDNS service type) **deferred**: the
+        `TopologyConstants` extraction changes the ctor signatures on
+        `UdpTopologyService` + `MdnsTcpChannel` and isn't strictly
+        needed for the Phase 4 auth integration. Tracked as
+        follow-up.
+      - `LastUpdateCheckUtc` → separate `state.json` **deferred**:
+        same rationale. Field still lives on `AppSettings` for now.
+- [x] New `IMachineIdProvider` in `BoltMate.Core.Topology` +
+      `HardwareMachineIdProvider`: probes
+      `ioreg -d2 -c IOPlatformExpertDevice` → IOPlatformUUID (macOS),
+      `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` (Windows),
+      `/etc/machine-id` (Linux). Result is SHA-256 of the salted raw
+      value so the topology MachineId isn't correlatable with anything
+      else reading the same OS identifier. `Lazy<string>` caches the
+      computation per process.
+- [x] Stale `CLAUDE.md` `CachedHostBindings` line removed +
+      replaced with the actual in-memory `PairedDevice.HostBindings`
+      truth.
 
 ### Phase 5 — Log collection
 
