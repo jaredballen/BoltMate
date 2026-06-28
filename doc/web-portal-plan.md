@@ -302,6 +302,46 @@ Status: **complete** (sans launch-day Stripe swap, runbook ready)
       `doc/stripe-live-mode-runbook.md` captures the dashboard +
       Azure App Configuration steps. Executed on launch day, not now.
 
+### Phase 7 — Local Astro dev env
+
+Status: **not started**
+
+- [ ] `web/README.md` walks a fresh contributor from clone to running
+      site in under 5 minutes (`npm ci`, `npm run dev`, hot reload notes).
+- [ ] `.env.example` listing every var the build expects. At minimum:
+      `STRIPE_SECRET_KEY` (sandbox / test-mode key, `sk_test_…`).
+- [ ] Confirm `loadPricing()` falls back cleanly when the env var is
+      absent or test-mode hits the wrong account (default-price banner).
+- [ ] Note in the README which dashboard creates the sandbox Price /
+      lookup key + how to make sure `boltmate_lifetime` exists in test mode.
+
+### Phase 8 — Rebuild full site from design handoff
+
+Status: **not started**
+
+- [ ] Visual system: brand green `#99ff55` + near-black `#1c1c1e`, SF
+      Pro Text body + SF Mono eyebrows, light surfaces, 1120 px content
+      width, 28 px gutters. Swap CSS variables in `Base.astro`.
+- [ ] **Landing** — sticky blurred nav, centered dark radial hero
+      ("Brandful" direction), 92 px glowing app tile, 60 px headline
+      "Let the keyboard lead. The whole desk follows.", animated
+      two-tile device diagram (`@keyframes bm-travel`), 3 how-it-works
+      cards, dark privacy band (3 rows), pricing teaser, footer.
+- [ ] **Pricing** — two price cards (Free trial 14d + Lifetime $14.99)
+      + 4-item FAQ.
+- [ ] **Checkout** — 2-step indicator (Account → Payment) + order
+      summary rail. OAuth providers: Apple + Google only (Facebook cut,
+      LinkedIn/GitHub deferred — show only the wired ones). Real Stripe
+      Checkout redirect; no mock card form.
+- [ ] **Account / post-purchase** — trial + owned modes, license card
+      (provider + email, no key), `.dmg` + `.msi` downloads, version
+      line, activation note, trial-expired entry banner toggle. Keep the
+      Phase 6 GDPR delete button.
+- [ ] Assets: ship `boltmate-mark.svg` to `web/public/`. Match radii
+      (hero panels 20–26, cards 14–20, buttons 9–12, pills 20).
+- [ ] Strip the handoff's $29 placeholder; `loadPricing()` already
+      ships the live $14.99.
+
 ## Deferred from Phase 0
 
 - **Apple OAuth IdP**: wired 2026-06-28 (Services ID `app.boltmate.web`,
