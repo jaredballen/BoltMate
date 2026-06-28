@@ -177,6 +177,72 @@ public sealed class EntitlementFunctionTests
         Assert.Equal((int)HttpStatusCode.Unauthorized, obj.StatusCode);
     }
 
+    [Fact]
+    public async Task Delete_with_valid_bearer_removes_license_and_refresh_logs()
+    {
+        var (fn, fakes) = Build();
+        fakes.Licenses.ByEmail["jared@example.com"] = new LicenseRecord
+        {
+            Id = "lic_kill",
+            Email = "jared@example.com",
+            Sku = LicenseSkus.Boltmate,
+            Tier = LicenseTier.Boltmate,
+            Status = "active",
+        };
+        fakes.RefreshLog.Records.Add(("lic_kill", "oauth-sub-1", System.DateTimeOffset.UtcNow.AddDays(-1)));
+        fakes.RefreshLog.Records.Add(("lic_kill", "oauth-sub-1", System.DateTimeOffset.UtcNow.AddHours(-3)));
+        fakes.RefreshLog.Records.Add(("lic_other", "oauth-sub-x", System.DateTimeOffset.UtcNow)); // untouched
+
+        var req = MakeDeleteRequest(bearer: "valid");
+        var result = await fn.Delete(req, default);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Empty(fakes.Licenses.ByEmail);
+        Assert.Single(fakes.RefreshLog.Records);
+        Assert.Equal("lic_other", fakes.RefreshLog.Records[0].LicenseId);
+    }
+
+    [Fact]
+    public async Task Delete_is_idempotent_when_no_license_exists()
+    {
+        var (fn, fakes) = Build();
+
+        var req = MakeDeleteRequest(bearer: "valid");
+        var result = await fn.Delete(req, default);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Empty(fakes.Licenses.ByEmail);
+    }
+
+    [Fact]
+    public async Task Delete_without_bearer_returns_401()
+    {
+        var (fn, fakes) = Build();
+        fakes.Licenses.ByEmail["jared@example.com"] = new LicenseRecord
+        {
+            Id = "lic_survives",
+            Email = "jared@example.com",
+            Sku = LicenseSkus.Boltmate,
+            Tier = LicenseTier.Boltmate,
+            Status = "active",
+        };
+
+        var req = MakeDeleteRequest(bearer: null);
+        var result = await fn.Delete(req, default);
+
+        var obj = Assert.IsType<ObjectResult>(result);
+        Assert.Equal((int)HttpStatusCode.Unauthorized, obj.StatusCode);
+        Assert.Single(fakes.Licenses.ByEmail);
+    }
+
+    private static HttpRequest MakeDeleteRequest(string? bearer)
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Method = "DELETE";
+        if (bearer is not null) ctx.Request.Headers.Authorization = $"Bearer {bearer}";
+        return ctx.Request;
+    }
+
     private static (EntitlementFunction Function, Fakes Fakes) Build()
     {
         var fakes = new Fakes();

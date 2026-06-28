@@ -83,6 +83,40 @@ internal sealed class CosmosLicenseRepository : ILicenseRepository
         return false;
     }
 
+    public async Task<int> DeleteByEmailAsync(string email, CancellationToken ct = default)
+    {
+        // Single-partition delete loop. Cheap — typical user has 1
+        // record under their partition. Idempotent on rerun (404 is
+        // swallowed for each id since a concurrent caller may have
+        // already removed the row).
+        var pk = email.ToLowerInvariant();
+        var query = new QueryDefinition("SELECT c.id FROM c WHERE c.partitionKey = @pk")
+            .WithParameter("@pk", pk);
+
+        var ids = new List<string>();
+        var iter = _container.GetItemQueryIterator<dynamic>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(pk) });
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync(ct).ConfigureAwait(false);
+            foreach (var p in page) ids.Add((string)p.id);
+        }
+
+        var removed = 0;
+        foreach (var id in ids)
+        {
+            try
+            {
+                await _container.DeleteItemAsync<LicenseRecord>(id, new PartitionKey(pk), cancellationToken: ct).ConfigureAwait(false);
+                removed++;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+        return removed;
+    }
+
     public async Task<LicenseRecord?> GetByStripePaymentIntentIdAsync(string paymentIntentId, CancellationToken ct = default)
     {
         // Cross-partition lookup keyed on Stripe's PaymentIntent ID.

@@ -51,6 +51,12 @@ internal sealed class FakeLicenseRepository : ILicenseRepository
         var hit = ByEmail.Values.FirstOrDefault(r => r.StripePaymentIntentId == paymentIntentId);
         return Task.FromResult<LicenseRecord?>(hit);
     }
+
+    public Task<int> DeleteByEmailAsync(string email, CancellationToken ct = default)
+    {
+        if (!ByEmail.Remove(email)) return Task.FromResult(0);
+        return Task.FromResult(1);
+    }
 }
 
 internal sealed class FakeIdTokenValidator : IIdTokenValidator
@@ -92,6 +98,12 @@ internal sealed class FakeRefreshLogRepository : IRefreshLogRepository
 
     public Task<int> CountSinceAsync(string licenseId, DateTimeOffset since, CancellationToken ct = default)
         => Task.FromResult(Records.Count(r => r.LicenseId == licenseId && r.At >= since));
+
+    public Task<int> DeleteByLicenseIdAsync(string licenseId, CancellationToken ct = default)
+    {
+        var removed = Records.RemoveAll(r => r.LicenseId == licenseId);
+        return Task.FromResult(removed);
+    }
 }
 
 internal sealed class FakeSupportBundleStore : ISupportBundleStore
